@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>NetHack</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">NetHack <span class="ver">5.0</span></div>
+        <div class="session" id="session-label">connecting…</div>
+        <div class="spacer"></div>
+        <button id="debug-toggle" class="btn ghost" type="button" title="Toggle debug drawer (state feed)">Debug</button>
+      </header>
+      <main class="layout">
+        <section class="game-pane" id="game-pane">
+          <div class="term-wrap" id="term-wrap">
+            <div id="terminal"></div>
+            <div class="overlay hidden" id="overlay">
+              <div class="overlay-card">
+                <div class="overlay-title" id="overlay-title">The game is not running</div>
+                <div class="overlay-text" id="overlay-text"></div>
+                <button class="btn primary" id="start-btn" type="button">Start / resume game</button>
+              </div>
+            </div>
+            <div class="tooltip hidden" id="tooltip"></div>
+          </div>
+          <div class="hint" id="hint">Keys go to the game. Arrows/numpad move (vi-keys underneath). Hover a map cell for its description.</div>
+        </section>
+        <aside class="assistant-pane">
+          <div class="panel-title">Assistant</div>
+          <div class="assistant-body">
+            <p>The voice assistant will live here.</p>
+            <p class="muted">Phase 1: game + structured state feed only.</p>
+          </div>
+        </aside>
+      </main>
+      <section class="drawer collapsed" id="drawer">
+        <div class="drawer-head">
+          <strong>Debug: /api/state</strong>
+          <label><input type="checkbox" id="all-levels" /> all levels</label>
+          <label><input type="checkbox" id="raw-json" /> raw JSON</label>
+          <span class="muted" id="drawer-meta"></span>
+          <div class="spacer"></div>
+          <button class="btn ghost" id="drawer-close" type="button">Close</button>
+        </div>
+        <div class="drawer-body" id="drawer-body"></div>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+
+# nethack-web: interpose the "+feed" window-chain processor (win/chain/wc_feed.c)
+# between the core and tty.  It writes NDJSON events to $NETHACK_FEED_SOCKET.
+# windowchain can only be set here (sysconf), not in .nethackrc.
+OPTIONS=windowchain:+feed

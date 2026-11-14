@@ -1,0 +1,29 @@
+# nethack-web: run-time options for the browser game.
+# Copied to .nethack/home/.nethackrc by the server on every launch
+# (edit this file, not the copy).  The player name is passed with -u.
+
+OPTIONS=color
+OPTIONS=!autopickup
+OPTIONS=time,showexp
+OPTIONS=hilite_pet,hilite_pile
+OPTIONS=lit_corridor
+OPTIONS=menucolors
+OPTIONS=number_pad:0
+OPTIONS=!legacy
+OPTIONS=!tutorial
+OPTIONS=!mail
+OPTIONS=!rest_on_space
+OPTIONS=suppress_alert:3.4.3
+OPTIONS=msghistory:200
+
+# HP shown in color as it drops
+OPTIONS=statushilites:10
+OPTIONS=hilite_status:hitpoints/100%/gray&normal
+OPTIONS=hilite_status:hitpoints/<100%/green&normal
+OPTIONS=hilite_status:hitpoints/<67%/yellow&normal
+OPTIONS=hilite_status:hitpoints/<34%/red&bold
+
+# menu colors (blessed/cursed)
+MENUCOLOR=" blessed "=green
+MENUCOLOR=" cursed "=red
+MENUCOLOR=" uncursed "=gray

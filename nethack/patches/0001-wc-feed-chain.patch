@@ -1,0 +1,97 @@
+diff --git a/src/windows.c b/src/windows.c
+index f8490f9..742262e 100644
+--- a/src/windows.c
++++ b/src/windows.c
+@@ -57,6 +57,11 @@ extern void *chainout_procs_chain(int, int, void *, void *, void *);
+ extern struct chain_procs trace_procs;
+ extern void trace_procs_init(int);
+ extern void *trace_procs_chain(int, int, void *, void *, void *);
++
++/* nethack-web: structured NDJSON data feed (win/chain/wc_feed.c) */
++extern struct chain_procs feed_procs;
++extern void feed_procs_init(int);
++extern void *feed_procs_chain(int, int, void *, void *, void *);
+ #endif
+ 
+ #if defined(WINCHAIN) || defined(TTY_GRAPHICS)
+@@ -139,6 +144,8 @@ static struct win_choices {
+ 
+     { (struct window_procs *) &trace_procs, trace_procs_init,
+       trace_procs_chain },
++    { (struct window_procs *) &feed_procs, feed_procs_init,
++      feed_procs_chain },
+ #endif
+     { 0, 0 CHAINR(0) } /* must be last */
+ };
+@@ -347,7 +354,14 @@ addto_windowchain(const char *s)
+         if ('+' != winchoices[i].procs->name[0])
+             continue;
+         if (!strcmpi(s, winchoices[i].procs->name)) {
+-            struct winlink *p = wl_new();
++            struct winlink *p;
++
++            /* nethack-web: sysconf is read more than once during option
++               processing; don't stack the same processor twice */
++            for (p = chain; p; p = p->nextlink)
++                if (p->wincp == &winchoices[i])
++                    return;
++            p = wl_new();
+ 
+             p->wincp = &winchoices[i];
+             wl_addtail(p);
+@@ -432,6 +446,10 @@ commit_windowchain(void)
+     /* Install the chain into window procs very late so ini_routine()s
+      * can raw_print on error. */
+     windowprocs = *chain->wincp->procs;
++    /* nethack-web: chain processors are transparent; keep identifying as
++       the real window port so WINDOWPORT(tty) checks behave as without
++       a chain (perm_invent, hilite_pet attr, message history, etc). */
++    windowprocs.wp_id = gl.last_winchoice->procs->wp_id;
+ 
+     p = chain;
+     while (p) {
+diff --git a/sys/unix/Makefile.src b/sys/unix/Makefile.src
+index 863fa09..83764f7 100644
+--- a/sys/unix/Makefile.src
++++ b/sys/unix/Makefile.src
+@@ -552,9 +552,9 @@ WINCXXSRC = $(WINQTSRC) $(WINQT3SRC) $(WINBESRC)
+ 
+ # Files for window system chaining. Requires SYSCF; include via HINTSRC/HINTOBJ
+ CHAINSRC = ../win/chain/wc_chainin.c ../win/chain/wc_chainout.c \
+-	   ../win/chain/wc_trace.c
++	   ../win/chain/wc_trace.c ../win/chain/wc_feed.c
+ CHAINOBJ = $(TARGETPFX)wc_chainin.o $(TARGETPFX)wc_chainout.o \
+-	$(TARGETPFX)wc_trace.o
++	$(TARGETPFX)wc_trace.o $(TARGETPFX)wc_feed.o
+ 
+ # .c files for this version (for date.h)
+ VERSOURCES = $(HACKCSRC) $(HACKLIBSRC) $(SYSSRC) $(WINSRC) $(CHAINSRC) $(GENCSRC)
+@@ -1098,6 +1098,8 @@ $(TARGETPFX)wc_chainout.o: ../win/chain/wc_chainout.c $(HACK_H)
+ $(TARGETPFX)wc_trace.o: ../win/chain/wc_trace.c $(HACK_H) \
+ 		../include/func_tab.h ../include/wintty.h
+ 	$(TARGET_CC) $(TARGET_CFLAGS) -c -o $@ ../win/chain/wc_trace.c
++$(TARGETPFX)wc_feed.o: ../win/chain/wc_feed.c $(HACK_H)
++	$(TARGET_CC) $(TARGET_CFLAGS) -c -o $@ ../win/chain/wc_feed.c
+ $(TARGETPFX)cursdial.o: ../win/curses/cursdial.c $(HACK_H) \
+ 		../include/func_tab.h ../include/wincurs.h \
+ 		../win/curses/cursdial.h
+diff --git a/sys/unix/hints/linux.500 b/sys/unix/hints/linux.500
+index b822b6e..31a8e1b 100755
+--- a/sys/unix/hints/linux.500
++++ b/sys/unix/hints/linux.500
+@@ -218,10 +218,11 @@ CCXXFLAGS+= $(LIBCFLAGS)
+ VARDATND =
+ VARDATND0 =
+ 
+-#ifdef WANT_WIN_CHAIN
+-#HINTSRC=$(CHAINSRC)
+-#HINTOBJ=$(CHAINOBJ)
+-#endif # WANT_WIN_CHAIN
++ifdef WANT_WIN_CHAIN
++CFLAGS+=-DWINCHAIN
++HINTSRC=$(CHAINSRC)
++HINTOBJ=$(CHAINOBJ)
++endif # WANT_WIN_CHAIN
+ 
+ ifdef MAKEFILE_SRC
+ ifdef CURSESLIB

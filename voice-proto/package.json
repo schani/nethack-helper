@@ -1,0 +1,28 @@
+{
+  "name": "nethack-voice-proto",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "build": "vite build",
+    "start": "node server/main.ts",
+    "dev": "vite build && node server/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test test/*.test.ts",
+    "e2e": "node scripts/e2e.ts",
+    "serve": "bash scripts/serve.sh"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.11",
+    "fastify": "^5.12.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

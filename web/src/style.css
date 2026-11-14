@@ -1,0 +1,70 @@
+:root {
+  --bg: #f4f3ef;
+  --panel: #fdfdfb;
+  --border: #dcd9d0;
+  --text: #24231f;
+  --muted: #7b776c;
+  --accent: #1d4ed8;
+  --mono: "DejaVu Sans Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+.topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px;
+  border-bottom: 1px solid var(--border); background: var(--panel); }
+.brand { font-weight: 700; letter-spacing: 0.02em; }
+.brand .ver { color: var(--muted); font-weight: 400; }
+.session { color: var(--muted); font-size: 13px; }
+.spacer { flex: 1; }
+
+.btn { font: inherit; border-radius: 6px; padding: 6px 14px; cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+.btn:hover { border-color: #b9b5a8; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.ghost { background: transparent; }
+
+.layout { flex: 1; display: flex; gap: 14px; padding: 14px; min-height: 0; overflow: hidden; }
+.game-pane { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.term-wrap { position: relative; align-self: flex-start; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px; max-width: 100%; }
+#terminal .xterm { padding: 0; }
+#terminal .xterm-viewport { overflow: hidden !important; background: #fdfdfb !important; }
+.hint { color: var(--muted); font-size: 12px; }
+
+.assistant-pane { flex: 0 0 300px; display: flex; flex-direction: column; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; }
+.panel-title { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid var(--border); }
+.assistant-body { padding: 14px; color: var(--text); }
+.muted { color: var(--muted); }
+
+.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(253, 253, 251, 0.82); border-radius: 8px; }
+.overlay-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 22px 26px;
+  max-width: 420px; text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+.overlay-title { font-weight: 700; font-size: 16px; margin-bottom: 6px; }
+.overlay-text { color: var(--muted); margin-bottom: 14px; }
+.hidden { display: none !important; }
+
+.tooltip { position: absolute; z-index: 10; pointer-events: none; max-width: 320px; background: #fff;
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+  font-size: 12px; }
+.tip-head { font-weight: 600; font-family: var(--mono); }
+.tip-body { color: #3d3a33; }
+.tip-meta { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+
+.drawer { background: var(--panel); border-top: 1px solid var(--border); height: 42vh; display: flex; flex-direction: column; }
+.drawer.collapsed { display: none; }
+.drawer-head { display: flex; align-items: center; gap: 14px; padding: 6px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.drawer-body { flex: 1; overflow: auto; padding: 10px 14px; font-size: 12px; }
+.drawer-body pre { font-family: var(--mono); font-size: 12px; margin: 0; white-space: pre; }
+.summary { display: flex; gap: 22px; align-items: flex-start; }
+.summary .col { flex: 1 1 0; min-width: 0; }
+.summary .col.wide { flex: 2 1 0; }
+.summary h4 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.kv { display: flex; gap: 8px; } .kv .k { color: var(--muted); min-width: 80px; } .kv .v { font-family: var(--mono); word-break: break-word; }
+.summary ul { margin: 0; padding-left: 16px; font-family: var(--mono); }
+.summary li.history { color: var(--muted); }
+.summary pre.map { font-size: 11px; line-height: 1.1; border: 1px solid var(--border); padding: 4px; overflow-x: auto; }
