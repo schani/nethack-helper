@@ -8,6 +8,8 @@ import { setupFullscreen } from './fullscreen.ts';
 import { Connection } from './connection.ts';
 import { DebugDrawer } from './debug.ts';
 import { attachHover } from './hover.ts';
+import { AssistantPanel } from './assistant/panel.ts';
+import { assistantHotkey } from './assistant/hotkeys.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -167,10 +169,29 @@ attachHover(term, $('terminal'), $('tooltip'), () => state);
 $('game-pane').addEventListener('mousedown', (e) => {
   if (!(e.target as HTMLElement).closest('button')) setTimeout(() => term.focus(), 0);
 });
-// after using any control outside the terminal, give focus back
+// after using any control outside the terminal, give focus back -- except
+// the assistant's text input / settings, which keep it until Esc
 document.addEventListener('click', (e) => {
-  if ((e.target as HTMLElement).closest('button, input, label')) setTimeout(() => term.focus(), 0);
+  const t = e.target as HTMLElement;
+  if (t.closest('#as-composer input, .as-settings, select')) return;
+  if (t.closest('button, input, label')) setTimeout(() => term.focus(), 0);
 });
+
+// voice assistant panel + its global hotkeys (F2 mic / start, hold F3 to talk,
+// F4 chat input); NetHack's tty interface has no use for function keys
+const assistant = new AssistantPanel({ focusGame: () => term.focus() });
+for (const type of ['keydown', 'keyup'] as const) {
+  window.addEventListener(
+    type,
+    (e) => {
+      if (assistantHotkey(e, assistant)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    { capture: true },
+  );
+}
 // keys typed while nothing in particular has focus still go to the game
 document.addEventListener('keydown', (e) => {
   const active = document.activeElement;

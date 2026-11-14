@@ -154,6 +154,44 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     c.close();
   });
 
+  it('feeds discoveries / overview / underfoot and serves the assistant game tools', async () => {
+    const st = await waitFor(async () => {
+      const s = await getState();
+      return s.discoveries && s.overview && s.underfoot ? s : null;
+    }, 'discoveries, overview and underfoot from the feed');
+    expect(st.feed.schema).toBe(3);
+    // a Valkyrie knows her starting weapons and armor ("* " = known without being seen)
+    expect(st.discoveries!.join('\n')).toMatch(/Discoveries|small shield/);
+    expect(st.overview!.join('\n')).toMatch(/The Dungeons of Doom:/);
+    expect(st.overview!.join('\n')).toMatch(/Level 1: <- You are here\./);
+    // the hero starts on the up staircase
+    expect(st.underfoot).toMatchObject({ x: st.hero!.x, y: st.hero!.y, ch: '<' });
+    expect(st.underfoot!.desc).toMatch(/staircase up/);
+
+    const tool = async (name: string, args: Record<string, unknown> = {}) => {
+      const res = await fetch(`${BASE}/api/assistant/tools/${name}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args }),
+      });
+      const j = (await res.json()) as { ok: boolean; result: string; ms: number };
+      expect(j.ok, j.result).toBe(true);
+      return j.result;
+    };
+    const status = await tool('get_status');
+    expect(status).toMatch(/Valkyrie/);
+    expect(status).toMatch(/Location: Dlvl:1/);
+    expect(status).toMatch(/Waiting for: A command/);
+    expect(await tool('look', { target: 'here' })).toMatch(/staircase up/);
+    const adj = await tool('look', { target: 'adjacent' });
+    expect(adj).toMatch(/^Squares adjacent to you:\nnorth \(up\): /);
+    expect(await tool('get_inventory')).toMatch(/Wielded: \w/);
+    expect(await tool('list_levels')).toMatch(/Dungeon level 1 \(Dlvl:1, depth 1\) <- you are here/);
+    expect(await tool('get_screen')).toMatch(/Legend \(symbol, what it is, where relative to you\):\n@ you/);
+    const ctx = (await (await fetch(`${BASE}/api/assistant/context`)).json()) as { text: string };
+    expect(ctx.text).toMatch(/HP \d+\/\d+/);
+  });
+
   it('accepts keys: search advances the turn, i opens the inventory menu, Esc closes it', async () => {
     const c = new GameClient(`${BASE.replace('http', 'ws')}/ws`);
     await c.ready();

@@ -5,9 +5,13 @@ import fastifyStatic from '@fastify/static';
 import type { WebSocket } from 'ws';
 import type { GameSession, SessionSubscriber } from '../game/session.ts';
 import type { ClientMessage, ServerMessage } from '../../../shared/feed-events.ts';
+import type { AssistantService } from '../assistant/service.ts';
+import { registerAssistantRoutes } from './assistant.ts';
 
 export interface AppOptions {
   session: GameSession;
+  /** voice assistant routes (/api/assistant/*); omitted = no assistant */
+  assistant?: AssistantService;
   webDist?: string;
   logger?: boolean;
 }
@@ -23,6 +27,7 @@ export interface AppOptions {
  *   GET  /api/session          process lifecycle info
  *   POST /api/session/start    start / resume (no-op while running)
  *   GET  /ws                   terminal stream, see ServerMessage/ClientMessage
+ *   /api/assistant/*           voice assistant, see api/assistant.ts
  */
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const { session } = opts;
@@ -53,6 +58,8 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get('/api/session', async () => session.info());
+
+  if (opts.assistant) registerAssistantRoutes(app, opts.assistant);
 
   app.post('/api/session/start', async () => {
     const started = session.start();

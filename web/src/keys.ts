@@ -76,6 +76,9 @@ export function translateKey(ev: KeyLike, awaiting: InputKind | null): string | 
     return ev.shiftKey ? d.toUpperCase() : d;
   }
   if (ev.key === 'Delete' || ev.key === 'Insert') return '';
+  // function keys reach tty NetHack as escape sequences (F2 = ESC O Q) that
+  // it would misread as Esc + commands; F2-F4 belong to the assistant
+  if (/^F\d{1,2}$/.test(ev.key)) return '';
   return null;
 }
 

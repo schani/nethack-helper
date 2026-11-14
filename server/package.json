@@ -6,7 +6,8 @@
     "start": "node src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run test/unit",
-    "smoke": "vitest run test/smoke"
+    "smoke": "vitest run test/smoke",
+    "test:net": "vitest run test/net"
   },
   "dependencies": {
     "@fastify/static": "^10.1.11",

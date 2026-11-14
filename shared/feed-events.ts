@@ -24,7 +24,7 @@
  *    describing a cell does not mark objects as seen, consume the RNG, etc.
  */
 
-export const FEED_SCHEMA_VERSION = 2;
+export const FEED_SCHEMA_VERSION = 3;
 
 interface EventBase {
   /** event type */
@@ -267,6 +267,48 @@ export interface DisplayFileEvent extends EventBase {
   name: string;
 }
 
+/**
+ * The player's object discoveries, exactly as the `\\` (#known) command
+ * would show them right now: a header line, class headings, and one line
+ * per known/called object type ("* " prefix = known without having been
+ * seen, e.g. role knowledge), plus artifacts and relics.  Computed by
+ * running the command in the feed's throw-away child; sent on change.
+ */
+export interface DiscoveriesEvent extends EventBase {
+  t: 'discoveries';
+  lines: string[];
+}
+
+/**
+ * The dungeon overview, exactly as the ^O (#overview) command would show
+ * it right now: branch headings ("The Dungeons of Doom: levels 1 to 4"),
+ * "Level N:" lines with annotations and "<- You are here.", and indented
+ * feature lines ("A fountain.", "Stairs down to the Gnomish Mines.").
+ * Sent on change.
+ */
+export interface OverviewEvent extends EventBase {
+  t: 'overview';
+  lines: string[];
+}
+
+/**
+ * What the map remembers under the hero (shown once the hero steps off;
+ * the same thing ':' reports), e.g. "fountain", "staircase down", the top
+ * object of a pile.  `desc` is empty when nothing is remembered there
+ * (plain floor is reported as "floor of a room").  Sent on change.
+ */
+export interface UnderfootEvent extends EventBase {
+  t: 'underfoot';
+  x: number;
+  y: number;
+  /** remembered glyph (levl[x][y].glyph) and how it is drawn */
+  glyph: number;
+  ch: string;
+  color: number;
+  desc: string;
+  look: string;
+}
+
 /** Tombstone time: the hero died / quit / escaped (how = NetHack death code). */
 export interface GameOverEvent extends EventBase {
   t: 'gameover';
@@ -283,14 +325,15 @@ export interface ExitEvent extends EventBase {
 export type FeedEvent =
   | HelloEvent | GameEvent | LevelEvent | MapClearEvent | MapEvent | StatusEvent
   | MsgEvent | InventoryEvent | InputEvent | AnswerEvent | MenuEvent
-  | MenuDoneEvent | TextEvent | DisplayFileEvent | GameOverEvent | ExitEvent;
+  | MenuDoneEvent | TextEvent | DisplayFileEvent | GameOverEvent | ExitEvent
+  | DiscoveriesEvent | OverviewEvent | UnderfootEvent;
 
 export type FeedEventType = FeedEvent['t'];
 
 export const FEED_EVENT_TYPES: readonly FeedEventType[] = [
   'hello', 'game', 'level', 'map_clear', 'map', 'status', 'msg', 'inventory',
   'input', 'answer', 'menu', 'menu_done', 'text', 'display_file',
-  'gameover', 'exit',
+  'gameover', 'exit', 'discoveries', 'overview', 'underfoot',
 ];
 
 /* ------------------------------------------------------------------ */
@@ -371,6 +414,12 @@ export interface GameState {
   /** last text window shown */
   lastText: Omit<TextEvent, 't'> | null;
   gameover: { how: number; turn: number } | null;
+  /** what `\\` would show (null until the feed reports it) */
+  discoveries: string[] | null;
+  /** what ^O would show (null until the feed reports it) */
+  overview: string[] | null;
+  /** remembered map feature/object under the hero (null: unknown) */
+  underfoot: Omit<UnderfootEvent, 't' | 'seq'> | null;
 }
 
 export interface SessionInfo {

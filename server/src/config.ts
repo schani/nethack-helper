@@ -22,6 +22,16 @@ export interface Config {
   webDist: string;
   /** start a game as soon as the server boots */
   autostart: boolean;
+  assistant: AssistantPaths;
+}
+
+export interface AssistantPaths {
+  /** pristine NetHack 5.0.0 checkout for the source tools (scripts/setup-nethack-src.sh) */
+  nethackSrcDir: string;
+  /** instructions*.md */
+  promptsDir: string;
+  /** tool-call / transcript logs */
+  logDir: string;
 }
 
 export function loadConfig(env = process.env): Config {
@@ -39,5 +49,10 @@ export function loadConfig(env = process.env): Config {
     rows: 24,
     webDist: path.join(ROOT, 'web/dist'),
     autostart: (env.NETHACK_AUTOSTART ?? '1') !== '0',
+    assistant: {
+      nethackSrcDir: env.NETHACK_SRC_DIR ?? path.join(ROOT, '.cache/nethack-src'),
+      promptsDir: env.ASSISTANT_PROMPTS_DIR ?? path.join(ROOT, 'server/prompts'),
+      logDir: env.ASSISTANT_LOG_DIR ?? path.join(ROOT, '.cache/assistant'),
+    },
   };
 }

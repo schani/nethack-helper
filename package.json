@@ -12,7 +12,11 @@
     "start": "npm start -w server",
     "dev:web": "npm run dev -w web",
     "test": "npm test -w server && npm test -w web",
-    "smoke": "npm run smoke -w server"
+    "smoke": "npm run smoke -w server",
+    "test:net": "npm run test:net -w server",
+    "e2e:assistant": "node scripts/assistant-e2e/run.ts",
+    "e2e:scenario": "node scripts/assistant-e2e/scenario.ts",
+    "setup:nethack-src": "bash scripts/setup-nethack-src.sh"
   },
   "engines": {
     "node": ">=24"

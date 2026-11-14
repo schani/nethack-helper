@@ -35,11 +35,38 @@
             </span>
           </div>
         </section>
-        <aside class="assistant-pane">
-          <div class="panel-title">Assistant</div>
-          <div class="assistant-body">
-            <p>The voice assistant will live here.</p>
-            <p class="muted">Phase 1: game + structured state feed only.</p>
+        <aside class="assistant-pane" id="assistant-pane" aria-label="Assistant">
+          <div class="as-head">
+            <span class="as-title">Assistant</span>
+            <span class="as-status" id="as-status" data-state="idle"><span class="dot"></span><span id="as-status-text">Off</span></span>
+            <span class="as-listening" id="as-listening" hidden>hearing you…</span>
+            <div class="spacer"></div>
+            <button class="btn primary as-start" id="as-start" type="button">Start</button>
+          </div>
+          <div class="as-controls">
+            <button class="btn as-mic muted" id="as-mic" type="button" aria-pressed="false" disabled title="Mute / unmute the microphone (F2)">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0V4A2.5 2.5 0 0 0 8 1.5Z"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" fill="none"/></svg>
+              <span class="label">Mic off</span>
+            </button>
+            <select id="as-model" title="Realtime model"></select>
+            <details class="as-settings">
+              <summary title="Assistant voice">Voice: <span id="as-voice-label">marin</span> ▾</summary>
+              <label>Voice <select id="as-voice"></select></label>
+            </details>
+          </div>
+          <div class="as-error" id="as-error" role="alert" hidden></div>
+          <div class="as-log" id="as-log" aria-live="polite">
+            <div class="as-empty" id="as-empty">
+              <p>Ask about what you see while you play: <em>“What's that f next to me?”</em>, <em>“Should I eat this?”</em>, <em>“Where were the stairs on level 1?”</em></p>
+              <p class="muted">It sees what you see (map, status, inventory, messages) — nothing hidden. Spoilers only when you ask.</p>
+            </div>
+          </div>
+          <form class="as-composer" id="as-composer">
+            <input id="as-input" type="text" autocomplete="off" placeholder="Start the assistant to chat" disabled />
+            <button class="btn" id="as-send" type="submit" disabled>Send</button>
+          </form>
+          <div class="as-keys">
+            <span><kbd>F2</kbd> start / mic on-off</span><span>hold <kbd>F3</kbd> to talk</span><span><kbd>F4</kbd> type</span><span><kbd>Esc</kbd> back to game</span>
           </div>
         </aside>
       </main>

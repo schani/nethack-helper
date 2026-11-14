@@ -47,6 +47,13 @@ describe('translateKey', () => {
   });
 });
 
+describe('function keys', () => {
+  it('are swallowed (tty NetHack would misread their escape sequences)', () => {
+    expect(translateKey(k('F2'), 'command')).toBe('');
+    expect(translateKey(k('F12'), 'getlin')).toBe('');
+  });
+});
+
 describe('translateMeta', () => {
   it('turns Alt+key into the base character of a Meta key', () => {
     expect(translateMeta(k('d', 'KeyD', { altKey: true }), 'command')).toBe('d');

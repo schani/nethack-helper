@@ -1,12 +1,14 @@
 import { loadConfig } from './config.ts';
 import { GameSession } from './game/session.ts';
 import { buildApp } from './api/app.ts';
+import { AssistantService } from './assistant/service.ts';
 
 const cfg = loadConfig();
 const session = new GameSession(cfg);
 await session.init();
 
-const app = await buildApp({ session, webDist: cfg.webDist, logger: process.env.LOG !== '0' });
+const assistant = new AssistantService({ game: session, paths: cfg.assistant });
+const app = await buildApp({ session, assistant, webDist: cfg.webDist, logger: process.env.LOG !== '0' });
 await app.listen({ host: cfg.host, port: cfg.port });
 
 if (cfg.autostart) session.start();

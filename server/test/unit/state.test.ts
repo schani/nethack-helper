@@ -231,4 +231,33 @@ describe('GameStateStore level memory', () => {
     s.apply(ev({ t: 'exit', text: '' }));
     expect(s.snapshot()).toMatchObject({ gameover: { how: 0, turn: 9 }, awaiting: null });
   });
+
+  it('keeps the discoveries / overview / underfoot texts and resets them per process', () => {
+    const s = new GameStateStore();
+    s.apply(ev({ t: 'discoveries', lines: ['Discoveries', 'Potions', '  potion (ruby)'] }));
+    s.apply(ev({ t: 'overview', lines: ['The Dungeons of Doom:', '   Level 1: <- You are here.'] }));
+    s.apply(ev({ t: 'underfoot', x: 3, y: 4, glyph: 5, ch: '{', color: 4, desc: 'fountain', look: 'a fountain (fountain)' }));
+    expect(s.snapshot()).toMatchObject({ discoveries: ['Discoveries', 'Potions', '  potion (ruby)'], underfoot: { x: 3, y: 4, desc: 'fountain' } });
+    expect(s.snapshot().overview).toHaveLength(2);
+    s.resetForNewProcess();
+    expect(s.snapshot()).toMatchObject({ discoveries: null, overview: null, underfoot: null });
+  });
+
+  it('remembers what was under the hero when leaving a level', () => {
+    const s = new GameStateStore();
+    s.apply(level(0, 1));
+    s.apply(ev({ t: 'map', dnum: 0, dlevel: 1, ux: 10, uy: 5, cells: [cell(10, 5, '@', 'you'), cell(11, 5, '.', 'floor of a room')] }));
+    s.apply(ev({ t: 'underfoot', x: 10, y: 5, glyph: 2399, ch: '>', color: 7, desc: 'staircase down', look: 'a staircase down (staircase down)' }));
+    s.apply(level(0, 2));
+    s.apply(ev({ t: 'map_clear', dnum: 0, dlevel: 2 }));
+    const l1 = s.snapshot().levels['0:1'];
+    expect(l1.cells.find((c) => c.x === 10 && c.y === 5)).toMatchObject({ ch: '>', desc: 'staircase down', glyph: 2399 });
+    expect(l1.rows[5][10 - 1]).toBe('>');
+    expect(s.snapshot().underfoot).toBeNull();
+    // an underfoot that is not where the hero is (stale) is not used
+    s.apply(ev({ t: 'map', dnum: 0, dlevel: 2, ux: 20, uy: 5, cells: [cell(20, 5, '@', 'you')] }));
+    s.apply(ev({ t: 'underfoot', x: 1, y: 1, glyph: 1, ch: '{', color: 4, desc: 'fountain', look: '' }));
+    s.apply(level(0, 3));
+    expect(s.snapshot().levels['0:2'].cells.find((c) => c.x === 20)).toMatchObject({ ch: '@' });
+  });
 });

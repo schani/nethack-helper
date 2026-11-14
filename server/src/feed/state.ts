@@ -93,6 +93,9 @@ export class GameStateStore {
   private menu: GameState['menu'] = null;
   private lastText: GameState['lastText'] = null;
   private gameover: GameState['gameover'] = null;
+  private discoveries: string[] | null = null;
+  private overview: string[] | null = null;
+  private underfoot: GameState['underfoot'] = null;
   private game: GameIdentity | null = null;
   private memoryRestored = false;
   /** bumped on every change; lets callers cheaply detect updates */
@@ -118,6 +121,10 @@ export class GameStateStore {
     this.menu = null;
     this.lastText = null;
     this.gameover = null;
+    // the feed re-sends these after it starts
+    this.discoveries = null;
+    this.overview = null;
+    this.underfoot = null;
     this.processMessages = 0;
     this.version++;
   }
@@ -223,6 +230,7 @@ export class GameStateStore {
         break;
       case 'level': {
         const key = levelKey(ev.dnum, ev.dlevel);
+        if (key !== this.currentLevel) this.restoreUnderHero();
         const { t: _t, seq: _s, ...info } = ev;
         const l = this.level(key);
         l.info = info;
@@ -298,7 +306,35 @@ export class GameStateStore {
       case 'exit':
         this.feedAwaiting = null;
         break;
+      case 'discoveries':
+        this.discoveries = ev.lines;
+        break;
+      case 'overview':
+        this.overview = ev.lines;
+        break;
+      case 'underfoot': {
+        const { t: _t, seq: _s, ...rest } = ev;
+        this.underfoot = rest;
+        break;
+      }
     }
+  }
+
+  /**
+   * Leaving a level: its memory still holds the hero glyph where the hero
+   * stood; put back what the map remembers under it (stairs, fountain, …),
+   * as NetHack shows the level when the player returns.
+   */
+  private restoreUnderHero() {
+    const u = this.underfoot;
+    const lvl = this.currentLevel ? this.levels.get(this.currentLevel) : undefined;
+    if (!lvl || !this.hero || !u || u.x !== this.hero.x || u.y !== this.hero.y) return;
+    const idx = u.y * MAP_COLS + u.x;
+    const cell: MapCell = { x: u.x, y: u.y, glyph: u.glyph, ch: u.ch, color: u.color, desc: u.desc, look: u.look };
+    if (!u.desc || isBlankCell(cell)) lvl.cells.delete(idx);
+    else lvl.cells.set(idx, cell);
+    this.underfoot = null;
+    this.memoryVersion++;
   }
 
   private levelView(l: LevelStore): LevelMemory {
@@ -369,6 +405,9 @@ export class GameStateStore {
       menu: this.menu,
       lastText: this.lastText,
       gameover: this.gameover,
+      discoveries: this.discoveries,
+      overview: this.overview,
+      underfoot: this.underfoot,
     };
   }
 }

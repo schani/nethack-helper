@@ -47,7 +47,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define FEED_SCHEMA_VERSION 2
+#define FEED_SCHEMA_VERSION 3
 
 /* ------------------------------------------------------------------ */
 /* prototypes                                                          */
@@ -431,6 +431,14 @@ sandbox_child_init(int wfd)
     sysopt.livelog = 0L;
     sysopt.crashreporturl = (char *) 0;
 }
+
+/* Capture mode (sandbox child only): the child runs whole player commands
+   (dodiscovered() for '\\', show_overview() for ^O) and the window procs
+   below hand their text to sb_put() instead of tty, and never block for
+   input.  Window ids handed out in this mode are fake. */
+static boolean sb_capture = FALSE;
+#define FEED_CAPWIN 990
+#define CAPWIN(w) (sb_capture && (w) == FEED_CAPWIN)
 
 /* parent side: collected output of the last sandbox run */
 static char *sb_data = 0;
@@ -816,7 +824,42 @@ static struct {
     int ncells;
     coordxy x[COLNO * ROWNO], y[COLNO * ROWNO];
     boolean inv;
+    boolean extras; /* discoveries, overview, underfoot */
 } sbjob;
+
+/* separators in the sandbox output of the extras */
+#define SB_END_BLOCK "\036"
+
+/* describe the remembered glyph under the hero (what the map shows there
+   once the hero steps off; ':' look tells the player the same) */
+static void
+describe_underfoot(void)
+{
+    char sbuf[BUFSZ], lbuf[BUFSZ], chbuf[2], clrbuf[16];
+    int glyph = levl[u.ux][u.uy].glyph;
+    glyph_info ginfo;
+
+    sbuf[0] = lbuf[0] = '\0';
+    chbuf[0] = ' ', chbuf[1] = '\0';
+    Strcpy(clrbuf, "8");
+    if (!glyph_is_unexplored(glyph) && glyph != cmap_to_glyph(S_stone)) {
+        coordxy x = u.ux, y = u.uy;
+
+        map_glyphinfo(x, y, glyph, 0, &ginfo);
+        chbuf[0] = (char) (ginfo.ttychar ? ginfo.ttychar : ' ');
+        Sprintf(clrbuf, "%d", (int) ginfo.gm.sym.color);
+        /* this is a throw-away child: show the remembered glyph and move
+           the hero off the map so farlook describes the glyph, not "you" */
+        gg.gbuf[y][x].glyphinfo.glyph = glyph;
+        u.ux = 0;
+        describe_cell(x, y, sbuf, lbuf);
+        u.ux = x;
+    }
+    sb_put(chbuf);
+    sb_put(clrbuf);
+    sb_put(sbuf);
+    sb_put(lbuf);
+}
 
 /* runs in the sandbox child */
 static void
@@ -835,6 +878,17 @@ sandbox_texts(genericptr_t arg)
     if (sbjob.inv)
         for (otmp = gi.invent; otmp; otmp = otmp->nobj)
             sb_put(doname(otmp));
+    if (sbjob.extras) {
+        /* underfoot first: the commands below may change the display */
+        describe_underfoot();
+        sb_capture = TRUE;
+        iflags.menu_requested = FALSE;
+        (void) dodiscovered();
+        sb_put(SB_END_BLOCK);
+        show_overview(0, 0);
+        sb_put(SB_END_BLOCK);
+        sb_capture = FALSE;
+    }
 }
 
 static boolean
@@ -856,6 +910,54 @@ cell_needs_text(struct feed_cell *c)
     return !glyph_is_unexplored(c->glyph);
 }
 
+/* extras (discoveries, overview, underfoot) last computed for ... */
+static unsigned long extras_disco_sig = 0;
+static d_level extras_lev = { -1, -1 };
+static coordxy extras_ux = -1, extras_uy = -1;
+static int extras_under_glyph = -1;
+/* ... and last sent (only changes are emitted) */
+static char *sent_disco = 0, *sent_overview = 0, *sent_underfoot = 0;
+static boolean extras_ok = FALSE;
+static size_t sb_extras_pos = 0;
+
+/* cheap fingerprint of the player's object knowledge (read-only) */
+static unsigned long
+disco_signature(void)
+{
+    unsigned long h = 5381UL;
+    const char *p;
+    int i;
+
+    for (i = 0; i < NUM_OBJECTS; i++) {
+        h = h * 33UL + (unsigned long) svd.disco[i];
+        h = h * 33UL + (unsigned long) (objects[i].oc_name_known
+                                        | (objects[i].oc_encountered << 1));
+        if ((p = objects[i].oc_uname) != 0)
+            while (*p)
+                h = h * 33UL + (unsigned char) *p++;
+    }
+    return h;
+}
+
+static boolean
+extras_possible(void)
+{
+    return (feed_fd >= 0 && level_valid() && program_state.in_moveloop
+            && !program_state.gameover && isok(u.ux, u.uy));
+}
+
+/* something the extras depend on changed since they were last computed? */
+static boolean
+extras_stale(void)
+{
+    if (!extras_possible())
+        return FALSE;
+    return (!on_level(&extras_lev, &u.uz) || u.ux != extras_ux
+            || u.uy != extras_uy
+            || levl[u.ux][u.uy].glyph != extras_under_glyph
+            || disco_signature() != extras_disco_sig);
+}
+
 /* compute every text the pending map/inventory events need, in one
    sandboxed child */
 static void
@@ -863,6 +965,8 @@ prepare_texts(void)
 {
     coordxy x, y;
     int i;
+    boolean ok = TRUE;
+    struct obj *otmp;
 
     sbjob.ncells = 0;
     sbjob.inv = inv_pending();
@@ -874,13 +978,31 @@ prepare_texts(void)
                     sbjob.y[sbjob.ncells] = y;
                     sbjob.ncells++;
                 }
+    /* the extras ride along whenever the child runs anyway, and force a
+       run when something they depend on changed */
+    sbjob.extras = extras_possible()
+                   && (sbjob.ncells || sbjob.inv || extras_stale());
     sb_len = sb_pos = 0;
-    if (sbjob.ncells || (sbjob.inv && gi.invent))
-        (void) sandbox_run(sandbox_texts, (genericptr_t) 0);
+    if (sbjob.ncells || (sbjob.inv && gi.invent) || sbjob.extras)
+        ok = sandbox_run(sandbox_texts, (genericptr_t) 0);
     /* inventory texts follow the two strings per described cell */
     for (i = 0; i < 2 * sbjob.ncells; i++)
         (void) sb_next();
     sb_inv_pos = sb_pos;
+    /* then the extras */
+    if (sbjob.inv)
+        for (otmp = gi.invent; otmp; otmp = otmp->nobj)
+            (void) sb_next();
+    sb_extras_pos = sb_pos;
+    extras_ok = sbjob.extras && ok;
+    if (sbjob.extras) {
+        /* remember what they were computed for even if the child failed,
+           so a failing child is not re-run on every keystroke */
+        extras_disco_sig = disco_signature();
+        extras_lev = u.uz;
+        extras_ux = u.ux, extras_uy = u.uy;
+        extras_under_glyph = levl[u.ux][u.uy].glyph;
+    }
     sb_pos = 0;
 }
 
@@ -1062,6 +1184,127 @@ emit_status(void)
     ev_end();
 }
 
+/* collect sandbox strings up to the next SB_END_BLOCK into one
+   newline-joined string (caller frees) */
+static char *
+sb_block(void)
+{
+    size_t len = 0, cap = 256;
+    char *buf = (char *) malloc(cap);
+    const char *s;
+
+    if (!buf)
+        return dupstr("");
+    buf[0] = '\0';
+    while (sb_pos < sb_len && strcmp(s = sb_next(), SB_END_BLOCK)) {
+        size_t n = strlen(s);
+
+        if (len + n + 2 > cap) {
+            while (len + n + 2 > cap)
+                cap *= 2;
+            {
+                char *nb = (char *) realloc(buf, cap);
+
+                if (!nb)
+                    break;
+                buf = nb;
+            }
+        }
+        if (len)
+            buf[len++] = '\n';
+        memcpy(buf + len, s, n);
+        len += n;
+        buf[len] = '\0';
+    }
+    return buf;
+}
+
+/* emit "lines" of a newline-joined block */
+static void
+jkv_lines(const char *k, const char *block)
+{
+    const char *p = block, *nl;
+    boolean first = TRUE;
+    char line[BUFSZ];
+
+    jchar(',');
+    jkey(k);
+    jchar('[');
+    while (*block && p) {
+        size_t n;
+
+        nl = strchr(p, '\n');
+        n = nl ? (size_t) (nl - p) : strlen(p);
+        if (n >= sizeof line)
+            n = sizeof line - 1;
+        memcpy(line, p, n);
+        line[n] = '\0';
+        if (!first)
+            jchar(',');
+        first = FALSE;
+        jstr(line);
+        p = nl ? nl + 1 : 0;
+    }
+    jchar(']');
+}
+
+/* 'discoveries', 'overview' and 'underfoot' events, when they changed */
+static void
+emit_extras(void)
+{
+    char *disco, *overview, under[3 * BUFSZ];
+    const char *ch, *clr, *desc, *look;
+
+    if (!extras_ok)
+        return;
+    extras_ok = FALSE;
+    sb_pos = sb_extras_pos;
+    ch = sb_next();
+    clr = sb_next();
+    desc = sb_next();
+    look = sb_next();
+    Snprintf(under, sizeof under, "%d,%d,%d,%s\001%s\001%s\001%s",
+             (int) u.ux, (int) u.uy, extras_under_glyph, ch, clr, desc,
+             look);
+    if (!sent_underfoot || strcmp(sent_underfoot, under)) {
+        if (ev_begin("underfoot")) {
+            jkv_int("x", (long) u.ux);
+            jkv_int("y", (long) u.uy);
+            jkv_int("glyph", (long) extras_under_glyph);
+            jkv_str("ch", ch);
+            jkv_int("color", atol(clr));
+            jkv_str("desc", desc);
+            jkv_str("look", look);
+            ev_end();
+        }
+        free(sent_underfoot);
+        sent_underfoot = dupstr(under);
+    }
+    disco = sb_block();
+    overview = sb_block();
+    if (!sent_disco || strcmp(sent_disco, disco)) {
+        if (ev_begin("discoveries")) {
+            jkv_lines("lines", disco);
+            ev_end();
+        }
+        free(sent_disco);
+        sent_disco = disco;
+    } else {
+        free(disco);
+    }
+    /* an empty overview means the child could not produce one */
+    if (*overview && (!sent_overview || strcmp(sent_overview, overview))) {
+        if (ev_begin("overview")) {
+            jkv_lines("lines", overview);
+            ev_end();
+        }
+        free(sent_overview);
+        sent_overview = overview;
+    } else {
+        free(overview);
+    }
+}
+
 /* bring the consumer up to date before the game blocks for input */
 static void
 feed_flush(void)
@@ -1072,6 +1315,7 @@ feed_flush(void)
     prepare_texts();
     emit_map();
     emit_inventory();
+    emit_extras();
 }
 
 static unsigned long last_input_seq = 0;
@@ -1254,7 +1498,11 @@ winid
 feed_create_nhwindow(void *vp, int type)
 {
     struct feed_data *tdp = vp;
-    winid w = (*NEXT(tdp)->win_create_nhwindow)(tdp->ndata, type);
+    winid w;
+
+    if (sb_capture)
+        return FEED_CAPWIN;
+    w = (*NEXT(tdp)->win_create_nhwindow)(tdp->ndata, type);
 
     if (valid_win(w)) {
         wintypes[w] = type;
@@ -1269,6 +1517,8 @@ feed_clear_nhwindow(void *vp, winid window)
 {
     struct feed_data *tdp = vp;
 
+    if (CAPWIN(window))
+        return;
     note_origin(window);
     if (window == WIN_MAP && window != WIN_ERR) {
         /* level changes clear the map first; announce the new level
@@ -1295,6 +1545,8 @@ feed_display_nhwindow(void *vp, winid window, boolean blocking)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture)
+        return; /* never wait for the player in the sandbox */
     if (valid_win(window) && wintext[window].n) {
         emit_text_window(window,
                          wintypes[window] == NHW_MENU ? "menu_text" : "text");
@@ -1312,6 +1564,8 @@ feed_destroy_nhwindow(void *vp, winid window)
 {
     struct feed_data *tdp = vp;
 
+    if (CAPWIN(window))
+        return;
     if (valid_win(window)) {
         lines_clear(&wintext[window]);
         menu_clear(&winmenu[window]);
@@ -1325,6 +1579,8 @@ feed_curs(void *vp, winid window, int x, int y)
 {
     struct feed_data *tdp = vp;
 
+    if (CAPWIN(window))
+        return;
     (*NEXT(tdp)->win_curs)(tdp->ndata, window, x, y);
 }
 
@@ -1347,6 +1603,11 @@ feed_putstr(void *vp, winid window, int attr, const char *str)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture) {
+        if (window == FEED_CAPWIN && str)
+            sb_put(str);
+        return; /* messages from the captured command are dropped */
+    }
     note_putstr(window, attr, str);
     (*NEXT(tdp)->win_putstr)(tdp->ndata, window, attr, str);
 }
@@ -1356,6 +1617,13 @@ feed_putmixed(void *vp, winid window, int attr, const char *str)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture) {
+        char buf[BUFSZ * 2];
+
+        if (window == FEED_CAPWIN && str)
+            sb_put(strlen(str) < BUFSZ ? decode_mixed(buf, str) : str);
+        return;
+    }
     if (feed_fd >= 0 && str) {
         char buf[BUFSZ * 2];
 
@@ -1372,6 +1640,8 @@ feed_display_file(void *vp, const char *fname, boolean complain)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture)
+        return;
     if (ev_begin("display_file")) {
         jkv_str("name", fname);
         ev_end();
@@ -1385,6 +1655,8 @@ feed_start_menu(void *vp, winid window, unsigned long mbehavior)
 {
     struct feed_data *tdp = vp;
 
+    if (CAPWIN(window))
+        return;
     if (valid_win(window)) {
         menu_clear(&winmenu[window]);
         lines_clear(&wintext[window]);
@@ -1400,6 +1672,11 @@ feed_add_menu(void *vp, winid window, const glyph_info *glyphinfo,
 {
     struct feed_data *tdp = vp;
 
+    if (CAPWIN(window)) {
+        if (str)
+            sb_put(str);
+        return;
+    }
     if (valid_win(window) && feed_fd >= 0) {
         struct feed_menu *m = &winmenu[window];
 
@@ -1432,6 +1709,8 @@ feed_end_menu(void *vp, winid window, const char *prompt)
 {
     struct feed_data *tdp = vp;
 
+    if (CAPWIN(window))
+        return;
     if (valid_win(window)) {
         if (winmenu[window].prompt)
             free(winmenu[window].prompt);
@@ -1488,6 +1767,10 @@ feed_select_menu(void *vp, winid window, int how, MENU_ITEM_P **menu_list)
     struct feed_data *tdp = vp;
     int rv, i;
 
+    if (sb_capture) {
+        *menu_list = (MENU_ITEM_P *) 0;
+        return 0;
+    }
     feed_flush();
     if (valid_win(window) && ev_begin("menu")) {
         struct feed_menu *m = &winmenu[window];
@@ -1542,6 +1825,8 @@ feed_message_menu(void *vp, char let, int how, const char *mesg)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture)
+        return '\033';
     if (mesg)
         emit_msg(mesg, 0, "message_menu");
     return (*NEXT(tdp)->win_message_menu)(tdp->ndata, let, how, mesg);
@@ -1629,6 +1914,8 @@ feed_nhgetch(void *vp)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture)
+        return '\033';
     emit_input("key");
     return (*NEXT(tdp)->win_nhgetch)(tdp->ndata);
 }
@@ -1638,6 +1925,8 @@ feed_nh_poskey(void *vp, coordxy *x, coordxy *y, int *mod)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture)
+        return '\033';
     emit_input(iflags.in_parse ? "command" : "key");
     return (*NEXT(tdp)->win_nh_poskey)(tdp->ndata, x, y, mod);
 }
@@ -1664,6 +1953,8 @@ feed_yn_function(void *vp, const char *query, const char *resp, char def)
     struct feed_data *tdp = vp;
     char rv, dbuf[2];
 
+    if (sb_capture)
+        return def ? def : '\033';
     feed_flush();
     if (ev_begin("input")) {
         jkv_str("kind", "yn");
@@ -1690,6 +1981,10 @@ feed_getlin(void *vp, const char *query, char *bufp)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture) {
+        Strcpy(bufp, "\033");
+        return;
+    }
     feed_flush();
     if (ev_begin("input")) {
         jkv_str("kind", "getlin");
@@ -1705,6 +2000,8 @@ feed_get_ext_cmd(void *vp)
 {
     struct feed_data *tdp = vp;
 
+    if (sb_capture)
+        return -1;
     emit_input("extcmd");
     return (*NEXT(tdp)->win_get_ext_cmd)(tdp->ndata);
 }
