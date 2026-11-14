@@ -3,7 +3,8 @@ import './style.css';
 import { Terminal } from '@xterm/xterm';
 import type { GameState, InputKind, ServerMessage, SessionInfo } from '../../shared/feed-events.ts';
 import { lightTheme, fontFamily } from './theme.ts';
-import { translateKey } from './keys.ts';
+import { translateKey, translateMeta } from './keys.ts';
+import { setupFullscreen } from './fullscreen.ts';
 import { Connection } from './connection.ts';
 import { DebugDrawer } from './debug.ts';
 import { attachHover } from './hover.ts';
@@ -39,9 +40,19 @@ const conn = new Connection(onMessage);
 
 // keystrokes -> game
 term.onData((data) => conn.send({ type: 'input', data }));
+/** Alt+key -> NetHack Meta key; true if handled */
+function sendMeta(ev: KeyboardEvent, awaiting: InputKind | null): boolean {
+  const meta = translateMeta(ev, awaiting);
+  if (meta === null) return false;
+  ev.preventDefault();
+  if (meta) conn.send({ type: 'input', data: meta, meta: true });
+  return true;
+}
+
 term.attachCustomKeyEventHandler((ev) => {
   if (ev.type !== 'keydown') return true;
   const awaiting = (state?.awaiting?.kind ?? null) as InputKind | null;
+  if (sendMeta(ev, awaiting)) return false;
   const out = translateKey(ev, awaiting);
   if (out === null) return true; // xterm encodes it normally
   ev.preventDefault();
@@ -135,6 +146,21 @@ $('debug-toggle').addEventListener('click', () => {
   term.focus();
 });
 
+// Ctrl keys the browser reserves: fullscreen + Keyboard Lock, or the palette
+setupFullscreen({
+  button: $('fullscreen-btn') as HTMLButtonElement,
+  palette: $('key-palette'),
+  onChange: () => requestAnimationFrame(fitFont),
+});
+for (const btn of document.querySelectorAll<HTMLButtonElement>('#key-palette .key')) {
+  btn.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus on the game
+  btn.addEventListener('click', () => {
+    // ^T = 0x14 etc.
+    conn.send({ type: 'input', data: String.fromCharCode(btn.dataset.ctrl!.charCodeAt(0) - 64) });
+    term.focus();
+  });
+}
+
 attachHover(term, $('terminal'), $('tooltip'), () => state);
 
 // keep keyboard focus on the game
@@ -151,6 +177,7 @@ document.addEventListener('keydown', (e) => {
   if (active && active !== document.body && active.tagName !== 'BUTTON') return;
   term.focus();
   const awaiting = (state?.awaiting?.kind ?? null) as InputKind | null;
+  if (sendMeta(e, awaiting)) return;
   let out = translateKey(e, awaiting);
   if (out === null) {
     if (e.key === 'Escape') out = '\x1b';

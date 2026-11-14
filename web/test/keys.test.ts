@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { translateKey, type KeyLike } from '../src/keys.ts';
+import { translateKey, translateMeta, type KeyLike } from '../src/keys.ts';
 
 const k = (key: string, code = key, mods: Partial<KeyLike> = {}): KeyLike => ({
   key, code, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...mods,
@@ -44,5 +44,23 @@ describe('translateKey', () => {
     expect(translateKey(k('d', 'KeyD', { ctrlKey: true }), 'command')).toBeNull();
     expect(translateKey(k('4', 'Digit4'), 'command')).toBeNull();
     expect(translateKey(k('i', 'KeyI'), 'command')).toBeNull();
+  });
+});
+
+describe('translateMeta', () => {
+  it('turns Alt+key into the base character of a Meta key', () => {
+    expect(translateMeta(k('d', 'KeyD', { altKey: true }), 'command')).toBe('d');
+    expect(translateMeta(k('C', 'KeyC', { altKey: true, shiftKey: true }), 'command')).toBe('C');
+    // macOS Option+key produces a special character: use the physical key
+    expect(translateMeta(k('∂', 'KeyD', { altKey: true }), 'command')).toBe('d');
+    expect(translateMeta(k('?', 'Slash', { altKey: true, shiftKey: true }), 'command')).toBe('?');
+    expect(translateMeta(k('2', 'Digit2', { altKey: true }), 'command')).toBe('2');
+  });
+
+  it('ignores plain keys, AltGr (Ctrl+Alt), lone modifiers; swallows Alt in text prompts', () => {
+    expect(translateMeta(k('d', 'KeyD'), 'command')).toBeNull();
+    expect(translateMeta(k('@', 'KeyQ', { altKey: true, ctrlKey: true }), 'command')).toBeNull();
+    expect(translateMeta(k('Alt', 'AltLeft', { altKey: true }), 'command')).toBeNull();
+    expect(translateMeta(k('d', 'KeyD', { altKey: true }), 'getlin')).toBe('');
   });
 });

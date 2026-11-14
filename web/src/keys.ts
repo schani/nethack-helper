@@ -78,3 +78,35 @@ export function translateKey(ev: KeyLike, awaiting: InputKind | null): string | 
   if (ev.key === 'Delete' || ev.key === 'Insert') return '';
   return null;
 }
+
+/** base character of a physical key, independent of layout tricks like
+ *  macOS Option producing 'å' for Option+A */
+function baseChar(ev: KeyLike): string | null {
+  let m = /^Key([A-Z])$/.exec(ev.code);
+  if (m) return ev.shiftKey ? m[1] : m[1].toLowerCase();
+  m = /^Digit([0-9])$/.exec(ev.code);
+  if (m && !ev.shiftKey) return m[1];
+  if (ev.key.length === 1 && ev.key >= ' ' && ev.key <= '~') return ev.key;
+  return null;
+}
+
+/**
+ * Alt/Option+key as a NetHack Meta key (M-d = #dip, M-C = #conduct, ...).
+ * Returns the base character to send with the 8th bit set (the server does
+ * that for `{ type: 'input', meta: true }`; nethackrc keeps `altmeta` off,
+ * so tty expects 8-bit Meta rather than an ESC prefix), '' to swallow the
+ * key (Alt+key while typing text), or null if this isn't a Meta key.
+ */
+export function translateMeta(ev: KeyLike, awaiting: InputKind | null): string | null {
+  // Ctrl+Alt is AltGr on many layouts (typing @, {, ...): leave it alone
+  if (!ev.altKey || ev.ctrlKey || ev.metaKey) return null;
+  if (/^(Alt|AltGraph|Shift|Control|Meta)$/.test(ev.key)) return null;
+  const ch = baseChar(ev);
+  if (ch === null) return null;
+  if (awaiting !== null && TEXT_ENTRY.has(awaiting)) return '';
+  return ch;
+}
+
+/** Ctrl+letter combos browsers keep for themselves (close tab, new tab,
+ *  new window) unless the page holds a Keyboard Lock in fullscreen. */
+export const BROWSER_RESERVED_CTRL = ['W', 'T', 'N'] as const;

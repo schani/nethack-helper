@@ -15,6 +15,11 @@ OPTIONS=!mail
 OPTIONS=!rest_on_space
 OPTIONS=suppress_alert:3.4.3
 OPTIONS=msghistory:200
+# Alt/Meta+key: the web UI sends Meta keys with the 8th bit set (M-d =
+# 0xE4), which is what tty expects with altmeta off.  altmeta (ESC prefix)
+# is deliberately not used: with it a lone Esc at the command prompt would
+# swallow the next keystroke as a Meta key.
+OPTIONS=!altmeta
 
 # HP shown in color as it drops
 OPTIONS=statushilites:10

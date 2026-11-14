@@ -77,7 +77,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       } catch {
         return;
       }
-      if (msg.type === 'input' && typeof msg.data === 'string') session.write(msg.data);
+      if (msg.type === 'input' && typeof msg.data === 'string') session.write(msg.data, { meta: msg.meta === true });
       else if (msg.type === 'start') session.start();
     });
     socket.on('close', unsubscribe);

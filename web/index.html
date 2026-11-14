@@ -12,6 +12,7 @@
         <div class="brand">NetHack <span class="ver">5.0</span></div>
         <div class="session" id="session-label">connecting…</div>
         <div class="spacer"></div>
+        <button id="fullscreen-btn" class="btn ghost" type="button">Fullscreen</button>
         <button id="debug-toggle" class="btn ghost" type="button" title="Toggle debug drawer (state feed)">Debug</button>
       </header>
       <main class="layout">
@@ -27,7 +28,12 @@
             </div>
             <div class="tooltip hidden" id="tooltip"></div>
           </div>
-          <div class="hint" id="hint">Keys go to the game. Arrows/numpad move (vi-keys underneath). Hover a map cell for its description.</div>
+          <div class="hint" id="hint">
+            <span>Keys go to the game. Arrows/numpad move, Alt+key = Meta (M-d #dip). Hover a map cell for its description.</span>
+            <span class="keypad" id="key-palette" title="Ctrl keys your browser keeps for itself (Fullscreen captures them in Chrome/Edge)">
+              <button type="button" class="key" data-ctrl="T" title="^T teleport">^T</button><button type="button" class="key" data-ctrl="N" title="^N annotate level">^N</button><button type="button" class="key" data-ctrl="W" title="^W wish (debug mode)">^W</button>
+            </span>
+          </div>
         </section>
         <aside class="assistant-pane">
           <div class="panel-title">Assistant</div>

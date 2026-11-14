@@ -53,6 +53,19 @@ export class TerminalMirror {
     return lines;
   }
 
+  /**
+   * If the text left of the cursor on its row ends with "--More--" (tty is
+   * waiting for the player to acknowledge a message), the row's text before
+   * it; otherwise null.
+   */
+  moreAtCursor(): string | null {
+    const buf = this.term.buffer.active;
+    const line = buf.getLine(buf.viewportY + buf.cursorY)?.translateToString(false) ?? '';
+    const before = line.slice(0, buf.cursorX).trimEnd();
+    if (!before.endsWith('--More--')) return null;
+    return before.slice(0, -'--More--'.length).trim();
+  }
+
   cursor(): { x: number; y: number } {
     const buf = this.term.buffer.active;
     return { x: buf.cursorX, y: buf.cursorY };

@@ -14,6 +14,8 @@ export interface Config {
   /** template copied to <playgroundHome>/.nethackrc on every launch */
   nethackrcTemplate: string;
   feedSocket: string;
+  /** where per-game level memory / message logs are persisted */
+  memoryDir: string;
   playerName: string;
   cols: number;
   rows: number;
@@ -29,8 +31,9 @@ export function loadConfig(env = process.env): Config {
     port: Number(env.PORT ?? 8787),
     nethackBin: env.NETHACK_BIN ?? path.join(prefix, 'games/lib/nethackdir/nethack'),
     playgroundHome: env.NETHACK_HOME ?? path.join(prefix, 'home'),
-    nethackrcTemplate: path.join(ROOT, 'nethack/nethackrc'),
+    nethackrcTemplate: env.NETHACKRC_TEMPLATE ?? path.join(ROOT, 'nethack/nethackrc'),
     feedSocket: env.NETHACK_FEED_SOCKET_PATH ?? path.join(ROOT, '.cache/run', `feed-${process.pid}.sock`),
+    memoryDir: env.NETHACK_MEMORY_DIR ?? path.join(prefix, 'memory'),
     playerName: env.NETHACK_PLAYER ?? 'Wanderer',
     cols: 80,
     rows: 24,

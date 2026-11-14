@@ -32,7 +32,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 8px; max-width: 100%; }
 #terminal .xterm { padding: 0; }
 #terminal .xterm-viewport { overflow: hidden !important; background: #fdfdfb !important; }
-.hint { color: var(--muted); font-size: 12px; }
+.hint { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.keypad { display: inline-flex; gap: 3px; }
+.keypad .key { font: 11px/1 var(--mono); padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--panel); color: var(--muted); cursor: pointer; }
+.keypad .key:hover { color: var(--text); border-color: #b9b5a8; }
+:fullscreen .layout { padding: 8px; }
 
 .assistant-pane { flex: 0 0 300px; display: flex; flex-direction: column; background: var(--panel);
   border: 1px solid var(--border); border-radius: 8px; }
@@ -53,7 +58,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   font-size: 12px; }
 .tip-head { font-weight: 600; font-family: var(--mono); }
 .tip-body { color: #3d3a33; }
-.tip-meta { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-top: 2px; }
 
 .drawer { background: var(--panel); border-top: 1px solid var(--border); height: 42vh; display: flex; flex-direction: column; }
 .drawer.collapsed { display: none; }

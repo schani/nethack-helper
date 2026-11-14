@@ -6,6 +6,7 @@ import type { Config } from '../config.ts';
 import { FeedListener } from '../feed/socket.ts';
 import { GameStateStore } from '../feed/state.ts';
 import { TerminalMirror } from './terminal.ts';
+import { MemoryRepository } from './memory.ts';
 import type { FeedEvent, GameState, MapCell, SessionInfo } from '../../../shared/feed-events.ts';
 
 const require = createRequire(import.meta.url);
@@ -21,10 +22,22 @@ export interface SessionSubscriber {
 }
 
 // Keys the browser may send that must never reach the game:
-// ^Z would SIGTSTP nethack with nobody to resume it.
-const BLOCKED_INPUT = /\x1a/g;
+// ^Z would SIGTSTP nethack with nobody to resume it.  Non-ASCII can't be
+// typed into NetHack (C locale); its UTF-8 bytes would read as Meta keys.
+const BLOCKED_INPUT = /[\x1a\u0080-\uffff]/g;
 
 const STATE_THROTTLE_MS = 150;
+/** minimum time between two writes of the persisted game memory */
+const PERSIST_INTERVAL_MS = 2000;
+
+/** Encode keystrokes for the pty; `meta` sets the 8th bit of every byte
+ *  (NetHack's M-<key> with the default `altmeta` off). */
+export function encodeInput(data: string, meta = false): Buffer {
+  const clean = data.replace(BLOCKED_INPUT, '');
+  const bytes = Buffer.from(clean, 'latin1');
+  if (meta) for (let i = 0; i < bytes.length; i++) bytes[i] |= 0x80;
+  return bytes;
+}
 
 /**
  * Game session service: owns the nethack process (pty), its feed socket,
@@ -40,12 +53,17 @@ export class GameSession {
   private stateTimer: NodeJS.Timeout | null = null;
   private exitWaiters: Array<() => void> = [];
   private feedListeners = new Set<(ev: FeedEvent) => void>();
+  readonly memory: MemoryRepository;
+  private persistTimer: NodeJS.Timeout | null = null;
+  private persistedVersion = -1;
+  private lastPersist = 0;
 
   private cfg: Config;
 
   constructor(cfg: Config) {
     this.cfg = cfg;
-    this.store = new GameStateStore(cfg.playerName);
+    this.memory = new MemoryRepository(cfg.memoryDir);
+    this.store = new GameStateStore(cfg.playerName, { loadMemory: (id) => this.memory.load(id) });
     this.mirror = new TerminalMirror(cfg.cols, cfg.rows);
     this.feed = new FeedListener(cfg.feedSocket, {
       onEvent: (ev) => this.onFeedEvent(ev),
@@ -119,6 +137,7 @@ export class GameSession {
       if (this.proc !== proc) return;
       this.mirror.write(data, () => {
         for (const sub of this.subscribers) sub.output(data);
+        this.reconcileScreen();
       });
     });
     proc.onExit(({ exitCode, signal }) => {
@@ -130,6 +149,7 @@ export class GameSession {
       s.exitCode = exitCode;
       s.signal = signal ?? null;
       this.store.version++;
+      this.persistNow();
       // let the last bytes reach the mirror/clients before announcing
       this.mirror.barrier(() => {
         for (const sub of this.subscribers) sub.session(this.info());
@@ -142,11 +162,11 @@ export class GameSession {
     return true;
   }
 
-  /** Keystrokes from the player. */
-  write(data: string) {
+  /** Keystrokes from the player (`meta`: send as Meta/Alt keys). */
+  write(data: string, opts: { meta?: boolean } = {}) {
     if (!this.proc) return;
-    const clean = data.replace(BLOCKED_INPUT, '');
-    if (clean) this.proc.write(clean);
+    const bytes = encodeInput(data, opts.meta);
+    if (bytes.length) this.proc.write(bytes);
   }
 
   /**
@@ -168,6 +188,7 @@ export class GameSession {
   async shutdown() {
     await this.stop('SIGHUP');
     await this.feed.close();
+    this.persistNow();
     this.mirror.dispose();
   }
 
@@ -203,8 +224,45 @@ export class GameSession {
 
   private onFeedEvent(ev: FeedEvent) {
     this.store.apply(ev);
+    if (ev.t === 'game' && ev.origin === 'new' && this.store.gameIdentity) {
+      try {
+        this.memory.pruneOthers(this.store.gameIdentity.id);
+      } catch (e) {
+        console.error('pruning game memory failed:', e);
+      }
+    }
     for (const fn of this.feedListeners) fn(ev);
     this.scheduleState();
+    this.schedulePersist();
+  }
+
+  /** The authoritative screen says tty is showing its own --More--? */
+  private reconcileScreen() {
+    if (this.store.setScreenMore(this.mirror.moreAtCursor())) this.scheduleState();
+  }
+
+  /** Throttled, atomic write of the game memory (levels, messages). */
+  private schedulePersist() {
+    if (this.persistTimer || this.store.memoryVersion === this.persistedVersion || !this.store.gameIdentity) return;
+    const wait = Math.max(0, this.lastPersist + PERSIST_INTERVAL_MS - Date.now());
+    this.persistTimer = setTimeout(() => this.persistNow(), wait);
+  }
+
+  /** Write the game memory now if it changed. */
+  persistNow() {
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = null;
+    if (this.store.memoryVersion === this.persistedVersion) return;
+    const mem = this.store.exportMemory();
+    if (!mem) return;
+    const version = this.store.memoryVersion;
+    try {
+      this.memory.save(mem);
+      this.persistedVersion = version;
+    } catch (e) {
+      console.error('saving game memory failed:', e);
+    }
+    this.lastPersist = Date.now();
   }
 
   private scheduleState() {

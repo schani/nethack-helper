@@ -14,19 +14,40 @@
  * The event schema is documented in shared/feed-events.ts in the
  * nethack-web repository; keep the two in sync.
  *
+ * The feed must never change the game.  Reading plain state (glyphs,
+ * status fields, u.uz, ...) is harmless, but NetHack's naming and farlook
+ * code is not: do_screen_description()/lookat() mark nearby objects as
+ * seen up close (dknown, oc_encountered, disco[]), create and free fake
+ * objects for remembered-but-gone items (mksobj -> next_ident() -> rnd(),
+ * i.e. it consumes the core RNG and bumps the o_id counter), set trap
+ * tseen, mimic M_AP_F_DKNOWN, cleric bknown, may "find" artifacts
+ * (livelog), and doname() on inventory does the same for items picked up
+ * while blind.  All such text is therefore computed in a short-lived
+ * forked child (see "sandbox" below) that reports the strings back over a
+ * pipe and _exit()s; the game process itself only ever reads its own
+ * memory.  The child is fenced off from the file system and terminal.
+ *
  * NetHack may be freely redistributed.  See license for details.
  */
 
 #include "hack.h"
 #include "dungeon.h"
+#ifdef TTY_GRAPHICS
+#include "wintty.h"
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
-#define FEED_SCHEMA_VERSION 1
+#define FEED_SCHEMA_VERSION 2
 
 /* ------------------------------------------------------------------ */
 /* prototypes                                                          */
@@ -325,6 +346,207 @@ feed_open(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* sandbox: side-effect free evaluation of NetHack's text functions    */
+
+#define FEED_SANDBOX_TIMEOUT_MS 4000
+
+/* child side: buffered writer of NUL-terminated strings */
+static int sb_wfd = -1;
+static char sb_wbuf[16384];
+static size_t sb_wlen = 0;
+
+static void
+sb_flushw(void)
+{
+    size_t off = 0;
+
+    while (off < sb_wlen) {
+        ssize_t w = write(sb_wfd, sb_wbuf + off, sb_wlen - off);
+
+        if (w < 0) {
+            if (errno == EINTR)
+                continue;
+            _exit(3);
+        }
+        off += (size_t) w;
+    }
+    sb_wlen = 0;
+}
+
+static void
+sb_put(const char *s)
+{
+    size_t n = strlen(s ? s : "") + 1;
+
+    if (sb_wlen + n > sizeof sb_wbuf)
+        sb_flushw();
+    if (n > sizeof sb_wbuf) /* can't happen for BUFSZ strings */
+        n = sizeof sb_wbuf, s = "";
+    memcpy(sb_wbuf + sb_wlen, s ? s : "", n);
+    sb_wlen += n;
+}
+
+/* Make the forked child harmless: whatever the description code does in
+   there (including impossible()/panic() paths) must not reach the
+   terminal, the playground files, the feed socket or other processes. */
+static void
+sandbox_child_init(int wfd)
+{
+    static const int dflsigs[] = {
+        SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGSEGV, SIGBUS, SIGFPE,
+        SIGILL, SIGABRT, SIGPIPE, SIGALRM, SIGUSR1, SIGUSR2,
+    };
+    struct rlimit zero;
+    int i, nul, inp[2];
+
+    for (i = 0; i < SIZE(dflsigs); i++)
+        (void) signal(dflsigs[i], SIG_DFL);
+    (void) signal(SIGXFSZ, SIG_IGN); /* file writes fail instead */
+    (void) alarm(FEED_SANDBOX_TIMEOUT_MS / 1000 + 1); /* backstop */
+    zero.rlim_cur = zero.rlim_max = 0;
+    (void) setrlimit(RLIMIT_FSIZE, &zero); /* no file data */
+    (void) setrlimit(RLIMIT_NPROC, &zero); /* no helper processes */
+    (void) setrlimit(RLIMIT_CORE, &zero);
+    /* relative paths (save/, lock files, logs) resolve somewhere
+       nothing can be created */
+    if (chdir("/proc") < 0)
+        (void) chdir("/");
+    /* terminal: output discarded; input blocks forever (never EOF, which
+       NetHack would treat as a hangup and try to save) */
+    nul = open("/dev/null", O_RDWR);
+    if (pipe(inp) == 0)
+        (void) dup2(inp[0], 0);
+    if (nul >= 0) {
+        (void) dup2(nul, 1);
+        (void) dup2(nul, 2);
+    }
+    if (feed_fd >= 0)
+        (void) close(feed_fd);
+    feed_fd = -1;
+    sb_wfd = wfd;
+    sb_wlen = 0;
+    /* belt and braces for the paths above */
+    program_state.panicking = 1;   /* panic() -> abort() right away */
+    program_state.in_paniclog = 1; /* no paniclog writes */
+    sysopt.livelog = 0L;
+    sysopt.crashreporturl = (char *) 0;
+}
+
+/* parent side: collected output of the last sandbox run */
+static char *sb_data = 0;
+static size_t sb_len = 0, sb_cap = 0, sb_pos = 0;
+static unsigned long feed_sandbox_runs = 0, feed_sandbox_failures = 0;
+
+static long
+mono_ms(void)
+{
+    struct timespec ts;
+
+    (void) clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long) ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+/* Run fn(arg) in a forked child; its sb_put() strings become available
+   through sb_next().  Returns FALSE if the child failed (sb_next() then
+   yields whatever arrived completely, followed by ""). */
+static boolean
+sandbox_run(void (*fn)(genericptr_t), genericptr_t arg)
+{
+    int pfd[2], status = 0;
+    pid_t pid;
+    long deadline;
+    boolean ok = TRUE, eof = FALSE;
+
+    sb_len = sb_pos = 0;
+    ++feed_sandbox_runs;
+    if (pipe(pfd) < 0) {
+        ++feed_sandbox_failures;
+        return FALSE;
+    }
+    pid = fork();
+    if (pid < 0) {
+        (void) close(pfd[0]);
+        (void) close(pfd[1]);
+        ++feed_sandbox_failures;
+        return FALSE;
+    }
+    if (pid == 0) {
+        (void) close(pfd[0]);
+        sandbox_child_init(pfd[1]);
+        (*fn)(arg);
+        sb_flushw();
+        _exit(0);
+    }
+    (void) close(pfd[1]);
+    deadline = mono_ms() + FEED_SANDBOX_TIMEOUT_MS;
+    while (!eof) {
+        struct pollfd pf;
+        long left = deadline - mono_ms();
+        int r;
+        ssize_t k;
+
+        if (left <= 0) {
+            ok = FALSE;
+            break;
+        }
+        pf.fd = pfd[0], pf.events = POLLIN, pf.revents = 0;
+        r = poll(&pf, 1, (int) left);
+        if (r < 0 && errno != EINTR) {
+            ok = FALSE;
+            break;
+        }
+        if (r <= 0)
+            continue;
+        if (sb_cap - sb_len < 65536) {
+            size_t ncap = sb_cap ? sb_cap * 2 : 262144;
+            char *nb = (char *) realloc(sb_data, ncap);
+
+            if (!nb) {
+                ok = FALSE;
+                break;
+            }
+            sb_data = nb, sb_cap = ncap;
+        }
+        k = read(pfd[0], sb_data + sb_len, sb_cap - sb_len - 1);
+        if (k < 0) {
+            if (errno == EINTR || errno == EAGAIN)
+                continue;
+            ok = FALSE;
+            break;
+        }
+        if (k == 0)
+            eof = TRUE;
+        sb_len += (size_t) k;
+    }
+    (void) close(pfd[0]);
+    if (!eof)
+        (void) kill(pid, SIGKILL);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        continue;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        ok = FALSE;
+    /* only trust complete (NUL-terminated) strings */
+    while (sb_len > 0 && sb_data[sb_len - 1] != '\0')
+        --sb_len;
+    if (!ok)
+        ++feed_sandbox_failures;
+    return ok;
+}
+
+/* next string produced by the last sandbox run ("" once exhausted) */
+static const char *
+sb_next(void)
+{
+    const char *s;
+
+    if (!sb_data || sb_pos >= sb_len)
+        return "";
+    s = sb_data + sb_pos;
+    sb_pos += strlen(s) + 1;
+    return s;
+}
+
+/* ------------------------------------------------------------------ */
 /* tracked state                                                       */
 
 #define FEED_MAXWIN 64
@@ -332,7 +554,7 @@ static int wintypes[FEED_MAXWIN]; /* NHW_xxx, 0 = unknown */
 
 /* buffered text lines for NHW_TEXT / NHW_MENU windows used as text */
 struct feed_lines {
-    char **lines;
+    char **ln;
     int n, cap;
 };
 static struct feed_lines wintext[FEED_MAXWIN];
@@ -340,6 +562,8 @@ static struct feed_lines wintext[FEED_MAXWIN];
 /* menu under construction per window */
 struct feed_menuitem {
     char ch, gch;
+    char shown; /* selector actually displayed (core's or tty-assigned) */
+    int page;   /* 1-based tty menu page, 0 = unknown */
     int attr, clr;
     boolean selectable, preselected;
     char *text;
@@ -395,7 +619,7 @@ lines_clear(struct feed_lines *fl)
     int i;
 
     for (i = 0; i < fl->n; i++)
-        free(fl->lines[i]);
+        free(fl->ln[i]);
     fl->n = 0;
 }
 
@@ -404,14 +628,14 @@ lines_add(struct feed_lines *fl, const char *s)
 {
     if (fl->n >= fl->cap) {
         int ncap = fl->cap ? fl->cap * 2 : 32;
-        char **nl = (char **) realloc(fl->lines, ncap * sizeof(char *));
+        char **nl = (char **) realloc(fl->ln, ncap * sizeof(char *));
 
         if (!nl)
             return;
-        fl->lines = nl;
+        fl->ln = nl;
         fl->cap = ncap;
     }
-    fl->lines[fl->n++] = dupstr(s ? s : "");
+    fl->ln[fl->n++] = dupstr(s ? s : "");
 }
 
 static void
@@ -498,11 +722,60 @@ emit_level(void)
     last_lev = u.uz;
 }
 
+/* new game vs restored save, decided while the game starts up: both
+   newgame() and dorecover() redraw the map (docrt -> cls ->
+   clear_nhwindow(WIN_MAP)) before the move loop starts; dorecover()
+   sets beyond_savefile_load first, newgame() doesn't (moveloop does). */
+enum { ORIGIN_UNKNOWN = 0, ORIGIN_NEW, ORIGIN_RESTORED };
+static int game_origin = ORIGIN_UNKNOWN;
+static boolean game_sent = FALSE;
+
+static void
+note_origin(winid window)
+{
+    if (program_state.in_moveloop || game_sent)
+        return;
+    if (program_state.restoring)
+        game_origin = ORIGIN_RESTORED;
+    else if (window == WIN_MAP && window != WIN_ERR)
+        game_origin = program_state.beyond_savefile_load ? ORIGIN_RESTORED
+                                                         : ORIGIN_NEW;
+}
+
+/* identity of the game being played; sent once, before the first level */
+static void
+emit_game(void)
+{
+    const char *role;
+
+    if (!ev_begin("game"))
+        return;
+    game_sent = TRUE;
+    jkv_str("origin", game_origin == ORIGIN_NEW ? "new"
+                      : game_origin == ORIGIN_RESTORED ? "restored"
+                        : "unknown");
+    jkv_str("name", svp.plname);
+    jkv_int("birthday", (long) ubirthday);
+    jkv_str("uuid", svn.nhuuid);
+    role = (flags.female && gu.urole.name.f) ? gu.urole.name.f
+                                              : gu.urole.name.m;
+    jkv_str("role", role);
+    jkv_str("race", gu.urace.noun);
+    jkv_str("gender", genders[flags.female ? 1 : 0].adj);
+    jkv_str("alignment", (flags.initalign >= 0 && flags.initalign < 3)
+                             ? aligns[flags.initalign].adj : "");
+    jkv_str("mode", wizard ? "debug" : discover ? "explore" : "normal");
+    jkv_int("turn", svm.moves);
+    ev_end();
+}
+
 static void
 check_level(void)
 {
     if (feed_fd < 0 || !level_valid())
         return;
+    if (!game_sent)
+        emit_game();
     if (!on_level(&last_lev, &u.uz))
         emit_level();
 }
@@ -537,14 +810,88 @@ describe_cell(coordxy x, coordxy y, char *shortbuf, char *longbuf)
     Strcpy(longbuf, p);
 }
 
+/* work for one sandbox run: which texts the next map/inventory events need */
+static size_t sb_inv_pos = 0;
+static struct {
+    int ncells;
+    coordxy x[COLNO * ROWNO], y[COLNO * ROWNO];
+    boolean inv;
+} sbjob;
+
+/* runs in the sandbox child */
+static void
+sandbox_texts(genericptr_t arg)
+{
+    char sbuf[BUFSZ], lbuf[BUFSZ];
+    struct obj *otmp;
+    int i;
+
+    nhUse(arg);
+    for (i = 0; i < sbjob.ncells; i++) {
+        describe_cell(sbjob.x[i], sbjob.y[i], sbuf, lbuf);
+        sb_put(sbuf);
+        sb_put(lbuf);
+    }
+    if (sbjob.inv)
+        for (otmp = gi.invent; otmp; otmp = otmp->nobj)
+            sb_put(doname(otmp));
+}
+
+static boolean
+map_pending(void)
+{
+    return (map_dirty && feed_fd >= 0 && level_valid());
+}
+
+static boolean
+inv_pending(void)
+{
+    return (inv_dirty && feed_fd >= 0
+            && (program_state.in_moveloop || program_state.gameover));
+}
+
+static boolean
+cell_needs_text(struct feed_cell *c)
+{
+    return !glyph_is_unexplored(c->glyph);
+}
+
+/* compute every text the pending map/inventory events need, in one
+   sandboxed child */
+static void
+prepare_texts(void)
+{
+    coordxy x, y;
+    int i;
+
+    sbjob.ncells = 0;
+    sbjob.inv = inv_pending();
+    if (map_pending())
+        for (y = 0; y < ROWNO; y++)
+            for (x = 0; x < COLNO; x++)
+                if (cells[x][y].dirty && cell_needs_text(&cells[x][y])) {
+                    sbjob.x[sbjob.ncells] = x;
+                    sbjob.y[sbjob.ncells] = y;
+                    sbjob.ncells++;
+                }
+    sb_len = sb_pos = 0;
+    if (sbjob.ncells || (sbjob.inv && gi.invent))
+        (void) sandbox_run(sandbox_texts, (genericptr_t) 0);
+    /* inventory texts follow the two strings per described cell */
+    for (i = 0; i < 2 * sbjob.ncells; i++)
+        (void) sb_next();
+    sb_inv_pos = sb_pos;
+    sb_pos = 0;
+}
+
 static void
 emit_map(void)
 {
     coordxy x, y;
     boolean first = TRUE;
-    char sbuf[BUFSZ], lbuf[BUFSZ], chbuf[2];
+    char chbuf[2];
 
-    if (!map_dirty || feed_fd < 0 || !level_valid())
+    if (!map_pending())
         return;
     if (!ev_begin("map"))
         return;
@@ -553,6 +900,7 @@ emit_map(void)
     jchar(',');
     jkey("cells");
     jchar('[');
+    /* same order as prepare_texts() */
     for (y = 0; y < ROWNO; y++) {
         for (x = 0; x < COLNO; x++) {
             struct feed_cell *c = &cells[x][y];
@@ -573,14 +921,13 @@ emit_map(void)
             jkv_int("color", (long) c->color);
             if (c->glyphflags)
                 jkv_int("flags", (long) c->glyphflags);
-            if (glyph_is_unexplored(c->glyph)) {
-                Strcpy(sbuf, "unexplored area");
-                Strcpy(lbuf, sbuf);
+            if (cell_needs_text(c)) {
+                jkv_str("desc", sb_next());
+                jkv_str("look", sb_next());
             } else {
-                describe_cell(x, y, sbuf, lbuf);
+                jkv_str("desc", "unexplored area");
+                jkv_str("look", "unexplored area");
             }
-            jkv_str("desc", sbuf);
-            jkv_str("look", lbuf);
             jchar('}');
         }
     }
@@ -598,10 +945,10 @@ emit_inventory(void)
     boolean first = TRUE;
     char letter[2];
 
-    if (!inv_dirty || feed_fd < 0
-        || !(program_state.in_moveloop || program_state.gameover))
+    if (!inv_pending())
         return;
     inv_dirty = FALSE;
+    sb_pos = sb_inv_pos;
     if (!ev_begin("inventory"))
         return;
     jchar(',');
@@ -617,7 +964,7 @@ emit_inventory(void)
         letter[1] = '\0';
         jcat("{\"letter\":");
         jstr(letter);
-        jkv_str("text", doname(otmp));
+        jkv_str("text", sb_next()); /* doname(), from prepare_texts() */
         letter[0] = def_oc_syms[(int) otmp->oclass].sym;
         jkv_str("class_sym", letter);
         jkv_str("class", def_oc_syms[(int) otmp->oclass].name);
@@ -722,6 +1069,7 @@ feed_flush(void)
     if (feed_fd < 0)
         return;
     check_level();
+    prepare_texts();
     emit_map();
     emit_inventory();
 }
@@ -784,7 +1132,7 @@ emit_text_window(winid w, const char *kind)
         for (i = 0; i < fl->n; i++) {
             if (i)
                 jchar(',');
-            jstr(fl->lines[i]);
+            jstr(fl->ln[i]);
         }
         jchar(']');
         ev_end();
@@ -921,6 +1269,7 @@ feed_clear_nhwindow(void *vp, winid window)
 {
     struct feed_data *tdp = vp;
 
+    note_origin(window);
     if (window == WIN_MAP && window != WIN_ERR) {
         /* level changes clear the map first; announce the new level
            before the clear so consumers keep the old level's memory */
@@ -1091,6 +1440,48 @@ feed_end_menu(void *vp, winid window, const char *prompt)
     (*NEXT(tdp)->win_end_menu)(tdp->ndata, window, prompt);
 }
 
+/* Copy the selector letters tty shows (it assigns a-z/A-Z per page to
+   items the core gave no accelerator) and the page layout from tty's own
+   menu structure, filled in by tty_end_menu().  Returns the page count. */
+static int
+menu_read_tty_layout(winid window, struct feed_menu *m)
+{
+    int i, pages = 0;
+
+    for (i = 0; i < m->n; i++) {
+        m->items[i].shown = m->items[i].ch;
+        m->items[i].page = 0;
+    }
+#ifdef TTY_GRAPHICS
+    if (WINDOWPORT(tty) && window >= 0 && window < MAXWIN && wins[window]
+        && wins[window]->type == NHW_MENU && wins[window]->mlist) {
+        struct WinDesc *cw = wins[window];
+        tty_menu_item *curr;
+        int n = 0, skip, page = 0;
+
+        for (curr = cw->mlist; curr; curr = curr->next)
+            n++;
+        /* tty puts the prompt (blank line + prompt) in front of the items */
+        skip = n - m->n;
+        if (skip < 0)
+            return 0;
+        pages = (int) cw->npages;
+        for (i = -skip, curr = cw->mlist; curr && i < m->n;
+             i++, curr = curr->next) {
+            if (cw->plist && page + 1 < cw->npages
+                && curr == cw->plist[page + 1])
+                page++;
+            if (i < 0)
+                continue;
+            if (curr->identifier.a_void)
+                m->items[i].shown = curr->selector;
+            m->items[i].page = page + 1;
+        }
+    }
+#endif
+    return pages;
+}
+
 int
 feed_select_menu(void *vp, winid window, int how, MENU_ITEM_P **menu_list)
 {
@@ -1101,11 +1492,14 @@ feed_select_menu(void *vp, winid window, int how, MENU_ITEM_P **menu_list)
     if (valid_win(window) && ev_begin("menu")) {
         struct feed_menu *m = &winmenu[window];
         char cbuf[2];
+        int pages = menu_read_tty_layout(window, m);
 
         jkv_int("win", (long) window);
         jkv_str("how", how == PICK_NONE ? "none"
                        : how == PICK_ONE ? "one" : "any");
         jkv_str("prompt", m->prompt ? m->prompt : "");
+        if (pages)
+            jkv_int("pages", (long) pages);
         jchar(',');
         jkey("items");
         jchar('[');
@@ -1116,9 +1510,13 @@ feed_select_menu(void *vp, winid window, int how, MENU_ITEM_P **menu_list)
                 jchar(',');
             jcat("{\"text\":");
             jstr(it->text);
-            cbuf[0] = it->ch, cbuf[1] = '\0';
-            if (it->ch)
+            cbuf[0] = it->shown, cbuf[1] = '\0';
+            if (it->shown)
                 jkv_str("ch", cbuf);
+            if (it->shown && !it->ch)
+                jkv_bool("assigned", TRUE);
+            if (it->page)
+                jkv_int("page", (long) it->page);
             jkv_bool("selectable", it->selectable);
             if (it->preselected)
                 jkv_bool("selected", TRUE);

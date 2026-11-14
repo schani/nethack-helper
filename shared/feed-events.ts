@@ -19,9 +19,12 @@
  *  - Everything reported is what the player can legitimately know: map
  *    cells are the displayed/remembered glyphs, and descriptions come from
  *    NetHack's own farlook code (do_screen_description) applied to them.
+ *  - The feed never changes the game: farlook/doname texts are computed in
+ *    a throw-away forked copy of the game process (see wc_feed.c), so
+ *    describing a cell does not mark objects as seen, consume the RNG, etc.
  */
 
-export const FEED_SCHEMA_VERSION = 1;
+export const FEED_SCHEMA_VERSION = 2;
 
 interface EventBase {
   /** event type */
@@ -41,6 +44,30 @@ export interface HelloEvent extends EventBase {
   /** map dimensions (COLNO, ROWNO) */
   cols: number;
   rows: number;
+}
+
+/**
+ * Identity of the game being played.  Sent once per nethack process, when
+ * the move loop starts (before the first `level` event).
+ */
+export interface GameEvent extends EventBase {
+  t: 'game';
+  /** started fresh (character creation) or restored from a save file;
+   *  'unknown' should not happen */
+  origin: 'new' | 'restored' | 'unknown';
+  /** character name (plname) */
+  name: string;
+  /** u.ubirthday: unix time the character was created; with `name` this
+   *  identifies the game across save/restore */
+  birthday: number;
+  /** NetHack's per-game UUID (svn.nhuuid; may be empty) */
+  uuid: string;
+  role: string;
+  race: string;
+  gender: string;
+  alignment: string;
+  mode: 'normal' | 'explore' | 'debug';
+  turn: number;
 }
 
 /** Hero arrived on a (different) level. Sent before the map_clear/map batch. */
@@ -196,8 +223,14 @@ export interface AnswerEvent extends EventBase {
 
 export interface MenuItem {
   text: string;
-  /** accelerator if the core supplied one (tty assigns a-z itself otherwise) */
+  /** selection letter shown on screen: the core's accelerator, or the one
+   *  tty assigned itself (a-z, A-Z, restarting on every page) */
   ch?: string;
+  /** true when `ch` was assigned by tty rather than by the game core */
+  assigned?: boolean;
+  /** 1-based tty menu page the item is shown on (letters are only valid
+   *  on their own page) */
+  page?: number;
   selectable: boolean;
   selected?: boolean;
   attr?: number;
@@ -209,6 +242,8 @@ export interface MenuEvent extends EventBase {
   win: number;
   how: 'none' | 'one' | 'any';
   prompt: string;
+  /** number of tty pages ('>' / '<' to flip) */
+  pages?: number;
   items: MenuItem[];
 }
 
@@ -246,14 +281,14 @@ export interface ExitEvent extends EventBase {
 }
 
 export type FeedEvent =
-  | HelloEvent | LevelEvent | MapClearEvent | MapEvent | StatusEvent
+  | HelloEvent | GameEvent | LevelEvent | MapClearEvent | MapEvent | StatusEvent
   | MsgEvent | InventoryEvent | InputEvent | AnswerEvent | MenuEvent
   | MenuDoneEvent | TextEvent | DisplayFileEvent | GameOverEvent | ExitEvent;
 
 export type FeedEventType = FeedEvent['t'];
 
 export const FEED_EVENT_TYPES: readonly FeedEventType[] = [
-  'hello', 'level', 'map_clear', 'map', 'status', 'msg', 'inventory',
+  'hello', 'game', 'level', 'map_clear', 'map', 'status', 'msg', 'inventory',
   'input', 'answer', 'menu', 'menu_done', 'text', 'display_file',
   'gameover', 'exit',
 ];
@@ -279,7 +314,8 @@ export interface LevelMemory {
   /** "dnum:dlevel" */
   key: string;
   info: LevelInfo | null;
-  /** remembered cells (anything not shown here is unexplored) */
+  /** remembered cells.  Anything not listed is blank: unexplored, or
+   *  solid rock shown as blank (e.g. after magic mapping) */
   cells: MapCell[];
   /** ASCII rendering of the remembered map, ROWNO lines (index = y) */
   rows: string[];
@@ -294,14 +330,38 @@ export interface MessageEntry {
   source?: MsgEvent['source'];
 }
 
+/** GameEvent plus a stable id used to key persisted memory */
+export interface GameIdentity extends Omit<GameEvent, 't' | 'seq' | 'turn'> {
+  /** "<name>-<birthday>" (filesystem safe) */
+  id: string;
+}
+
+/** What the game is waiting for.  `source` tells whether this came from the
+ *  feed, or from the terminal screen when tty raised a --More-- by itself
+ *  (message line overflow), which the feed cannot see. */
+export type Awaiting = Omit<InputEvent, 't'> & { source: 'feed' | 'screen' };
+
+/** Level memory and message log persisted per game (server data dir). */
+export interface PersistedMemory {
+  format: 1;
+  game: GameIdentity;
+  savedAt: string;
+  turn: number;
+  currentLevel: string | null;
+  levels: Array<{ key: string; info: LevelInfo | null; cells: MapCell[]; lastSeenTurn: number }>;
+  messages: MessageEntry[];
+}
+
 export interface GameState {
   /** nethack process session */
   session: SessionInfo;
+  /** the game being played (null until the feed announces it) */
+  game: (GameIdentity & { memoryRestored: boolean }) | null;
   feed: { connected: boolean; lastSeq: number; events: number; parseErrors: number; schema: number | null };
   turn: number;
   hero: { x: number; y: number } | null;
   status: { fields: StatusEvent['fields']; conditions: string[] } | null;
-  awaiting: Omit<InputEvent, 't'> | null;
+  awaiting: Awaiting | null;
   currentLevel: string | null;
   levels: Record<string, LevelMemory>;
   messages: MessageEntry[];
@@ -339,7 +399,10 @@ export type ServerMessage =
   | { type: 'state'; state: GameState };
 
 export type ClientMessage =
-  /** keystrokes to send to the game */
-  | { type: 'input'; data: string }
+  /** keystrokes to send to the game.  `data` is 7-bit: anything else can't
+   *  be typed into NetHack (C locale) and would be misread as Meta keys, so
+   *  the server drops it.  `meta: true` sends every character as a Meta key
+   *  (8th bit set, what NetHack expects with altmeta off), e.g. M-d = #dip. */
+  | { type: 'input'; data: string; meta?: boolean }
   /** start a new game / resume the saved one (no-op while running) */
   | { type: 'start' };

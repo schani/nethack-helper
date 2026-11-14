@@ -80,7 +80,8 @@ export class DebugDrawer {
     col1.append(kv('turn', String(st.turn)));
     col1.append(kv('hero', st.hero ? `${st.hero.x},${st.hero.y}` : '-'));
     const aw = st.awaiting;
-    col1.append(kv('awaiting', aw ? `${aw.kind}${aw.prompt ? `: ${aw.prompt}` : ''}` : '-'));
+    col1.append(kv('awaiting', aw ? `${aw.kind}${aw.source === 'screen' ? ' (tty)' : ''}${aw.prompt ? `: ${aw.prompt}` : ''}` : '-'));
+    col1.append(kv('game', st.game ? `${st.game.id} (${st.game.origin}${st.game.memoryRestored ? ', memory restored' : ''})` : '-'));
     const lvl = st.currentLevel ? st.levels[st.currentLevel]?.info : null;
     col1.append(kv('level', lvl ? `${lvl.long_desc} (${st.currentLevel})${lvl.known.length ? ' ' + lvl.known.join(',') : ''}` : '-'));
     col1.append(kv('levels seen', Object.keys(st.levels).join(' ') || '-'));
@@ -104,7 +105,7 @@ export class DebugDrawer {
     col2.append(msgs);
     if (st.menu) {
       col2.append(el('h4', '', `Open menu: ${st.menu.prompt}`));
-      col2.append(el('pre', 'menu', st.menu.items.map((i) => `${i.ch ?? ' '} ${i.text}`).join('\n')));
+      col2.append(el('pre', 'menu', st.menu.items.map((i) => `${i.page && st.menu!.pages ? `p${i.page} ` : ''}${i.ch ?? ' '} ${i.text}`).join('\n')));
     }
 
     const col3 = el('div', 'col wide');

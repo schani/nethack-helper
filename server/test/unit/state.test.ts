@@ -25,6 +25,8 @@ const cell = (x: number, y: number, ch: string, desc: string, extra: Partial<Map
 });
 const level = (dnum: number, dlevel: number) =>
   ev({ t: 'level', dnum, dlevel, depth: dlevel, dungeon: 'The Dungeons of Doom', desc: `Dlvl:${dlevel}`, long_desc: `level ${dlevel}`, known: [] });
+const game = (origin: 'new' | 'restored', birthday: number, turn = 1, uuid = 'u-1') =>
+  ev({ t: 'game', origin, name: 'fixture', birthday, uuid, role: 'Valkyrie', race: 'human', gender: 'female', alignment: 'neutral', mode: 'normal', turn });
 const status = (turn: number) => ev({ t: 'status', fields: { hp: '10', hp_max: '12', time: String(turn) }, conditions: [], turn });
 
 describe('GameStateStore with a recorded new-game feed', () => {
@@ -104,27 +106,109 @@ describe('GameStateStore level memory', () => {
     expect(cells[0]).toMatchObject({ x: 5, desc: 'floor of a room' });
   });
 
-  it('keeps level memory when a saved game is restored, forgets it for a new game', () => {
+  it('keeps level memory when the same game is restored, forgets it for a new game', () => {
     const s = new GameStateStore();
+    s.apply(game('new', 1000));
     s.apply(status(1));
     s.apply(level(0, 1));
     s.apply(ev({ t: 'map', dnum: 0, dlevel: 1, cells: [cell(10, 5, '{', 'fountain')], ux: 1, uy: 1 }));
+    s.apply(ev({ t: 'msg', text: 'Hello, welcome to NetHack!', turn: 1 }));
     s.apply(status(200));
     s.apply(level(0, 2));
 
-    // restore at turn 200: memory of 0:1 is kept
+    // the same game restored by a new process: memory of 0:1 is kept and
+    // the message history NetHack replays is not duplicated
     s.resetForNewProcess();
-    s.apply(ev({ t: 'hello', schema: 1, pid: 2, version_major: 5, version_minor: 0, patchlevel: 0, cols: 80, rows: 21 }));
-    s.apply(status(200));
+    s.apply(ev({ t: 'hello', schema: 2, pid: 2, version_major: 5, version_minor: 0, patchlevel: 0, cols: 80, rows: 21 }));
+    s.apply(ev({ t: 'msg', text: 'Hello, welcome to NetHack!', turn: 200, source: 'history' }));
+    s.apply(ev({ t: 'msg', text: 'Restoring save file...', turn: 200 }));
+    s.apply(game('restored', 1000, 200));
     s.apply(level(0, 2));
     expect(Object.keys(s.snapshot().levels).sort()).toEqual(['0:1', '0:2']);
+    expect(s.snapshot().messages.map((m) => m.text)).toEqual(['Hello, welcome to NetHack!', 'Restoring save file...']);
 
-    // brand-new character (turn 1): previous game's levels are dropped
+    // a new character, even at a high turn count or with a game id seen
+    // before: previous memory is dropped (decided by the feed, not the turn)
     s.resetForNewProcess();
-    s.apply(status(1));
+    s.apply(ev({ t: 'msg', text: 'Hello again, welcome to NetHack!', turn: 1 }));
+    s.apply(game('new', 2000));
     s.apply(level(0, 1));
     expect(Object.keys(s.snapshot().levels)).toEqual(['0:1']);
     expect(s.snapshot().levels['0:1'].cells).toHaveLength(0);
+    expect(s.snapshot().messages.map((m) => m.text)).toEqual(['Hello again, welcome to NetHack!']);
+    expect(s.snapshot().game).toMatchObject({ id: 'fixture-2000', origin: 'new', memoryRestored: false });
+  });
+
+  it('restores persisted memory for a restored game (server restart)', () => {
+    const first = new GameStateStore();
+    first.apply(game('new', 1234));
+    first.apply(level(0, 1));
+    first.apply(ev({ t: 'map', dnum: 0, dlevel: 1, cells: [cell(10, 5, '{', 'fountain')], ux: 10, uy: 5 }));
+    first.apply(ev({ t: 'msg', text: 'You see a fountain.', turn: 3 }));
+    first.apply(level(0, 2));
+    first.apply(ev({ t: 'map', dnum: 0, dlevel: 2, cells: [cell(3, 3, '>', 'staircase down')], ux: 3, uy: 3 }));
+    const saved = JSON.parse(JSON.stringify(first.exportMemory()));
+    expect(saved.game.id).toBe('fixture-1234');
+
+    const loads: string[] = [];
+    const second = new GameStateStore('fixture', {
+      loadMemory: (id) => {
+        loads.push(id);
+        return id === saved.game.id ? saved : null;
+      },
+    });
+    second.resetForNewProcess();
+    second.apply(ev({ t: 'msg', text: 'You see a fountain.', turn: 3, source: 'history' }));
+    second.apply(game('restored', 1234, 40));
+    second.apply(level(0, 2));
+    const snap = second.snapshot();
+    expect(loads).toEqual(['fixture-1234']);
+    expect(snap.game).toMatchObject({ origin: 'restored', memoryRestored: true });
+    expect(snap.levels['0:1'].cells.map((c) => c.desc)).toEqual(['fountain']);
+    expect(snap.messages.map((m) => m.text)).toEqual(['You see a fountain.']); // history replay dropped
+
+    // another game of the same name (different birthday) does not get it
+    const third = new GameStateStore('fixture', { loadMemory: (id) => (id === saved.game.id ? saved : null) });
+    third.apply(game('restored', 999));
+    expect(third.snapshot().levels).toEqual({});
+    // nor does a game whose NetHack uuid differs
+    const fourth = new GameStateStore('fixture', { loadMemory: () => saved });
+    fourth.apply(game('restored', 1234, 1, 'other-uuid'));
+    expect(fourth.snapshot().game?.memoryRestored).toBe(false);
+    // new games never load
+    const fifth = new GameStateStore('fixture', { loadMemory: () => saved });
+    fifth.apply(game('new', 1234));
+    expect(fifth.snapshot().levels).toEqual({});
+  });
+
+  it('does not store blank stone or unexplored cells (magic mapping)', () => {
+    const s = new GameStateStore();
+    s.apply(level(0, 1));
+    const cells: MapCell[] = [];
+    for (let x = 1; x < 80; x++) for (let y = 0; y < 21; y++) cells.push(cell(x, y, ' ', 'stone'));
+    cells.push(cell(5, 5, '#', 'corridor'), cell(6, 5, ' ', 'dark part of a room'), cell(7, 5, ' ', 'unexplored'));
+    s.apply(ev({ t: 'map', dnum: 0, dlevel: 1, cells, ux: 5, uy: 5 }));
+    const stored = s.snapshot().levels['0:1'].cells;
+    expect(stored.map((c) => c.desc).sort()).toEqual(['corridor', 'dark part of a room']);
+    // a remembered cell that turns blank is forgotten
+    s.apply(ev({ t: 'map', dnum: 0, dlevel: 1, cells: [cell(5, 5, ' ', 'stone')], ux: 5, uy: 5 }));
+    expect(s.snapshot().levels['0:1'].cells.map((c) => c.desc)).toEqual(['dark part of a room']);
+  });
+
+  it('reports a tty-raised --More-- seen on the screen over a stale feed prompt', () => {
+    const s = new GameStateStore();
+    s.apply(status(12));
+    s.apply(ev({ t: 'input', kind: 'command', turn: 12, ux: 4, uy: 4 }));
+    expect(s.snapshot().awaiting).toMatchObject({ kind: 'command', source: 'feed' });
+    expect(s.setScreenMore('You hit the jackal.  The jackal bites!')).toBe(true);
+    expect(s.setScreenMore('You hit the jackal.  The jackal bites!')).toBe(false);
+    expect(s.snapshot().awaiting).toMatchObject({ kind: 'more', source: 'screen', prompt: 'You hit the jackal.  The jackal bites!', turn: 12 });
+    s.setScreenMore(null);
+    expect(s.snapshot().awaiting).toMatchObject({ kind: 'command', source: 'feed' });
+    // a --More-- the feed already knows about stays the feed's
+    s.apply(ev({ t: 'input', kind: 'more', turn: 12 }));
+    s.setScreenMore('Something');
+    expect(s.snapshot().awaiting).toMatchObject({ kind: 'more', source: 'feed' });
   });
 
   it('bounds the message buffer', () => {

@@ -2,7 +2,7 @@ import type { Terminal } from '@xterm/xterm';
 import type { GameState, MapCell } from '../../shared/feed-events.ts';
 
 /**
- * Debug aid: hovering a map cell shows NetHack's farlook description of it
+ * Hovering a map cell shows NetHack's farlook description of it
  * (from the state feed).  Map coordinates: x = column + 1, y = row - 1.
  */
 export function attachHover(term: Terminal, host: HTMLElement, tip: HTMLElement, getState: () => GameState | null) {
@@ -40,10 +40,7 @@ export function attachHover(term: Terminal, host: HTMLElement, tip: HTMLElement,
     const body = document.createElement('div');
     body.className = 'tip-body';
     body.textContent = cell.look;
-    const meta = document.createElement('div');
-    meta.className = 'tip-meta';
-    meta.textContent = `x=${x} y=${y} glyph=${cell.glyph} color=${cell.color}${cell.flags ? ` flags=0x${cell.flags.toString(16)}` : ''}`;
-    tip.append(head, body, meta);
+    tip.append(head, body);
     const wrap = host.parentElement!.getBoundingClientRect();
     tip.style.left = `${Math.min(e.clientX - wrap.left + 14, wrap.width - 300)}px`;
     tip.style.top = `${e.clientY - wrap.top + 18}px`;

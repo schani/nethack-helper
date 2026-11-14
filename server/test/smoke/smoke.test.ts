@@ -23,9 +23,18 @@ const PLAYER = 'smoketest';
 let server: ChildProcess | null = null;
 let serverLog = '';
 let home = '';
+let memoryDir = '';
+let firstGameId = '';
 
 const getState = async (): Promise<GameState> => (await fetch(`${BASE}/api/state`)).json() as Promise<GameState>;
 const getScreen = async (): Promise<string> => (await fetch(`${BASE}/api/screen`)).text();
+const getScreenJson = async (): Promise<{ lines: string[]; cursor: { x: number; y: number } }> =>
+  (await fetch(`${BASE}/api/screen?format=json`)).json() as never;
+/** tty is showing --More-- at the cursor (what the game actually waits for) */
+const moreAtCursor = async () => {
+  const s = await getScreenJson();
+  return s.lines[s.cursor.y].slice(0, s.cursor.x).trimEnd().endsWith('--More--');
+};
 const screenHas = (re: RegExp) => async () => re.test(await getScreen());
 
 function cleanupGameFiles() {
@@ -55,6 +64,8 @@ async function startServer() {
       NETHACK_PLAYER: PLAYER,
       NETHACK_HOME: home,
       NETHACK_FEED_SOCKET_PATH: path.join(home, 'feed.sock'),
+      NETHACK_MEMORY_DIR: memoryDir,
+      NETHACKRC_TEMPLATE: path.join(home, 'nethackrc.template'),
       LOG: '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -93,6 +104,14 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     expect(fs.existsSync(path.join(HACKDIR, 'nethack')), 'run nethack/build.sh first').toBe(true);
     cleanupGameFiles();
     home = fs.mkdtempSync(path.join(os.tmpdir(), 'nethack-smoke-'));
+    memoryDir = path.join(home, 'memory');
+    // fixed character (Valkyrie: known starting inventory) + pushweapon,
+    // which makes wielding print two long messages -> tty's own --More--
+    fs.writeFileSync(
+      path.join(home, 'nethackrc.template'),
+      fs.readFileSync(path.join(ROOT, 'nethack/nethackrc'), 'utf8') +
+        '\nOPTIONS=role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=pushweapon\n',
+    );
     await startServer();
   }, 30000);
 
@@ -119,13 +138,19 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     const hero = st.levels['0:1'].cells.find((cl) => cl.x === st.hero!.x && cl.y === st.hero!.y);
     expect(hero?.ch).toBe('@');
     expect(hero?.desc).toContain(`called ${PLAYER}`);
+    // the feed announced a brand-new game and its identity
+    expect(st.game).toMatchObject({ origin: 'new', name: PLAYER, role: 'Valkyrie', memoryRestored: false });
+    expect(st.game!.id).toBe(`${PLAYER}-${st.game!.birthday}`);
+    firstGameId = st.game!.id;
+    // blank solid rock is never stored
+    expect(st.levels['0:1'].cells.some((cl) => cl.ch === ' ' && /^(stone|unexplored)/.test(cl.desc))).toBe(false);
+    // level memory is persisted (throttled) under the game id
+    await waitFor(() => fs.existsSync(path.join(memoryDir, `${firstGameId}.json`)), 'memory file', 5000);
 
     const screen = await getScreen();
     expect(screen).toMatch(/Dlvl:1/);
     // the hero is drawn at terminal (x-1, y+1)
     expect(screen.split('\n')[st.hero!.y + 1][st.hero!.x - 1]).toBe('@');
-    // the live websocket stream reproduces the same screen
-    expect(c.output.length).toBeGreaterThan(0);
     c.close();
   });
 
@@ -157,6 +182,67 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     c.close();
   });
 
+  it('reports a --More-- that tty raises by itself (message overflow)', async () => {
+    const c = new GameClient(`${BASE.replace('http', 'ws')}/ws`);
+    await c.ready();
+    await waitFor(() => c.snapshots > 0, 'snapshot');
+    // with pushweapon, wielding the dagger prints "b - ... dagger ..." and
+    // "a - ... (alternate weapon; not wielded)": too long for one line, so
+    // tty shows --More-- between them; the feed's last input request
+    // ("What do you want to wield?") is stale at that point
+    c.send('w');
+    await waitFor(screenHas(/What do you want to wield/), 'wield prompt');
+    expect(c.output).toContain('What do you want to wield'); // live stream
+    c.send('b');
+    await waitFor(moreAtCursor, 'tty --More--');
+    const st = await waitFor(async () => {
+      const s = await getState();
+      return s.awaiting?.kind === 'more' ? s : null;
+    }, 'awaiting more');
+    expect(st.awaiting).toMatchObject({ kind: 'more', source: 'screen' });
+    expect(st.awaiting!.prompt).toMatch(/dagger/);
+    c.send('\r');
+    await waitFor(async () => {
+      const s = await getState();
+      if (await moreAtCursor()) c.send('\r');
+      return s.awaiting?.kind === 'command' && s.awaiting.source === 'feed';
+    }, 'back at the command prompt');
+    c.close();
+  });
+
+  it('reports the menu letters tty shows, on every page', async () => {
+    const c = new GameClient(`${BASE.replace('http', 'ws')}/ws`);
+    await c.ready();
+    await waitFor(() => c.snapshots > 0, 'snapshot');
+    c.send('O'); // options: two pages, letters assigned by tty (a-z per page)
+    const menu = (await waitFor(async () => (await getState()).menu, 'options menu'))!;
+    expect(menu.pages).toBeGreaterThanOrEqual(2);
+    const assigned = menu.items.filter((it) => it.assigned);
+    expect(assigned.length).toBeGreaterThan(20);
+    for (let page = 1; page <= 2; page++) {
+      if (page === 2) c.send('>');
+      await waitFor(screenHas(new RegExp(`\\(${page} of ${menu.pages}\\)`)), `page ${page}`);
+      const screen = await getScreen();
+      const items = menu.items.filter((it) => it.page === page && it.ch);
+      expect(items.length).toBeGreaterThan(5);
+      expect(items.filter((it) => it.assigned)[0].ch).toBe('a'); // letters restart per page
+      for (const it of items) expect(screen, `${it.ch} - ${it.text}`).toContain(`${it.ch} - ${it.text.trimEnd()}`);
+    }
+    c.send('\x1b');
+    await waitFor(async () => (await getState()).awaiting?.kind === 'command', 'menu closed');
+    c.close();
+  });
+
+  it('Meta keys reach the game as NetHack meta commands (M-C = #conduct)', async () => {
+    const c = new GameClient(`${BASE.replace('http', 'ws')}/ws`);
+    await c.ready();
+    await waitFor(() => c.snapshots > 0, 'snapshot');
+    c.ws.send(JSON.stringify({ type: 'input', data: 'C', meta: true }));
+    await waitFor(screenHas(/Voluntary challenges/), 'conduct window');
+    await driveToCommandPrompt(c);
+    c.close();
+  });
+
   it('saves with S, exits, and resumes on start', async () => {
     const c = new GameClient(`${BASE.replace('http', 'ws')}/ws`);
     await c.ready();
@@ -180,8 +266,11 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     const st = await getState();
     expect(st.session.launches).toBe(2);
     expect(st.turn).toBe(turn);
+    expect(st.game).toMatchObject({ origin: 'restored', id: firstGameId });
     // level memory survived the restart of the nethack process
     expect(st.levels['0:1'].cells.length).toBeGreaterThan(5);
+    // the history NetHack replays on restore is not appended twice
+    expect(st.messages.filter((m) => /welcome to NetHack!/.test(m.text))).toHaveLength(1);
     c.close();
   });
 
@@ -196,7 +285,40 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     await driveToCommandPrompt(c);
     const st = await getState();
     expect(st.turn).toBe(turn);
-    expect(st.messages.some((m) => m.source === 'history')).toBe(true);
+    // level memory and the message log came back from disk
+    expect(st.game).toMatchObject({ origin: 'restored', id: firstGameId, memoryRestored: true });
+    expect(st.levels['0:1'].cells.length).toBeGreaterThan(5);
+    expect(st.messages.some((m) => /welcome to NetHack!/.test(m.text) && m.source === undefined)).toBe(true);
+    expect(st.messages.some((m) => /welcome back to NetHack/.test(m.text))).toBe(true);
+    c.close();
+  });
+
+  it('a new game after quitting starts with fresh memory and drops the old one', async () => {
+    const c = new GameClient(`${BASE.replace('http', 'ws')}/ws`);
+    await c.ready();
+    await waitFor(() => c.snapshots > 0, 'snapshot');
+    await waitFor(async () => {
+      const info = (await (await fetch(`${BASE}/api/session`)).json()) as SessionInfo;
+      if (info.state === 'exited') return true;
+      const scr = await getScreen();
+      const st = await getState();
+      if (st.awaiting?.kind === 'command' && !(await moreAtCursor())) c.send('#quit\r');
+      else if (/\[ynq\]/.test(scr)) c.send('q');
+      else if (/\[yn\]|Really quit/.test(scr)) c.send('y');
+      else c.send('\r');
+      await sleep(300);
+      return false;
+    }, 'game over', 30000, 200).catch(async (e) => {
+      throw new Error(`${e}\n${await getScreen()}`);
+    });
+    c.start();
+    await driveToCommandPrompt(c);
+    const st = await getState();
+    expect(st.game?.origin).toBe('new');
+    expect(st.game?.id).not.toBe(firstGameId);
+    expect(st.messages.some((m) => /welcome back/.test(m.text))).toBe(false);
+    await waitFor(() => fs.existsSync(path.join(memoryDir, `${st.game!.id}.json`)), 'new memory file', 5000);
+    expect(fs.existsSync(path.join(memoryDir, `${firstGameId}.json`))).toBe(false);
     c.close();
   });
 });
