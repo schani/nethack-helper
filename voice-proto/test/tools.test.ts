@@ -4,6 +4,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { parseInfobox, splitSections, runTool, TOOL_DEFS, srcAvailable } from "../server/tools.ts";
 import { buildSessionConfig } from "../server/session.ts";
+import { formatSokobanSolution, parseFlip } from "../server/sokoban.ts";
 
 const BASE = process.env.VOICE_PROTO_URL ?? "http://localhost:8788";
 const hasSrc = await srcAvailable();
@@ -35,6 +36,56 @@ describe("pure helpers", () => {
     assert.equal(cfg.audio.input.transcription.model, "gpt-transcribe");
     assert.equal(cfg.tools.length, 4);
     assert.match(cfg.instructions, /Spoiler/);
+    assert.match(cfg.instructions, /released on May 2, 2026/);
+    assert.equal(cfg.parallel_tool_calls, true);
+    assert.doesNotMatch(cfg.instructions, /Extra Accuracy Rules/);
+    const mini: any = await buildSessionConfig({ model: "gpt-realtime-2.1-mini", voice: "marin", reasoning: "low" });
+    assert.match(mini.instructions, /Extra Accuracy Rules/);
+  });
+});
+
+describe("sokoban solution formatter", () => {
+  // Tiny synthetic page in the wiki's format: map with lettered boulders, moves to the right of the map.
+  const B = "'''";
+  const wt = [
+    "Intro.", "", "==Strategy==", "All boulders are replaced by letters so they can be referred to.", "",
+    "First, open the way:", "",
+    ` ------- ${B}A${B} d`,
+    ` |<.@..| ${B}B${B} rr`,
+    " |^.AB.|",
+    " |^....|",
+    " -------", "",
+    "Finish:", "",
+    ` ------- ${B}B${B} lll*`, " |<.>..|", " |^....|", " |^..B.|", " -------", "",
+    "==Next level==", "x",
+  ].join("\n");
+  test("parseFlip normalizes spoken variants", () => {
+    assert.equal(parseFlip(undefined), "none");
+    assert.equal(parseFlip("left-right"), "left-right");
+    assert.equal(parseFlip("horizontal"), "left-right");
+    assert.equal(parseFlip("up_down"), "up-down");
+    assert.equal(parseFlip("both"), "both");
+  });
+  test("steps describe boulders relative to the player and arrival stairs", () => {
+    const out = formatSokobanSolution(wt, "Sokoban Level 9z")!;
+    assert.match(out, /1\. Boulder A \(directly below you; 1 down from the arrival stairs\): push down 1\./);
+    // after pushing A down the hero stands where A was, so B is directly to the right
+    assert.match(out, /2\. Boulder B \(directly to your right; 1 right, 1 down from the arrival stairs\): push right 2\./);
+    // B moved 2 right and the next map resets positions: B is 1 left, 1 down of the hero shown on that map
+    assert.match(out, /3\. Boulder B \(\d+ (left|right).*\): push left 3, into a hole\./);
+    assert.match(out, /STAGE: Finish:\n3\. Boulder B .*push left 3, into a hole\./);
+    assert.match(out, /flip="none": up staircase 2 left \(same row\)/);
+    assert.match(out, /NETHACK 5\.0 NOTE/);
+    assert.doesNotMatch(out, /replaced by letters/);
+  });
+  test("flip mirrors positions and directions", () => {
+    const out = formatSokobanSolution(wt, "Sokoban Level 9z", "left-right")!;
+    assert.match(out, /1\. Boulder A \(directly below you; 1 down from the arrival stairs\): push down 1\./);
+    assert.match(out, /2\. Boulder B \(directly to your left;.*push left 2\./);
+    assert.match(out, /ALREADY MIRRORED for flip="left-right"/);
+  });
+  test("returns null without a parsable solution", () => {
+    assert.equal(formatSokobanSolution("no strategy here", "Sokoban Level 1a"), null);
   });
 });
 
@@ -52,6 +103,13 @@ describe("source tools", { skip: !hasSrc && "NetHack source not cloned (run scri
   test("invalid regex falls back to literal", async () => {
     const r = await runTool("search_nethack_source", { pattern: "enl_foo(", path_glob: "src/*.c" });
     assert.match(r, /searched literally/);
+  });
+  test("path_glob is forgiving: bad entries skipped, bare file names matched anywhere", async () => {
+    const r = await runTool("search_nethack_source", { pattern: "genetic engineer", path_glob: "include/monsters.h fixes5-0-0.txt src/nonexistent" });
+    assert.match(r, /include\/monsters\.h:\d+:/);
+    assert.match(r, /doc\/fixes5-0-0\.txt:\d+:/);
+    assert.match(r, /skipped nonexistent path_glob entries: src\/nonexistent/);
+    await assert.rejects(runTool("search_nethack_source", { pattern: "x", path_glob: "src/nope" }), /no such path/);
   });
   test("read returns numbered lines and caps range", async () => {
     const r = await runTool("read_nethack_source", { path: "include/monsters.h", start_line: 1, end_line: 1000 });
@@ -72,13 +130,27 @@ describe("wiki tool (network)", () => {
     assert.match(r, /monster infobox/);
     assert.ok(r.length < 5200);
   });
-  test("missing title returns close matches", async () => {
-    const r = await runTool("fetch_wiki_page", { title: "Sokoban Level 1" });
-    assert.match(r, /Sokoban Level 1a/);
+  test("approximate title resolves to the closest page in one call", async () => {
+    const r = await runTool("fetch_wiki_page", { title: "genetic enginer" });
+    assert.match(r, /^Wiki: Genetic engineer/);
+    assert.match(r, /closest match/);
+    assert.match(r, /monster infobox/);
   });
-  test("section selection", async () => {
-    const r = await runTool("fetch_wiki_page", { title: "Sokoban Level 1a", section: "Strategy" });
-    assert.match(r, /== Strategy ==/);
+  test("section selection (with Solution -> Strategy alias)", async () => {
+    const r = await runTool("fetch_wiki_page", { title: "Elbereth", section: "History" });
+    assert.match(r, /== History ==/);
+    const s = await runTool("fetch_wiki_page", { title: "Sokoban", section: "Solution" });
+    assert.match(s, /== Strategy ==/);
+    assert.match(s, /Sokoban Level 1a/);
+  });
+  test("Sokoban level page returns a voice-ready step list, optionally mirrored", async () => {
+    const r = await runTool("fetch_wiki_page", { title: "Sokoban Level 1a", section: "Solution" });
+    assert.match(r, /SOKOBAN SOLUTION for Sokoban Level 1a/);
+    assert.match(r, /1\. Boulder A \(2 right, 1 down from you; .*\): push down 1\./);
+    assert.match(r, /2\. Boulder B \(directly to your right; .*\): push right 4\./);
+    assert.doesNotMatch(r, /\|\^\|/); // no ASCII map rows
+    const m = await runTool("fetch_wiki_page", { title: "Sokoban Level 1a", flip: "left-right" });
+    assert.match(m, /2\. Boulder B \(directly to your left; .*\): push left 4\./);
   });
 });
 

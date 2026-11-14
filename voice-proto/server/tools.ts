@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { realpath, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { SRC_DIR, TIMEOUTS, WEB_SEARCH_MODEL, apiKey } from "./config.ts";
+import { SOKOBAN_LEVEL_TITLE, formatSokobanSolution } from "./sokoban.ts";
 
 // ---------------------------------------------------------------------------
 // Tool definitions sent to the Realtime session (session.tools).
@@ -13,10 +14,12 @@ export const TOOL_DEFS = [
     type: "function",
     name: "web_search",
     description:
-      "Search the web for NetHack information and get a short synthesized answer with source URLs. " +
-      "Good for general questions, community knowledge, strategy, and anything about NetHack 5.0.0 (released May 2026, " +
-      "formerly the 3.7 development line) that may be newer than your training data. Biased toward nethackwiki.com. " +
-      "Takes several seconds; prefer fetch_wiki_page when you already know the wiki page title.",
+      "Search the live web and get a short synthesized answer with source URLs (takes 3-8 seconds). USE IT for: news and " +
+      "anything time-sensitive (patch releases after 5.0.0, tournaments such as TNNT or Junethack, public servers, " +
+      "events, devteam announcements), community opinions and advice (Reddit, rec.games.roguelike.nethack, forums), " +
+      "variants, ports and interfaces, and as the fallback when fetch_wiki_page finds no page or the wiki/source do not " +
+      "answer the question. For game mechanics of a known monster/item/topic, fetch_wiki_page and the source are faster " +
+      "and more reliable.",
     parameters: {
       type: "object",
       properties: {
@@ -30,11 +33,13 @@ export const TOOL_DEFS = [
     type: "function",
     name: "fetch_wiki_page",
     description:
-      "Fetch a page from the NetHack wiki (nethackwiki.com) and return a short plain-text excerpt: infobox stats " +
-      "(for monsters/items), the intro, and the most relevant sections. Fast (under a second). Use exact wiki-style " +
-      "titles like 'Genetic engineer', 'Elbereth', 'Sokoban', 'Sokoban Level 1a', 'Excalibur'. If the title is not " +
-      "found it returns close matches to retry with. Note: many wiki pages still describe 3.6 behavior; look for " +
-      "version notes or verify against the 5.0 source.",
+      "Fetch a NetHack wiki (nethackwiki.com) page: infobox stats (monsters/items), intro and sections, plus the list of " +
+      "section headings. Fast (well under a second). BEST FIRST CALL for any named monster, item, artifact, role, " +
+      "spell, dungeon level or game concept: use the wiki-style name, e.g. 'Genetic engineer', 'Displacer beast', " +
+      "'Elbereth', 'Excalibur', 'Sokoban'. Misspelled or approximate titles are resolved automatically to the closest " +
+      "page. Sokoban step-by-step solutions: title 'Sokoban Level 1a' or '1b' (first level you enter), then 2a/2b, " +
+      "3a/3b, 4a/4b (top); these return a numbered, voice-ready push list. Many wiki pages still describe 3.6; the page " +
+      "often has 3.7/5.0 notes, otherwise confirm version-specific details in the source.",
     parameters: {
       type: "object",
       properties: {
@@ -47,6 +52,11 @@ export const TOOL_DEFS = [
           type: "string",
           description: "Optional keywords; the excerpt is narrowed to paragraphs mentioning them.",
         },
+        flip: {
+          type: "string",
+          enum: ["none", "left-right", "up-down", "both"],
+          description: "Sokoban level pages only: mirror the solution's directions to match a mirrored 5.0 level.",
+        },
       },
       required: ["title"],
       additionalProperties: false,
@@ -56,12 +66,14 @@ export const TOOL_DEFS = [
     type: "function",
     name: "search_nethack_source",
     description:
-      "Ripgrep (regex, smart-case) over the official NetHack 5.0.0 source tree. Returns up to ~40 matching lines as " +
+      "Ripgrep (regex, smart-case) over the official NetHack 5.0.0 source tree. Use it to confirm version-specific " +
+      "details and for 'what changed in 5.0' questions. Returns up to ~40 matching lines as " +
       "path:line: text. Key places: include/monsters.h and include/objects.h (monster/object definitions and stats), " +
       "src/*.c (game logic), dat/*.lua (special level layouts such as Sokoban soko*.lua, quest levels, Gehennom), " +
       "dat/*.txt (rumors, oracles, data), doc/fixes5-0-0.txt (THE changelog of what changed from 3.6 to 5.0 - search it " +
       "for 'what changed' questions), doc/Guidebook.txt (player manual). Use path_glob to narrow (space-separated globs, directories or files), e.g. 'doc/fixes5-0-0.txt', " +
-      "'src/*.c', 'dat/soko*.lua', 'include/'. Results are spoilers.",
+      "'src/*.c', 'dat/soko*.lua', 'include/'. Results are spoilers. Note: '$NHDT-Date' stamps and file dates are " +
+      "commit times, NOT release dates.",
     parameters: {
       type: "object",
       properties: {
@@ -259,8 +271,14 @@ async function resolveTitle(title: string, signal: AbortSignal): Promise<{ title
   const os: any = await wikiGet({ action: "opensearch", search: title, limit: "8", namespace: "0" }, signal);
   let suggestions: string[] = os?.[1] ?? [];
   if (!suggestions.length) {
-    const sr: any = await wikiGet({ action: "query", list: "search", srsearch: title, srlimit: "8" }, signal);
+    // Full-text search, plus prefix searches on shortened titles in parallel to survive typos ("genetic enginer").
+    const prefixes = [...new Set([title.slice(0, -2), title.slice(0, -4), title.split(/\s+/)[0]].filter((p) => p.trim().length >= 4 && p !== title))];
+    const [sr, ...pre] = await Promise.all([
+      wikiGet({ action: "query", list: "search", srsearch: title, srlimit: "8" }, signal),
+      ...prefixes.map((p) => wikiGet({ action: "opensearch", search: p, limit: "8", namespace: "0" }, signal).catch(() => null)),
+    ]);
     suggestions = (sr?.query?.search ?? []).map((r: any) => r.title);
+    if (!suggestions.length) suggestions = pre.map((o: any) => o?.[1] ?? []).find((l: string[]) => l.length) ?? [];
   }
   const exact = suggestions.find((s) => s.toLowerCase() === title.toLowerCase());
   return { title: exact ?? null, suggestions };
@@ -270,30 +288,32 @@ export async function fetchWikiPage(args: Record<string, unknown>, signal?: Abor
   let title = str(args.title, "title")!.replace(/_/g, " ");
   const section = str(args.section, "section", false);
   const focus = str(args.focus, "focus", false);
+  const flip = str(args.flip, "flip", false);
   const sig = withTimeout(TIMEOUTS.fetch_wiki_page, signal);
 
+  // Sokoban level pages need the full wikitext (the solution maps); others only the lead section (infobox).
   const load = (t: string) =>
     Promise.all([
       wikiGet({ action: "query", prop: "extracts", explaintext: "1", exsectionformat: "wiki", redirects: "1", titles: t }, sig),
-      wikiGet({ action: "parse", page: t, prop: "wikitext", section: "0", redirects: "1" }, sig).catch(() => null),
+      wikiGet({ action: "parse", page: t, prop: "wikitext", redirects: "1", ...(SOKOBAN_LEVEL_TITLE.test(t.trim()) ? {} : { section: "0" }) }, sig).catch(() => null),
     ]);
 
   let [ex, wt] = await load(title);
   let page = ex?.query?.pages?.[0];
   let suggestions: string[] = [];
+  let resolvedNote = "";
   if (!page || page.missing || !page.extract) {
+    // Resolve in the same call (saves the model a round trip): exact case-insensitive match, else the top search hit.
     const r = await resolveTitle(title, sig);
     suggestions = r.suggestions;
-    const pick = r.title ?? (suggestions.length === 1 ? suggestions[0] : null);
-    if (!pick) {
-      return suggestions.length
-        ? `No wiki page titled "${title}". Close matches: ${suggestions.join("; ")}. Call fetch_wiki_page again with one of these.`
-        : `No wiki page found for "${title}". Try web_search instead.`;
-    }
+    const pick = r.title ?? suggestions[0] ?? null;
+    if (!pick) return `No wiki page found for "${title}". Use web_search instead.`;
+    if (!r.title) resolvedNote = `(No page titled "${title}"; showing the closest match "${pick}". If that is not what was meant, use one of the other matches or web_search.)`;
+    const asked = title;
     title = pick;
     [ex, wt] = await load(title);
     page = ex?.query?.pages?.[0];
-    if (!page || page.missing || !page.extract) return `Wiki page "${title}" could not be loaded.`;
+    if (!page || page.missing || !page.extract) return `Wiki page "${asked}" could not be loaded. Use web_search instead.`;
   }
   title = page.title;
   const url = `https://nethackwiki.com/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
@@ -306,25 +326,39 @@ export async function fetchWikiPage(args: Record<string, unknown>, signal?: Abor
     body = page.extract.trim();
   }
   const intro = sections[0].text;
+  const header = `Wiki: ${title} (${url})` + (resolvedNote ? `\n${resolvedNote}` : "") +
+    (suggestions.length > 1 ? `\nOther matches: ${suggestions.filter((s) => s !== title).slice(0, 6).join("; ")}` : "");
+  const toc = headings.length ? `\nSections: ${headings.join(" | ")}` : "";
+
+  // Sokoban level pages: return the solution as a voice-ready step list instead of ASCII maps.
+  const wantsSolution = !section || /strateg|solution|solv|step|walkthrough/i.test(section);
+  if (SOKOBAN_LEVEL_TITLE.test(title) && wantsSolution && wt?.parse?.wikitext) {
+    const solution = formatSokobanSolution(wt.parse.wikitext, title, flip);
+    if (solution) return clip([header, clip(intro, 400), solution].join("\n"), 8000);
+  }
+  if (/^sokoban$/i.test(title)) {
+    body += "(Step-by-step solutions are on the level pages: fetch 'Sokoban Level 1a' or 'Sokoban Level 1b' for the first level, then 2a/2b, 3a/3b, 4a/4b.)\n";
+  }
+
   if (section) {
     const want = section.toLowerCase();
-    const idx = sections.findIndex((s) => s.heading.toLowerCase() === want) >= 0
-      ? sections.findIndex((s) => s.heading.toLowerCase() === want)
-      : sections.findIndex((s) => s.heading.toLowerCase().includes(want));
+    const aliases = [want, ...(/solution|solv|walkthrough/.test(want) ? ["strategy"] : []), ...(/strateg/.test(want) ? ["solution"] : [])];
+    const exact = sections.findIndex((s) => aliases.includes(s.heading.toLowerCase()));
+    const idx = exact >= 0 ? exact : sections.findIndex((s) => aliases.some((a) => s.heading.toLowerCase().includes(a)));
     if (idx >= 0) {
       // include subsections
       const lvl = sections[idx].level;
       const parts = [sections[idx]];
       for (let i = idx + 1; i < sections.length && sections[i].level > lvl; i++) parts.push(sections[i]);
-      body = parts.map((s) => `== ${s.heading} ==\n${s.text}`).join("\n");
+      body += parts.map((s) => `== ${s.heading} ==\n${s.text}`).join("\n");
     } else {
-      body = `(No section matching "${section}".)\n${intro}`;
+      body += `(No section matching "${section}".)\n${intro}`;
     }
   } else if (focus) {
-    const ft = terms(focus);
+    const ft = terms(focus).filter((t) => !["nethack", "the", "and", "what", "changed", "change", "changes"].includes(t));
     const paras: { sec: string; text: string; score: number; i: number }[] = [];
     let i = 0;
-    for (const s of sections) {
+    for (const s of sections.slice(1)) { // the intro is always included below
       for (const p of s.text.split(/\n+/)) {
         if (!p.trim()) continue;
         const lower = (s.heading + " " + p).toLowerCase();
@@ -342,7 +376,7 @@ export async function fetchWikiPage(args: Record<string, unknown>, signal?: Abor
     }
     chosen.sort((a, b) => a.i - b.i);
     let lastSec = "";
-    body = clip(intro, 500) + "\n";
+    body += clip(intro, 500) + "\n";
     for (const p of chosen) {
       if (p.sec !== lastSec && p.sec !== "(intro)") body += `== ${p.sec} ==\n`;
       lastSec = p.sec;
@@ -350,11 +384,9 @@ export async function fetchWikiPage(args: Record<string, unknown>, signal?: Abor
     }
     if (!chosen.length) body += `(No paragraphs mention "${focus}".)`;
   } else {
-    body = sections.map((s) => (s.heading === "(intro)" ? s.text : `== ${s.heading} ==\n${s.text}`)).join("\n");
+    body += sections.map((s) => (s.heading === "(intro)" ? s.text : `== ${s.heading} ==\n${s.text}`)).join("\n");
   }
 
-  const header = `Wiki: ${title} (${url})` + (suggestions.length > 1 ? `\nOther matches: ${suggestions.filter((s) => s !== title).slice(0, 6).join("; ")}` : "");
-  const toc = headings.length ? `\nSections: ${headings.join(" | ")}` : "";
   const out = [header, infobox, clip(body.trim(), WIKI_MAX)].filter(Boolean).join("\n") + toc;
   return clip(out, WIKI_MAX + 1500);
 }
@@ -414,16 +446,27 @@ export async function searchNethackSource(args: Record<string, unknown>, signal?
   const target = ".";
   const globArgs: string[] = [];
   // path_glob may hold several space/comma separated entries; directories and plain files become globs too.
+  // Be forgiving with path_glob: a wrong entry is skipped (and reported) instead of failing the whole call, and a
+  // bare file name such as "fixes5-0-0.txt" matches that file anywhere in the tree. Saves a retry round trip.
+  const skipped: string[] = [];
   for (let g of (glob ?? "").split(/[\s,]+/).filter(Boolean)) {
     g = g.replace(/^\.?\/+/, "").replace(/^nethack-src\//, "");
     if (g.split("/").includes("..")) throw new ToolError("path_glob must not contain '..'");
     if (!/[*?[{]/.test(g)) {
-      const full = await safePath(g); // validates existence and confinement
+      let full: string;
+      try {
+        full = await safePath(g); // validates existence and confinement
+      } catch {
+        if (!g.includes("/")) globArgs.push("--glob", `**/${g}`);
+        else skipped.push(g);
+        continue;
+      }
       const rel = relative(await realpath(SRC_DIR), full);
       g = (await stat(full)).isDirectory() ? `${rel}/**` : rel;
     }
     globArgs.push("--glob", g);
   }
+  if (glob && !globArgs.length) throw new ToolError(`no such path(s): ${skipped.join(", ")}`);
   let literal = false;
   let r = await runRg([...base, ...globArgs, "--regexp", pattern, "--", target], sig);
   if (r.code === 2 && /regex parse error|error parsing/i.test(r.stderr)) {
@@ -431,11 +474,12 @@ export async function searchNethackSource(args: Record<string, unknown>, signal?
     r = await runRg([...base, "--fixed-strings", ...globArgs, "--regexp", pattern, "--", target], sig);
   }
   if (r.code === 2 && !r.lines.length) throw new ToolError(`search error: ${clip(r.stderr.trim(), 200)}`);
-  if (!r.lines.length) return `No matches for /${pattern}/${glob ? ` in ${glob}` : ""}.`;
+  if (!r.lines.length) return `No matches for /${pattern}/${glob ? ` in ${glob}` : ""}.${skipped.length ? ` (skipped nonexistent: ${skipped.join(", ")})` : ""}`;
   let out = r.lines.map((l) => l.replace(/^\.\//, "")).join("\n");
   out = clip(out, MAX_SEARCH_CHARS);
   const note = [
     literal ? "(pattern was invalid regex; searched literally)" : "",
+    skipped.length ? `(skipped nonexistent path_glob entries: ${skipped.join(", ")})` : "",
     r.truncated ? `(showing first ${MAX_MATCH_LINES} matching lines; max ${glob ? 30 : 8} per file; narrow with path_glob or a more specific pattern)` : "",
   ].filter(Boolean).join(" ");
   return `NetHack 5.0.0 source matches (path:line: text):\n${out}${note ? "\n" + note : ""}`;

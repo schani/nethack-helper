@@ -14,7 +14,10 @@ const TRANSCRIBE_KEYWORDS = [
  * Instructions are re-read from prompts/instructions.md on every mint so the prompt can be iterated live.
  */
 export async function buildSessionConfig(opts: { model: string; voice: string; reasoning: string }) {
-  const instructions = await readFile(PROMPT_FILE, "utf8");
+  let instructions = await readFile(PROMPT_FILE, "utf8");
+  // Smaller models embellish tool results more; they get a stricter addendum (kept out of the main prompt so the
+  // full model's answers and latency are not constrained by it).
+  if (/mini/.test(opts.model)) instructions += await readFile(PROMPT_FILE.replace(/\.md$/, "-mini.md"), "utf8").catch(() => "");
   return {
     type: "realtime",
     model: opts.model,
@@ -31,6 +34,8 @@ export async function buildSessionConfig(opts: { model: string; voice: string; r
     },
     tools: TOOL_DEFS,
     tool_choice: "auto",
+    // Let the model issue independent lookups (e.g. wiki + source) in one response; the client runs them concurrently.
+    parallel_tool_calls: true,
     max_output_tokens: 2048,
   };
 }

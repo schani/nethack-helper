@@ -14,7 +14,13 @@ const els = {
 
 type State = "idle" | "connecting" | "connected" | "error";
 
-interface ToolCall { callId: string; name: string; args: string; el: HTMLElement; promise?: Promise<string>; responseId?: string }
+interface ToolCall {
+  callId: string; name: string; args: string; el: HTMLElement; responseId?: string;
+  promise?: Promise<string>;
+  result?: string; // set once the tool finished
+  outputSent?: boolean; // a function_call_output item for this call_id was sent
+  dropped?: boolean; // the response was interrupted before the result arrived; a late result is discarded
+}
 
 const s = {
   state: "idle" as State,
@@ -25,9 +31,12 @@ const s = {
   muted: false,
   activeResponse: null as string | null,
   pendingCreate: false,
+  userTurn: 0, // incremented whenever the user starts a new turn (speech or text); detects barge-in during tool calls
+  responseTurn: new Map<string, number>(), // response id -> userTurn when it was created
   bubbles: new Map<string, HTMLElement>(), // item_id -> transcript bubble
   calls: new Map<string, ToolCall>(), // call_id -> tool call
   turnStart: 0, // perf time of end of user speech / text send
+  turnT0: 0, // like turnStart but not reset after the first answer (for per-message timing in debug.transcript)
   turnMarks: { firstText: 0, firstAudio: 0 },
   sessionStart: 0,
 };
@@ -35,11 +44,16 @@ const s = {
 // Exposed for e2e tests / debugging.
 const debug = {
   events: [] as Json[],
-  transcript: [] as { role: string; text: string; ms?: Json }[],
-  tools: [] as { name: string; args: string; ok: boolean; ms: number; preview: string }[],
+  transcript: [] as { role: string; text: string; ms?: Json; at?: number }[],
+  tools: [] as { name: string; args: string; ok: boolean; ms: number; preview: string; at?: number; responseId?: string }[],
   errors: [] as string[],
   get state() { return s.state; },
   get activeResponse() { return s.activeResponse; },
+  /** call_ids of function calls that never got a function_call_output (should always be empty when idle). */
+  unpaired: () => [...s.calls.values()].filter((c) => !c.outputSent).map((c) => `${c.name}:${c.callId}`),
+  dropped: () => [...s.calls.values()].filter((c) => c.dropped).map((c) => `${c.name}:${c.callId}`),
+  /** e2e: simulate a barge-in by sending `text` as soon as the model starts a function call ("item") or finishes its arguments ("args"). */
+  bargeIn: null as null | { text: string; on: "item" | "args" },
 };
 (window as any).voiceDebug = debug;
 
@@ -198,31 +212,40 @@ function stop(next: State = "idle") {
 
 function send(event: Json) {
   if (s.dc?.readyState !== "open") return;
+  debug.events.push({ t: Math.round(performance.now() - s.sessionStart), type: `>> ${event.type}`, ...(event.item?.type ? { item: event.item.type } : {}), ...(event.previous_item_id ? { after: event.previous_item_id } : {}) });
   s.dc.send(JSON.stringify(event));
 }
 
 function requestResponse() {
-  if (s.activeResponse) s.pendingCreate = true;
-  else send({ type: "response.create" });
+  if (s.activeResponse) { s.pendingCreate = true; return; }
+  s.pendingCreate = false;
+  send({ type: "response.create" });
 }
 
 // ---------------------------------------------------------------------------- server events
 
 function onEvent(ev: Json) {
-  debug.events.push({ t: Math.round(performance.now() - s.sessionStart), type: ev.type });
+  debug.events.push({
+    t: Math.round(performance.now() - s.sessionStart), type: ev.type,
+    ...(ev.response?.id || ev.response_id ? { rid: ev.response?.id ?? ev.response_id } : {}),
+    ...(ev.response?.status ? { status: ev.response.status, reason: ev.response.status_details?.reason } : {}),
+    ...(ev.item?.type ? { item: ev.item.type, id: ev.item.id } : {}),
+    ...(ev.error ? { code: ev.error.code, msg: ev.error.message } : {}),
+  });
   switch (ev.type) {
     case "session.created":
     case "session.updated":
       break;
 
     case "input_audio_buffer.speech_started": {
+      s.userTurn++;
       els.vad.hidden = false;
       if (!s.bubbles.has(ev.item_id)) bubble("user", "…", ev.item_id).classList.add("pending");
       break;
     }
     case "input_audio_buffer.speech_stopped":
       els.vad.hidden = true;
-      s.turnStart = performance.now();
+      s.turnStart = s.turnT0 = performance.now();
       s.turnMarks = { firstText: 0, firstAudio: 0 };
       break;
 
@@ -248,18 +271,22 @@ function onEvent(ev: Json) {
 
     case "response.created":
       s.activeResponse = ev.response?.id ?? "unknown";
+      if (ev.response?.id) s.responseTurn.set(ev.response.id, s.userTurn);
       break;
 
     case "response.output_item.added": {
       const item = ev.item;
-      if (item?.type === "function_call") toolCard(item.call_id, item.name, ev.response_id);
+      if (item?.type === "function_call") {
+        toolCard(item.call_id, item.name, ev.response_id);
+        if (debug.bargeIn?.on === "item") { const t = debug.bargeIn.text; debug.bargeIn = null; sendText(t); }
+      }
       break;
     }
 
     case "response.output_audio_transcript.delta":
     case "response.output_text.delta": {
       let el = s.bubbles.get(ev.item_id);
-      if (!el) el = bubble("assistant", "", ev.item_id);
+      if (!el) { el = bubble("assistant", "", ev.item_id); if (s.turnT0) el.dataset.at = String(Math.round(performance.now() - s.turnT0)); }
       bodyOf(el).textContent += ev.delta ?? "";
       if (s.turnStart && !s.turnMarks.firstText) s.turnMarks.firstText = performance.now();
       scroll();
@@ -278,8 +305,9 @@ function onEvent(ev: Json) {
       }
       // Only the first assistant message of a turn gets latency marks.
       s.turnStart = 0;
-      debug.transcript.push({ role: "assistant", text, ms });
-      logRemote({ kind: "assistant", text, ms });
+      const at = el.dataset.at !== undefined ? Number(el.dataset.at) : undefined;
+      debug.transcript.push({ role: "assistant", text, ms, at });
+      logRemote({ kind: "assistant", text, ms, at });
       break;
     }
 
@@ -291,6 +319,7 @@ function onEvent(ev: Json) {
       const call = s.calls.get(ev.call_id) ?? toolCard(ev.call_id, ev.name, ev.response_id);
       call.args = ev.arguments ?? "{}";
       runCall(call);
+      if (debug.bargeIn?.on === "args") { const t = debug.bargeIn.text; debug.bargeIn = null; sendText(t); }
       break;
     }
 
@@ -302,35 +331,90 @@ function onEvent(ev: Json) {
       const msg = ev.error?.message ?? "Unknown realtime error";
       // Benign race: response.create while a response is active.
       if (ev.error?.code === "conversation_already_has_active_response") { s.pendingCreate = true; break; }
+      // Benign race: we cancelled (user barged in by text) just as the response finished on its own.
+      if (ev.error?.code === "response_cancel_not_active") break;
       showError(`Realtime error: ${msg}`);
       break;
     }
   }
 }
 
+/**
+ * Tool-call bookkeeping. Every function_call the model emits gets exactly one function_call_output, so the
+ * conversation never has a dangling call:
+ *  - normal case: run the tools, append their outputs, then response.create so the model answers with them;
+ *  - response interrupted (VAD barge-in or text sent while it was running -> status "cancelled"/"incomplete"):
+ *    the user's new turn drives the next response (VAD auto-creates it / sendText creates it), so we do NOT
+ *    request one. Calls whose result is already in are paired with the real result (usable by the next answer);
+ *    unfinished or truncated calls are paired with a short "interrupted" output immediately and their late result
+ *    is discarded. Outputs are inserted right after the call (previous_item_id) so they precede the new user message;
+ *  - user started a new turn while a completed response's tools were still running: same insertion, no extra
+ *    response.create (otherwise the model would answer twice).
+ */
 async function onResponseDone(resp: Json) {
   if (s.activeResponse === resp.id || s.activeResponse === "unknown") s.activeResponse = null;
   if (resp.status === "failed") {
     const d = resp.status_details?.error;
     showError(`Response failed: ${d?.message ?? d?.code ?? JSON.stringify(resp.status_details)}`);
   }
-  const fnCalls = (resp.output ?? []).filter((o: Json) => o.type === "function_call");
+  const fnCalls: Json[] = (resp.output ?? []).filter((o: Json) => o.type === "function_call");
+  // The user turn this response belongs to; if the user has started another turn since, the response is stale.
+  const turnOfResponse = s.responseTurn.get(resp.id) ?? s.userTurn;
   if (fnCalls.length) {
-    const outputs = await Promise.all(
-      fnCalls.map((fc: Json) => {
-        const call = s.calls.get(fc.call_id) ?? toolCard(fc.call_id, fc.name, resp.id);
-        if (!call.promise) { call.args = fc.arguments ?? call.args; runCall(call); }
-        return call.promise!.then((output) => ({ call_id: fc.call_id, output }));
-      }),
-    );
-    for (const o of outputs) send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: o.call_id, output: o.output } });
-    // Only continue automatically if the turn wasn't interrupted / cancelled.
-    if (resp.status === "completed" || resp.status === undefined) requestResponse();
+    const completed = resp.status === "completed" || resp.status === undefined;
+    const calls = fnCalls.map((fc) => {
+      const call = s.calls.get(fc.call_id) ?? toolCard(fc.call_id, fc.name, resp.id);
+      call.args = fc.arguments ?? call.args;
+      return { fc, call };
+    });
+    if (completed) {
+      for (const { call } of calls) runCall(call);
+      await Promise.all(calls.map(({ call }) => call.promise));
+      if (s.userTurn === turnOfResponse) {
+        for (const { call } of calls) sendOutput(call, call.result!);
+        requestResponse();
+      } else {
+        insertOutputs(calls.map(({ fc, call }) => ({ fc, call, output: call.result! })));
+      }
+    } else {
+      const note = (c: ToolCall) =>
+        `INTERRUPTED: the user spoke before this ${c.name} result was used, so it was not run to completion. ` +
+        "Answer the user's latest message; call the tool again only if it is still needed.";
+      insertOutputs(calls.map(({ fc, call }) => {
+        const usable = fc.status !== "incomplete" && call.result !== undefined;
+        if (!usable) markDropped(call);
+        return { fc, call, output: usable ? call.result! : note(call) };
+      }));
+    }
   }
-  if (s.pendingCreate && !s.activeResponse) {
-    s.pendingCreate = false;
-    send({ type: "response.create" });
+  if (s.pendingCreate && !s.activeResponse) requestResponse();
+}
+
+function sendOutput(call: ToolCall, output: string, previousItemId?: string, id?: string) {
+  if (call.outputSent) return;
+  call.outputSent = true;
+  send({
+    type: "conversation.item.create",
+    ...(previousItemId ? { previous_item_id: previousItemId } : {}),
+    item: { ...(id ? { id } : {}), type: "function_call_output", call_id: call.callId, output },
+  });
+}
+
+/** Insert outputs directly after the last function_call item of the response, chained in order. */
+function insertOutputs(list: { fc: Json; call: ToolCall; output: string }[]) {
+  let prev: string | undefined = list[list.length - 1]?.fc.id;
+  for (const { call, output } of list) {
+    const id = `fco_${call.callId.replace(/[^A-Za-z0-9]/g, "").slice(-20)}`;
+    sendOutput(call, output, prev, id);
+    prev = id;
   }
+}
+
+function markDropped(call: ToolCall) {
+  call.dropped = true;
+  const badge = call.el.querySelector(".badge") as HTMLElement;
+  if (badge && !call.result) { badge.textContent = "dropped (interrupted)"; badge.className = "badge fail"; }
+  debug.transcript.push({ role: "tool", text: `${call.name} dropped: response interrupted before the result was used` });
 }
 
 // ---------------------------------------------------------------------------- tools
@@ -354,6 +438,7 @@ function runCall(call: ToolCall) {
   try { args = JSON.parse(call.args || "{}"); } catch { /* model sent bad JSON */ }
   (call.el.querySelector(".args") as HTMLElement).textContent = Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join("  ");
   const t0 = performance.now();
+  const at = s.turnT0 ? Math.round(t0 - s.turnT0) : undefined;
   call.promise = fetch(`/api/tools/${encodeURIComponent(call.name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -376,8 +461,10 @@ function runCall(call: ToolCall) {
       pre.textContent = result;
       det.append(sum, pre);
       call.el.appendChild(det);
-      debug.tools.push({ name: call.name, args: call.args, ok, ms, preview: result.slice(0, 200) });
-      debug.transcript.push({ role: "tool", text: `${call.name} ${call.args} -> ${ok ? "ok" : "FAIL"} ${ms}ms (${result.length} chars): ${result.replace(/\s+/g, " ").slice(0, 150)}` });
+      call.result = ok ? result : `ERROR: ${result}`;
+      if (call.dropped) badge.textContent += " · discarded (interrupted)";
+      debug.tools.push({ name: call.name, args: call.args, ok, ms, preview: result.slice(0, 200), at, responseId: call.responseId });
+      debug.transcript.push({ role: "tool", at, text: `${call.name} ${call.args} -> ${ok ? "ok" : "FAIL"} ${ms}ms (${result.length} chars): ${result.replace(/\s+/g, " ").slice(0, 150)}` });
       logRemote({ kind: "tool", name: call.name, args, ok, ms, chars: result.length, preview: result.slice(0, 200) });
       return ok ? result : `ERROR: ${result}`;
     });
@@ -387,14 +474,16 @@ function runCall(call: ToolCall) {
 
 function sendText(text: string) {
   if (!text.trim() || s.state !== "connected") return;
+  s.userTurn++;
   if (s.activeResponse) send({ type: "response.cancel" });
   bubble("user", text);
   debug.transcript.push({ role: "user", text });
   logRemote({ kind: "user", via: "text", text });
   send({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } });
-  s.turnStart = performance.now();
+  s.turnStart = s.turnT0 = performance.now();
   s.turnMarks = { firstText: 0, firstAudio: 0 };
   s.activeResponse = null; // cancelled (if any); response.done will follow
+  s.pendingCreate = false; // this create supersedes any queued one
   send({ type: "response.create" });
 }
 (debug as any).sendText = sendText;
