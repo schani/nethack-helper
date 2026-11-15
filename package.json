@@ -16,6 +16,7 @@
     "test:net": "npm run test:net -w server",
     "e2e:assistant": "node scripts/assistant-e2e/run.ts",
     "e2e:scenario": "node scripts/assistant-e2e/scenario.ts",
+    "e2e:mic": "node scripts/assistant-e2e/mic.ts",
     "setup:nethack-src": "bash scripts/setup-nethack-src.sh",
     "eval": "node evals/src/cli.ts",
     "eval:compare": "node evals/src/cli.ts compare",

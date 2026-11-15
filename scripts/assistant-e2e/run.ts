@@ -32,7 +32,7 @@ let failed = 0;
 try {
   for (const [i, q] of questions.entries()) {
     const connectMs = await b.start(url, { model });
-    console.log(`\n(session ${i + 1}: model ${model ?? 'default'}, connect ${connectMs} ms)`);
+    console.log(`\n(session ${i + 1}: model ${model ?? 'default'}, ${connectMs === null ? 'connects on the first question' : `connect ${connectMs} ms`})`);
     const turns: TurnResult[] = [];
     for (const t of q.split('||').map((s) => s.trim()).filter(Boolean)) {
       if (t === '!drop') {
@@ -40,7 +40,6 @@ try {
         const t0 = Date.now();
         b.eval('(voiceDebug.simulateDrop(), 1)');
         await b.waitFor(() => b.eval<string>('voiceDebug.state') === 'connected' && Date.now() - t0 > 600, 30_000, 'reconnected');
-        if (!audio) b.ab('click', '#as-mic');
         console.log(`\n(dropped the connection; reconnected after ${Date.now() - t0} ms)`);
         continue;
       }

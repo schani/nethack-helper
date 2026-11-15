@@ -1,11 +1,12 @@
 /**
  * Headless Chromium (agent-browser) driver for the assistant panel, ported
- * from voice-proto/scripts/e2e.ts.  Questions go in as TEXT through the
- * Realtime data channel (voiceDebug.sendText); the fake mic is muted then
- * (Chromium's fake device beeps, which would trigger VAD).  With an audio
- * file the WAV is the fake microphone instead (tests VAD + transcription;
- * it should start with ~6 s of silence and end with long silence because
- * Chromium loops it).
+ * from voice-proto/scripts/e2e.ts.  Questions go in as TEXT
+ * (voiceDebug.sendText, like the Send button: the first message connects the
+ * session lazily); the mic stays off then, so Chromium's beeping fake device
+ * is never opened.  With an audio file the WAV is the fake microphone
+ * instead and the mic is switched on (tests VAD + transcription; it should
+ * start with ~6 s of silence and end with long silence because Chromium
+ * loops it).
  */
 import { execFileSync } from 'node:child_process';
 import { copyFileSync } from 'node:fs';
@@ -66,35 +67,50 @@ export class AssistantBrowser {
     throw new Error(`timeout waiting for ${what}`);
   }
 
-  /** open the page and start a session; returns connect time */
-  async start(url: string, opts: { model?: string; width?: number; height?: number } = {}): Promise<number> {
+  /**
+   * Open the page and pick the model.  Text mode: nothing else (the first question connects
+   * lazily); returns null.  Audio mode: switch the mic on, which connects; returns connect time
+   * (mic: false leaves that to the caller).
+   */
+  async start(url: string, opts: { model?: string; width?: number; height?: number; mic?: boolean } = {}): Promise<number | null> {
     this.ab('open', url);
     this.ab('set', 'viewport', String(opts.width ?? 1400), String(opts.height ?? 900));
     await this.waitFor(() => this.eval<number>("document.querySelectorAll('#as-model option').length") > 0, 15_000, 'assistant config');
     if (opts.model) this.ab('select', '#as-model', opts.model);
+    if (!(opts.mic ?? !!this.audio)) return null;
     const t0 = Date.now();
-    this.ab('click', '#as-start');
+    this.ab('click', '#as-mic');
+    await this.waitConnected();
+    return Date.now() - t0;
+  }
+
+  async waitConnected(timeoutMs = 30_000) {
     await this.waitFor(() => {
       const st = this.eval<{ state: string; errors: string[] }>('({state: voiceDebug.state, errors: voiceDebug.errors})');
       if (st.state === 'error') throw new Error(`session error: ${st.errors.join('; ')}`);
       return st.state === 'connected';
-    }, 30_000, 'connected');
-    const ms = Date.now() - t0;
-    if (!this.audio) this.ab('click', '#as-mic'); // mute the beeping fake mic in text mode
-    return ms;
+    }, timeoutMs, 'connected');
   }
 
-  /** Ask one question (text, or wait for the spoken WAV); "A|>B" barges in with B when the first tool call starts. */
-  async ask(turn: string): Promise<TurnResult> {
+  /**
+   * Ask one question and wait for the answer.  via 'text': voiceDebug.sendText ("A|>B" barges in with B
+   * when the first tool call starts); 'ui': type into the chat input and press Send; 'audio': just wait
+   * for the spoken WAV (the mic must be on).
+   */
+  async ask(turn: string, via: 'text' | 'ui' | 'audio' = this.audio ? 'audio' : 'text'): Promise<TurnResult> {
     const before = this.eval<number>("voiceDebug.transcript.filter(m => m.role === 'assistant').length");
     const tStart = this.eval<number>('voiceDebug.transcript.length');
     const toolsBefore = this.eval<number>('voiceDebug.tools.length');
     const tSend = Date.now();
     const barge = /^(.*?)\|(>>?)(.*)$/.exec(turn);
-    if (barge && !this.audio) {
+    if (barge && via === 'text') {
       this.eval(`(voiceDebug.bargeIn = ${JSON.stringify({ text: barge[3].trim(), on: barge[2] === '>>' ? 'args' : 'item' })}, 1)`);
       this.eval(`voiceDebug.sendText(${JSON.stringify(barge[1].trim())})`);
-    } else if (!this.audio) this.eval(`voiceDebug.sendText(${JSON.stringify(turn)})`);
+    } else if (via === 'text') this.eval(`voiceDebug.sendText(${JSON.stringify(turn)})`);
+    else if (via === 'ui') {
+      this.ab('fill', '#as-input', turn);
+      this.ab('click', '#as-send');
+    }
     // done when: a new assistant message exists, no response active, no audio playing, no tool running, events quiet for 4 s
     let lastLen = -1;
     let stableSince = 0;
@@ -109,7 +125,7 @@ export class AssistantBrowser {
       if (assistantCount > before && !r.active && !r.playing && r.running === 0 && quiet) return r;
       if (r.errors.length && quiet && !r.active) return r;
       return null;
-    }, this.audio ? 90_000 : 120_000, 'assistant answer').catch((e) => {
+    }, via === 'audio' ? 90_000 : 120_000, 'assistant answer').catch((e) => {
       const dbg = this.eval<any>(
         "({active: voiceDebug.activeResponse, playing: voiceDebug.audioPlaying, state: voiceDebug.state, errors: voiceDebug.errors, last: voiceDebug.events.filter(e => !/delta/.test(e.type)).slice(-25)})",
       );
@@ -146,9 +162,10 @@ export class AssistantBrowser {
     return path;
   }
 
+  /** end the session (there is no stop button: leave the page) */
   stop() {
     try {
-      this.ab('click', '#as-start');
+      this.ab('open', 'about:blank');
     } catch {
       /* already gone */
     }

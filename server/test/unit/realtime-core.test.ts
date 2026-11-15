@@ -75,4 +75,45 @@ describe('RealtimeConversation', () => {
     expect(last.ms?.first_text).toBeGreaterThan(0);
     expect(t.conv.history.at(-1)).toEqual({ role: 'assistant', text: 'You have 11 HP.' });
   });
+
+  it('text typed while not connected is shown at once, asks the host to connect, and is sent as one turn on attach', async () => {
+    const users: string[] = [];
+    let connects = 0;
+    const sent: Record<string, any>[] = [];
+    const host = { open: false, state: 'idle' as ConnState, send: (e: Record<string, any>) => sent.push(e), transportLost() {}, ensureConnected: () => connects++ };
+    const v: RealtimeView = { ...view, user: (_k, text) => users.push(text) };
+    const conv = new RealtimeConversation(v, { tool: async () => ({ ok: true, result: '' }), context: async () => ({ text: 'ctx', turn: 1 }), log() {} }, host, { contextWaitMs: 5 });
+    await conv.sendText('hello');
+    await conv.sendText('are you there?');
+    expect(users).toEqual(['hello', 'are you there?']);
+    expect(connects).toBe(2);
+    expect(sent).toEqual([]);
+    host.open = true;
+    conv.attach({ context: { text: 'ctx', turn: 1 }, isReconnect: false });
+    await tick();
+    await tick();
+    const texts = sent.filter((e) => e.item?.role === 'user').map((e) => e.item.content[0].text);
+    expect(texts).toEqual(['hello', 'are you there?']);
+    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
+    expect(conv.history.map((h) => h.text)).toEqual(['hello', 'are you there?']);
+  });
+
+  it('without a lazily connecting host, text while not connected is ignored', async () => {
+    const t = setup();
+    t.host.state = 'idle';
+    await t.conv.sendText('hello');
+    expect(t.sent).toEqual([]);
+  });
+
+  it('closing the mic mid-utterance commits the audio and asks for the answer; otherwise does nothing', () => {
+    const t = setup();
+    t.conv.attach({ context: null, isReconnect: false });
+    t.sent.length = 0;
+    t.conv.micClosed();
+    expect(t.sent).toEqual([]);
+    t.conv.onEvent({ type: 'input_audio_buffer.speech_started', item_id: 'u1' });
+    t.sent.length = 0;
+    t.conv.micClosed();
+    expect(t.sent.map((e) => e.type)).toEqual(['input_audio_buffer.commit', 'response.create']);
+  });
 });

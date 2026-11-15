@@ -1,7 +1,8 @@
 /**
- * Assistant panel: start/stop, mic, model, connection state, transcript with
- * compact tool chips (details collapsed), text input.  Rendering only; the
- * conversation logic lives in RealtimeClient.
+ * Assistant panel: mic on/off, model, connection state, transcript with
+ * compact tool chips (details collapsed), text input.  There is no start
+ * button: the session connects on the first mic-on or typed message.
+ * Rendering only; the conversation logic lives in RealtimeClient.
  */
 import { assistantApi, type AssistantConfig } from './api.ts';
 import { RealtimeClient, type ConnState, type Consultation, type RealtimeView, type ToolCall } from './realtime.ts';
@@ -79,6 +80,8 @@ export class AssistantPanel implements RealtimeView {
   readonly client: RealtimeClient;
   private opts: AssistantPanelOptions;
   private cfg: AssistantConfig | null = null;
+  /** the server has no API key: nothing can be used */
+  private unavailable = false;
   private els = {
     pane: $('assistant-pane'),
     status: $('as-status'),
@@ -86,7 +89,6 @@ export class AssistantPanel implements RealtimeView {
     model: $<HTMLSelectElement>('as-model'),
     voice: $<HTMLSelectElement>('as-voice'),
     voiceLabel: $('as-voice-label'),
-    start: $<HTMLButtonElement>('as-start'),
     mic: $<HTMLButtonElement>('as-mic'),
     error: $('as-error'),
     log: $('as-log'),
@@ -106,11 +108,17 @@ export class AssistantPanel implements RealtimeView {
 
   constructor(opts: AssistantPanelOptions) {
     this.opts = opts;
-    this.client = new RealtimeClient(this);
+    this.client = new RealtimeClient(this, () => ({
+      model: this.els.model.value || this.cfg?.defaultModel || 'gpt-realtime-2.1',
+      voice: this.els.voice.value || this.cfg?.defaultVoice || 'marin',
+      reasoning: this.cfg?.defaultReasoning ?? 'low',
+    }));
     (window as unknown as { voiceDebug: unknown }).voiceDebug = this.client.debug;
     const e = this.els;
-    e.start.addEventListener('click', () => this.toggleSession());
-    e.mic.addEventListener('click', () => this.client.toggleMute());
+    e.mic.addEventListener('click', () => this.client.toggleMic());
+    // a live session switches over (with a recap of the conversation so far)
+    e.model.addEventListener('change', () => this.client.reconfigure());
+    e.voice.addEventListener('change', () => this.client.reconfigure());
     e.composer.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const text = e.input.value;
@@ -125,7 +133,8 @@ export class AssistantPanel implements RealtimeView {
         this.opts.focusGame();
       }
     });
-    this.state('idle', 'Off');
+    this.state('idle', 'Mic off');
+    this.mic(true, true);
     void this.loadConfig();
   }
 
@@ -141,21 +150,14 @@ export class AssistantPanel implements RealtimeView {
       fill(this.els.voice, cfg.voices, cfg.defaultVoice);
       this.els.voiceLabel.textContent = this.els.voice.value;
       this.els.voice.addEventListener('change', () => (this.els.voiceLabel.textContent = this.els.voice.value));
-      if (!cfg.apiKeyConfigured) this.error('The server has no OPENAI_API_KEY; the assistant cannot start.');
+      if (!cfg.apiKeyConfigured) {
+        this.error('The server has no OPENAI_API_KEY; the assistant is unavailable.');
+        this.unavailable = true;
+        this.render();
+      }
     } catch (err) {
       this.error(`Could not load assistant config: ${(err as Error).message}`);
     }
-  }
-
-  toggleSession() {
-    const st = this.client.state;
-    if (st === 'connected' || st === 'connecting' || st === 'reconnecting') this.client.stop();
-    else
-      void this.client.start({
-        model: this.els.model.value || this.cfg?.defaultModel || 'gpt-realtime-2.1',
-        voice: this.els.voice.value || this.cfg?.defaultVoice || 'marin',
-        reasoning: this.cfg?.defaultReasoning ?? 'low',
-      });
   }
 
   focusInput() {
@@ -168,15 +170,7 @@ export class AssistantPanel implements RealtimeView {
     const e = this.els;
     e.status.dataset.state = st;
     e.statusText.textContent = detail;
-    const live = st === 'connected';
-    const busy = st === 'connecting' || st === 'reconnecting';
-    e.start.textContent = live || busy ? 'Stop' : 'Start';
-    e.start.classList.toggle('stop', live || busy);
-    e.start.title = live || busy ? 'End the voice session' : 'Start a voice session (F2)';
-    e.input.disabled = e.send.disabled = !live;
-    e.input.placeholder = live ? 'Ask about your game…' : 'Start the assistant to chat';
-    e.model.disabled = e.voice.disabled = live || busy;
-    if (!live) this.listening(false);
+    if (st !== 'connected') this.listening(false);
   }
 
   error(msg: string | null) {
@@ -186,11 +180,18 @@ export class AssistantPanel implements RealtimeView {
 
   mic(muted: boolean, available: boolean) {
     const b = this.els.mic;
-    const live = this.client?.state === 'connected';
-    b.disabled = !live || !available;
-    b.setAttribute('aria-pressed', String(!muted && available));
-    b.classList.toggle('muted', muted || !available);
-    b.querySelector('.label')!.textContent = !available && live ? 'No mic' : muted ? 'Mic off' : 'Mic on';
+    this.els.status.dataset.mic = muted ? 'off' : 'on';
+    b.setAttribute('aria-pressed', String(!muted));
+    b.classList.toggle('muted', muted);
+    b.querySelector('.label')!.textContent = muted ? (available ? 'Mic off' : 'No mic') : 'Mic on';
+    b.title = muted ? 'Turn the microphone on (F2)' : 'Turn the microphone off (F2)';
+    this.render();
+  }
+
+  private render() {
+    const e = this.els;
+    e.mic.disabled = e.input.disabled = e.send.disabled = this.unavailable;
+    e.input.placeholder = this.unavailable ? 'Assistant unavailable (no API key on the server)' : 'Ask about your game…';
   }
 
   listening(on: boolean) {

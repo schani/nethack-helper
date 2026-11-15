@@ -98,6 +98,11 @@ export interface RealtimeHost {
   transportLost(why: string): void;
   /** e2e: force the reconnect path */
   simulateDrop?(): void;
+  /**
+   * Connect lazily (no-op while connected / connecting).  When present, text sent while
+   * not connected is shown right away, queued, and sent once a session is attached.
+   */
+  ensureConnected?(): void;
 }
 
 /** Exposed as window.voiceDebug for the e2e harness (same shape as voice-proto). */
@@ -174,6 +179,9 @@ export class RealtimeConversation {
   private speechStoppedAt = 0;
   private awaitingAutoResponse = false;
   private sendingText = false;
+  /** text typed before the (lazy) connection was up; sent on attach */
+  private queuedText: string[] = [];
+  private textSeq = 0;
   private lastActivity = 0;
   /** an expert delivery's response.create was sent but its response not created yet */
   private deliveryPending = false;
@@ -239,6 +247,7 @@ export class RealtimeConversation {
     if (opts.isReconnect && this.history.length) this.sendRecap();
     this.applyContext(opts.context);
     this.lastActivity = this.now();
+    if (this.queuedText.length) void this.deliverText(this.queuedText.splice(0));
     this.experts.pump();
   }
 
@@ -260,6 +269,23 @@ export class RealtimeConversation {
   /** a user-initiated start: forget the previous conversation */
   reset() {
     this.history = [];
+    this.queuedText = [];
+  }
+
+  /**
+   * The microphone was closed (mic off / push-to-talk released).  No more audio will
+   * arrive, so the VAD would never see the end of an utterance in progress: commit what
+   * was said and ask for the answer ourselves.
+   */
+  micClosed() {
+    if (!this.userSpeaking || !this.host.open) return;
+    this.userSpeaking = false;
+    this.view.listening(false);
+    this.send({ type: 'input_audio_buffer.commit' });
+    this.turnStart = this.turnT0 = this.now();
+    this.turnMarks = { firstText: 0, firstAudio: 0 };
+    this.firstAudioPending = null;
+    this.requestResponse();
   }
 
   /** The user ended the session: running consultations are cancelled, queued results dropped. */
@@ -723,19 +749,34 @@ export class RealtimeConversation {
 
   // ------------------------------------------------------------------ text input
 
+  /** A typed message.  Not connected: shown now, sent once connected (if the host connects lazily). */
   async sendText(text: string) {
-    if (!text.trim() || this.host.state !== 'connected') return;
+    if (!text.trim()) return;
+    const offline = this.host.state !== 'connected';
+    if (offline && !this.host.ensureConnected) return;
+    this.view.user(`text_${Date.now().toString(36)}_${++this.textSeq}`, text, true);
+    if (offline) {
+      this.queuedText.push(text);
+      this.host.ensureConnected!();
+      return;
+    }
+    await this.deliverText([text]);
+  }
+
+  /** one user turn made of the given (already displayed) messages */
+  private async deliverText(texts: string[]) {
     this.userTurn++;
     this.sendingText = true;
     if (this.activeResponse) this.send({ type: 'response.cancel' });
-    const key = `text_${Date.now().toString(36)}`;
-    this.view.user(key, text, true);
-    this.debug.transcript.push({ role: 'user', text });
-    this.history.push({ role: 'user', text });
-    this.backend.log({ kind: 'user', via: 'text', text });
+    for (const text of texts) {
+      this.debug.transcript.push({ role: 'user', text });
+      this.history.push({ role: 'user', text });
+      this.backend.log({ kind: 'user', via: 'text', text });
+    }
     // make sure the model sees the game as it is now (bounded wait; usually ~10 ms)
     await Promise.race([this.refreshContext(), new Promise((r) => setTimeout(r, this.contextWaitMs))]);
-    this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+    for (const text of texts)
+      this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
     this.turnStart = this.turnT0 = this.now();
     this.turnMarks = { firstText: 0, firstAudio: 0 };
     this.firstAudioPending = null;

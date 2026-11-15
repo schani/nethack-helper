@@ -177,7 +177,7 @@ document.addEventListener('click', (e) => {
   if (t.closest('button, input, label')) setTimeout(() => term.focus(), 0);
 });
 
-// voice assistant panel + its global hotkeys (F2 mic / start, hold F3 to talk,
+// voice assistant panel + its global hotkeys (F2 mic on/off, hold F3 to talk,
 // F4 chat input); NetHack's tty interface has no use for function keys
 const assistant = new AssistantPanel({ focusGame: () => term.focus() });
 for (const type of ['keydown', 'keyup'] as const) {

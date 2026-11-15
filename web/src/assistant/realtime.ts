@@ -11,6 +11,12 @@
  *  - This class owns the transport: WebRTC peer connection, microphone,
  *    audio playback, and automatic reconnects (with a short recap of the
  *    conversation) after unexpected disconnects / session expiry.
+ *  - There is no explicit start/stop: the session connects lazily on the
+ *    first mic-on or typed message (typed text is queued until then).  The
+ *    peer connection always has one sendrecv audio transceiver; the mic is
+ *    acquired only when switched on and attached / detached with
+ *    replaceTrack (no renegotiation).  Mic off stops the track, so nothing
+ *    is captured or sent and the browser's recording indicator goes away.
  *
  * DOM-free: all rendering goes through the RealtimeView interface.
  */
@@ -33,6 +39,8 @@ export interface StartOptions {
 }
 
 const MAX_RECONNECTS = 3;
+/** after the mic closes, wait for in-flight audio / a late speech_started before finishing the turn */
+const MIC_CLOSE_SETTLE_MS = 300;
 
 /** the browser talks to our server's /api/assistant routes */
 const backend: AssistantBackend = {
@@ -42,26 +50,37 @@ const backend: AssistantBackend = {
   expert: (req, signal) => assistantApi.expert(req, signal),
 };
 
+type ConnectMode = 'fresh' | 'reconnect' | 'switch';
+
 export class RealtimeClient implements RealtimeHost {
   private view: RealtimeView;
+  /** current model / voice / reasoning (read at every connect) */
+  private options: () => StartOptions;
   state: ConnState = 'idle';
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
-  private mic: MediaStream | null = null;
+  /** the audio transceiver's sender; the mic track is swapped in / out with replaceTrack */
+  private sender: RTCRtpSender | null = null;
   private audioEl: HTMLAudioElement | null = null;
-  muted = false;
+  /** the user wants the mic on */
+  micOn = false;
+  /** the live microphone (only while micOn and getUserMedia succeeded) */
+  private micStream: MediaStream | null = null;
+  /** the last getUserMedia attempt failed (retried on the next mic-on) */
+  private micFailed = false;
+  /** bumped on every mic on/off: a getUserMedia that resolves late for a stale request is discarded */
+  private micSeq = 0;
   private pttHeld = false;
-  private mutedBeforePtt = false;
-  private opts: StartOptions | null = null;
-  /** user stopped the session (no auto-reconnect) */
-  private stopping = false;
+  private micBeforePtt = false;
   private reconnects: number[] = [];
   private generation = 0;
+  private statusDetail: string | null = null;
   readonly conversation: RealtimeConversation;
   readonly debug: VoiceDebug;
 
-  constructor(view: RealtimeView) {
+  constructor(view: RealtimeView, options: () => StartOptions) {
     this.view = view;
+    this.options = options;
     this.conversation = new RealtimeConversation(view, backend, this);
     this.debug = this.conversation.debug;
   }
@@ -70,7 +89,7 @@ export class RealtimeClient implements RealtimeHost {
     return this.state === 'connected';
   }
   get hasMic() {
-    return !!this.mic;
+    return !!this.micStream;
   }
 
   // ------------------------------------------------------------------ RealtimeHost
@@ -92,39 +111,51 @@ export class RealtimeClient implements RealtimeHost {
     this.onTransportLost('simulated drop');
   }
 
-  // ------------------------------------------------------------------ lifecycle
-
-  async start(opts: StartOptions) {
-    if (this.state === 'connected' || this.state === 'connecting') return;
-    this.opts = opts;
-    this.stopping = false;
-    this.conversation.reset();
+  /** Connect unless connected / connecting already (a failed connect is retried here). */
+  ensureConnected() {
+    if (this.state !== 'idle' && this.state !== 'error') return;
     this.reconnects = [];
     this.view.error(null);
-    await this.connect(false);
+    void this.connect('fresh');
   }
 
-  stop() {
-    this.stopping = true;
-    const was = this.state;
-    this.conversation.endSession('session ended');
+  // ------------------------------------------------------------------ lifecycle
+
+  /** model / voice changed: a live session switches over (with a recap), otherwise nothing to do */
+  reconfigure() {
+    if (this.state === 'idle' || this.state === 'error') return;
+    const mode: ConnectMode = this.state === 'connecting' ? 'fresh' : 'switch';
     this.teardown();
-    if (was === 'connected' || was === 'reconnecting') this.view.system('Session ended.');
-    this.setState('idle');
+    void this.connect(mode);
   }
 
   private setState(st: ConnState, detail?: string) {
     this.state = st;
-    const text =
-      detail ?? { idle: 'Off', connecting: 'Connecting…', connected: 'Listening', reconnecting: 'Reconnecting…', error: 'Error' }[st];
-    this.view.state(st, text);
-    this.view.mic(this.muted, !!this.mic);
+    this.statusDetail = detail ?? null;
+    this.render();
   }
 
-  private async connect(isReconnect: boolean) {
+  /** status text reflects connection + mic together */
+  private render() {
+    const st = this.state;
+    const text =
+      this.statusDetail ??
+      (st === 'connected'
+        ? this.micOn
+          ? this.micStream
+            ? 'Listening'
+            : 'Opening mic…'
+          : 'Mic off · text only'
+        : { idle: 'Mic off', connecting: 'Connecting…', connected: '', reconnecting: 'Reconnecting…', error: 'Error' }[st]);
+    this.view.state(st, text);
+    this.view.mic(!this.micOn, !this.micFailed);
+  }
+
+  private async connect(mode: ConnectMode) {
     const gen = ++this.generation;
-    const opts = this.opts!;
-    this.setState(isReconnect ? 'reconnecting' : 'connecting', isReconnect ? 'Reconnecting…' : 'Starting…');
+    const opts = this.options();
+    const isReconnect = mode !== 'fresh';
+    this.setState(isReconnect ? 'reconnecting' : 'connecting', mode === 'switch' ? 'Switching…' : undefined);
     try {
       const t0 = performance.now();
       const token: MintedSession = await assistantApi.mint(opts);
@@ -139,15 +170,10 @@ export class RealtimeClient implements RealtimeHost {
         if (this.pc !== pc) return;
         if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') this.onTransportLost(`WebRTC ${pc.connectionState}`);
       };
-      try {
-        this.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-        this.mic.getAudioTracks().forEach((t) => (t.enabled = !this.muted));
-        pc.addTrack(this.mic.getAudioTracks()[0], this.mic);
-      } catch (err) {
-        this.mic = null;
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-        if (!isReconnect) this.view.system(`Microphone unavailable (${(err as Error).message}); text only.`);
-      }
+      // always negotiate a send+receive audio line, so the mic can come and go without renegotiation
+      this.sender = pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
+      const track = this.micStream?.getAudioTracks()[0];
+      if (track) await this.sender.replaceTrack(track);
       const dc = pc.createDataChannel('oai-events');
       this.dc = dc;
       dc.onmessage = (e) => this.conversation.onEvent(JSON.parse(e.data as string));
@@ -179,81 +205,122 @@ export class RealtimeClient implements RealtimeHost {
       });
       if (gen !== this.generation) return;
       const connectMs = Math.round(performance.now() - t0);
-      this.conversation.attach({ sessionId: token.session_id, context: token.context, isReconnect });
-      this.setState('connected', 'Listening');
-      if (isReconnect) this.view.system('Reconnected.');
+      // a fresh connect after an earlier session (e.g. one that failed) also gets the recap
+      this.conversation.attach({ sessionId: token.session_id, context: token.context, isReconnect: isReconnect || this.conversation.history.length > 0 });
+      this.setState('connected');
+      if (mode === 'reconnect') this.view.system('Reconnected.');
+      if (mode === 'switch') this.view.system(`Switched to ${token.model}, voice ${token.voice}.`);
       assistantApi.log({ kind: 'session', model: token.model, voice: token.voice, reasoning: token.reasoning, mint_ms: token.mint_ms, connect_ms: connectMs, reconnect: isReconnect });
     } catch (err) {
       if (gen !== this.generation) return;
       this.teardown();
       if (isReconnect && this.scheduleReconnect(`reconnect failed: ${(err as Error).message}`)) return;
-      this.conversation.showError((err as Error).message);
-      this.setState('error', 'Error');
+      this.fail((err as Error).message, 'Error');
     }
   }
 
-  /** close transport, keep conversation UI */
+  /** gave up: show the error, close the mic; the next mic-on / message tries again */
+  private fail(msg: string, detail: string) {
+    this.conversation.showError(msg);
+    this.micOn = false;
+    this.closeMic();
+    this.setState('error', detail);
+  }
+
+  /** close transport, keep conversation UI and the mic (a reconnect reattaches it) */
   private teardown() {
     this.generation++;
     this.dc?.close();
-    this.pc?.getSenders().forEach((snd) => snd.track?.stop());
     this.pc?.close();
-    this.mic?.getTracks().forEach((t) => t.stop());
     if (this.audioEl) this.audioEl.srcObject = null;
     this.pc = null;
     this.dc = null;
-    this.mic = null;
+    this.sender = null;
     this.conversation.detach();
     this.view.listening(false);
   }
 
   private onTransportLost(why: string) {
-    if (this.stopping || (this.state !== 'connected' && this.state !== 'reconnecting')) return;
+    if (this.state !== 'connected' && this.state !== 'reconnecting') return;
     this.teardown();
-    if (!this.scheduleReconnect(why)) {
-      this.conversation.showError(`Connection lost (${why}).`);
-      this.setState('error', 'Disconnected');
-    }
+    if (!this.scheduleReconnect(why)) this.fail(`Connection lost (${why}).`, 'Disconnected');
   }
 
   /** returns false when the reconnect budget is used up */
   private scheduleReconnect(why: string): boolean {
     const now = Date.now();
     this.reconnects = this.reconnects.filter((t) => now - t < 120_000);
-    if (this.reconnects.length >= MAX_RECONNECTS || !this.opts) return false;
+    if (this.reconnects.length >= MAX_RECONNECTS) return false;
     this.reconnects.push(now);
     const delay = [500, 2000, 5000][this.reconnects.length - 1] ?? 5000;
     this.view.system(`Connection lost (${why}); reconnecting…`);
-    this.setState('reconnecting', 'Reconnecting…');
+    this.setState('reconnecting');
     const gen = this.generation;
     setTimeout(() => {
-      if (gen === this.generation && !this.stopping) void this.connect(true);
+      if (gen === this.generation) void this.connect('reconnect');
     }, delay);
     return true;
   }
 
   // ------------------------------------------------------------------ mic
 
-  setMuted(muted: boolean) {
-    this.muted = muted;
-    this.mic?.getAudioTracks().forEach((t) => (t.enabled = !muted));
-    this.view.mic(this.muted, !!this.mic);
+  /** Mic on: connect if needed and open the microphone.  Mic off: stop it (nothing captured or sent). */
+  setMic(on: boolean) {
+    if (on === this.micOn) return;
+    this.micOn = on;
+    if (on) {
+      this.micFailed = false;
+      this.ensureConnected();
+      void this.openMic();
+    } else this.closeMic();
+    this.render();
   }
 
-  toggleMute() {
-    this.setMuted(!this.muted);
+  toggleMic() {
+    this.setMic(!this.micOn);
   }
 
-  /** push-to-talk: mic open while held, previous mute state restored on release */
+  /** push-to-talk: mic open while held (connecting first if needed), previous state restored on release */
   pushToTalk(down: boolean) {
     if (down === this.pttHeld) return;
     this.pttHeld = down;
     if (down) {
-      this.mutedBeforePtt = this.muted;
-      this.setMuted(false);
-    } else {
-      this.setMuted(this.mutedBeforePtt);
+      this.micBeforePtt = this.micOn;
+      this.setMic(true);
+    } else this.setMic(this.micBeforePtt);
+  }
+
+  private async openMic() {
+    const seq = ++this.micSeq;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      if (seq !== this.micSeq || !this.micOn) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      this.micStream = stream;
+      await this.sender?.replaceTrack(stream.getAudioTracks()[0]);
+    } catch (err) {
+      if (seq !== this.micSeq) return;
+      this.micOn = false;
+      this.micFailed = true;
+      this.view.system(`Microphone unavailable (${(err as Error).message}); typing still works.`);
     }
+    this.render();
+  }
+
+  private closeMic() {
+    this.micSeq++;
+    const stream = this.micStream;
+    this.micStream = null;
+    void this.sender?.replaceTrack(null).catch(() => {});
+    stream?.getTracks().forEach((t) => t.stop());
+    if (!stream) return;
+    // an utterance in progress would never end for the VAD: finish the turn
+    const gen = this.generation;
+    setTimeout(() => {
+      if (gen === this.generation && !this.micOn) this.conversation.micClosed();
+    }, MIC_CLOSE_SETTLE_MS);
   }
 
   // ------------------------------------------------------------------ live context / text
@@ -263,6 +330,7 @@ export class RealtimeClient implements RealtimeHost {
     return this.conversation.refreshContext();
   }
 
+  /** a typed message; connects first if needed (the text is queued until then) */
   sendText(text: string) {
     return this.conversation.sendText(text);
   }

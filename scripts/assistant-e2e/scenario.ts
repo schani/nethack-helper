@@ -52,8 +52,8 @@ async function phase(name: string, seed: number, body: (g: GameDriver, b: Assist
   const checks: Check[] = [];
   try {
     await g.toCommand();
-    const connectMs = await b.start(`${srv.base}/`, { model });
-    console.log(`(connected in ${connectMs} ms, model ${model ?? 'default'})`);
+    await b.start(`${srv.base}/`, { model });
+    console.log(`(page open, model ${model ?? 'default'}; the first question connects)`);
     const ask = async (q: string) => {
       const r = await b.ask(q);
       printTurn(r);
@@ -66,7 +66,9 @@ async function phase(name: string, seed: number, body: (g: GameDriver, b: Assist
       "({contexts: voiceDebug.contexts, deletes: voiceDebug.events.filter(e => e.type === '>> conversation.item.delete').length, deleted: voiceDebug.events.filter(e => e.type === 'conversation.item.deleted').length})",
     );
     console.log(`LIVE CONTEXT: ${ctx.contexts.length} snapshots added (turns ${ctx.contexts.map((c: any) => c.turn).join(', ')}), ${ctx.deletes} superseded ones deleted, ${ctx.deleted} deletions confirmed`);
-    check(checks, 'live context: refreshed when the game changed, superseded snapshots deleted', ctx.contexts.length > 1 && ctx.deleted === ctx.contexts.length - 1, JSON.stringify(ctx));
+    // the session connects on the first question, so a phase that plays before its only question never needs a refresh
+    const refreshed = turns.length < 2 || ctx.contexts.length > 1;
+    check(checks, 'live context: refreshed when the game changed, superseded snapshots deleted', refreshed && ctx.deleted === ctx.contexts.length - 1, JSON.stringify(ctx));
     if (shotDir) {
       fs.mkdirSync(shotDir, { recursive: true });
       console.log(`screenshot: ${b.screenshot(path.resolve(shotDir, `scenario-${name}.png`))}`);

@@ -49,20 +49,20 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .as-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
 .as-status .dot { width: 8px; height: 8px; border-radius: 50%; background: #c9c5ba; }
 .as-status[data-state="connected"] .dot { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.15); }
+/* connected but not listening (text only): hollow ring */
+.as-status[data-state="connected"][data-mic="off"] .dot { background: transparent; box-shadow: inset 0 0 0 2px #16a34a; }
 .as-status[data-state="connecting"] .dot, .as-status[data-state="reconnecting"] .dot { background: #d97706; animation: as-pulse 1s infinite; }
 .as-status[data-state="error"] .dot { background: #dc2626; }
 .as-status[data-state="error"] { color: #b91c1c; }
 @keyframes as-pulse { 50% { opacity: 0.35; } }
 .as-listening { font-size: 11px; color: #15803d; background: #ecfdf3; border-radius: 10px; padding: 1px 7px; }
-.btn.as-start { padding: 4px 14px; }
-.btn.as-start.stop { background: var(--panel); color: #b91c1c; border-color: #e5b4b4; }
 .as-controls { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .as-controls select { font: inherit; font-size: 12px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); min-width: 0; }
 .btn.as-mic { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; font-size: 12px; }
 .btn.as-mic svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.5; fill: currentColor; }
 .btn.as-mic svg path + path { fill: none; }
 .btn.as-mic[aria-pressed="true"] { background: #ecfdf3; border-color: #86d3a3; color: #166534; }
-.btn.as-mic.muted:not(:disabled) { color: #b45309; }
+.btn.as-mic.muted:not(:disabled) { color: var(--muted); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .as-settings { position: relative; margin-left: auto; color: var(--muted); }
 .as-settings summary { cursor: pointer; list-style: none; padding: 3px 7px; border-radius: 5px; border: 1px solid transparent; }

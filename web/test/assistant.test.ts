@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { assistantHotkey, type HotkeyTarget } from '../src/assistant/hotkeys.ts';
 
-function target(state = 'idle') {
+function target() {
   const calls: string[] = [];
   const t: HotkeyTarget = {
-    client: { state, toggleMute: () => calls.push('mute'), pushToTalk: (d) => calls.push(`ptt:${d}`) },
-    toggleSession: () => calls.push('session'),
+    client: { toggleMic: () => calls.push('mic'), pushToTalk: (d) => calls.push(`ptt:${d}`) },
     focusInput: () => calls.push('input'),
   };
   return { t, calls };
@@ -15,24 +14,23 @@ const ev = (key: string, type = 'keydown', mods: Record<string, boolean> = {}) =
 });
 
 describe('assistant hotkeys', () => {
-  it('F2 starts the session when idle and toggles the mic when connected', () => {
-    const a = target('idle');
+  it('F2 toggles the mic on keydown only (no separate start: the client connects lazily)', () => {
+    const a = target();
     expect(assistantHotkey(ev('F2'), a.t)).toBe(true);
-    expect(a.calls).toEqual(['session']);
-    const b = target('connected');
-    assistantHotkey(ev('F2'), b.t);
-    assistantHotkey(ev('F2', 'keyup'), b.t);
-    expect(b.calls).toEqual(['mute']);
+    expect(assistantHotkey(ev('F2', 'keyup'), a.t)).toBe(true);
+    assistantHotkey(ev('F2', 'keydown', { repeat: true }), a.t);
+    assistantHotkey(ev('F2'), a.t);
+    expect(a.calls).toEqual(['mic', 'mic']);
   });
-  it('F3 is push-to-talk while connected', () => {
-    const a = target('connected');
+  it('F3 is push-to-talk: down opens, auto-repeat ignored, up restores', () => {
+    const a = target();
     assistantHotkey(ev('F3'), a.t);
     assistantHotkey(ev('F3', 'keydown', { repeat: true }), a.t);
     assistantHotkey(ev('F3', 'keyup'), a.t);
     expect(a.calls).toEqual(['ptt:true', 'ptt:false']);
   });
   it('F4 focuses the chat input; other keys and modified F-keys are not handled', () => {
-    const a = target('connected');
+    const a = target();
     expect(assistantHotkey(ev('F4'), a.t)).toBe(true);
     expect(assistantHotkey(ev('f'), a.t)).toBe(false);
     expect(assistantHotkey(ev('F2', 'keydown', { ctrlKey: true }), a.t)).toBe(false);
