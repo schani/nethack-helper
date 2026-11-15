@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>NetHack UI — 5 design proposals</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;background:#f6f5f2;color:#222;margin:0;padding:32px 48px;max-width:1500px}
+h1{font-size:22px;margin:0 0 4px}p.sub{color:#666;margin:0 0 28px}
+.d{display:grid;grid-template-columns:720px 1fr;gap:28px;margin-bottom:44px;align-items:start}
+.d img{width:720px;border:1px solid #ccc;border-radius:6px;display:block}
+h2{margin:0 0 6px;font-size:19px}h2 a{color:inherit}
+.w{color:#8a3b1b}.shots a{margin-right:8px;font-size:13px}
+</style></head><body>
+<h1>NetHack 5 web UI — five design proposals</h1>
+<p class="sub">Clickable mockups built from real game states. Click a title to open the live mockup; switch states with its on-page buttons.</p>
+
+<div class="d"><a href="1-field-journal/index.html"><img src="1-field-journal/shot-2.png"></a><div>
+<h2><a href="1-field-journal/index.html">1 · Field Journal</a></h2>
+<p>An adventurer's survey notebook: map on graph paper, the game "prints" in serif, you write in pencil, the companion writes in blue-black ink in the margin, circling tiles and drawing numbered routes. Journal entries, packing list, thumb-tab level pages. Voice state shown as a pen (capped / tracing / blotting / writing).</p>
+<p class="w">Weakness: little room below the map; large inventories scroll away.</p>
+<p class="shots">States: <a href="1-field-journal/shot-1.png">play</a><a href="1-field-journal/shot-2.png">speaking</a><a href="1-field-journal/shot-3.png">menu</a><a href="1-field-journal/shot-4.png">y/n</a><a href="1-field-journal/shot-5.png">--More--</a><a href="1-field-journal/shot-6.png">level pages</a></p>
+</div></div>
+
+<div class="d"><a href="2-mission-control/index.html"><img src="2-mission-control/shot-3.png"></a><div>
+<h2><a href="2-mission-control/index.html">2 · Mission Control</a></h2>
+<p>Swiss instrument panel for power users: HP gauge with trend, hunger/load scales, condition annunciator, turn-stamped log, contacts table with range and bearing, inventory ledger with equipment grid, assistant as a comms channel with live captions and lookup chips. Colour only for meaning; alerts escalate caution → warning.</p>
+<p class="w">Weakness: the map gets only ~9px per column; dense, may feel like work.</p>
+<p class="shots">States: <a href="2-mission-control/shot-1.png">nominal</a><a href="2-mission-control/shot-2.png">caution</a><a href="2-mission-control/shot-3.png">warning</a><a href="2-mission-control/shot-4.png">menu</a><a href="2-mission-control/shot-5.png">y/n</a><a href="2-mission-control/shot-6.png">inspect</a><a href="2-mission-control/shot-7.png">--More--</a><a href="2-mission-control/shot-8.png">text window</a></p>
+</div></div>
+
+<div class="d"><a href="3-zen/index.html"><img src="3-zen/shot-2-speak.png"></a><div>
+<h2><a href="3-zen/index.html">3 · Zen</a></h2>
+<p>Map set like a page in a fine book, nothing else on screen. A hairline status whisper with an ensō orb as the assistant; it speaks in film-style captions and spotlights tiles it mentions (the rest of the map dims). Inventory, transcript, levels etc. are calm F-key sheets. Ink = game asks, vermilion = danger, indigo = assistant.</p>
+<p class="w">Weakness: early-game maps look sparse — a small room in a sea of paper.</p>
+<p class="shots">States: <a href="3-zen/shot-1-play.png">play</a><a href="3-zen/shot-2-speak.png">speaking</a><a href="3-zen/shot-3-danger.png">danger</a><a href="3-zen/shot-4-inventory.png">inventory</a><a href="3-zen/shot-5-menu.png">menu</a><a href="3-zen/shot-6-yn.png">y/n</a><a href="3-zen/shot-7-more.png">--More--</a><a href="3-zen/shot-8-transcript.png">transcript</a><a href="3-zen/shot-9-levels.png">levels</a><a href="3-zen/shot-10-write.png">text input</a></p>
+</div></div>
+
+<div class="d"><a href="4-atlas/index.html"><img src="4-atlas/shot-2.png"></a><div>
+<h2><a href="4-atlas/index.html">4 · Cartographer's Atlas</a></h2>
+<p>The dungeon as an atlas you build: a permanent cross-section with a live thumbnail per visited level, linked by stair lines and branches. Open any level read-only (live inset stays visible). The assistant is the Cartographer: its directions become routes and callouts across levels, with sources like map notes. F7 shows the whole atlas as an exploded plate.</p>
+<p class="w">Weakness: three columns shrink the live map; thumbnails crowd in deep games.</p>
+<p class="shots">States: <a href="4-atlas/shot-1.png">play</a><a href="4-atlas/shot-2.png">atlas + route</a><a href="4-atlas/shot-3.png">menu</a><a href="4-atlas/shot-4.png">y/n</a><a href="4-atlas/shot-5.png">text window</a><a href="4-atlas/shot-6.png">atlas plate</a></p>
+</div></div>
+
+<div class="d"><a href="5-brutalist/index.html"><img src="5-brutalist/shot-2.png"></a><div>
+<h2><a href="5-brutalist/index.html">5 · Neo-brutalist Arcade</a></h2>
+<p>A loud frame around a calm map: chunky stat blocks with hard shadows, condition stickers, class-tinted inventory tiles. The assistant is DELPHI, a geometric character with moods (listening, thinking, "SPOILER?", "HEADS-UP!") talking in comic bubbles, with receipt chips for lookups. Prompts become hazard-striped bars with big key-labelled buttons.</p>
+<p class="w">Weakness: with small early maps the loud frame dominates the game.</p>
+<p class="shots">States: <a href="5-brutalist/shot-1.png">play</a><a href="5-brutalist/shot-2.png">spoiler</a><a href="5-brutalist/shot-3.png">y/n</a><a href="5-brutalist/shot-4.png">menu</a><a href="5-brutalist/shot-5.png">low HP</a><a href="5-brutalist/shot-6.png">--More--</a><a href="5-brutalist/shot-7.png">conditions</a><a href="5-brutalist/shot-8.png">text + levels</a><a href="5-brutalist/shot-9.png">9</a><a href="5-brutalist/shot-10.png">1280</a><a href="5-brutalist/shot-11.png">1920</a></p>
+</div></div>
+</body></html>

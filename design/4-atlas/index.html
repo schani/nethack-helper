@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NetHack 5.0 — Cartographer's Atlas (design proposal 4)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f3f0e7;      /* app ground */
+  --sheet:#fcfbf7;      /* map sheet */
+  --panel:#f8f6ef;
+  --ink:#1f2226;
+  --ink-2:#464a51;
+  --ink-3:#767a80;
+  --ink-4:#a29f96;
+  --rule:#cdc6b3;
+  --rule-2:#e2dccb;
+  --tint:#ece6d5;       /* lit room fill */
+  --tint-d:#f2eee2;     /* remembered dark floor */
+  --accent:#c2402c;     /* survey red: routes, you-are-here */
+  --accent-soft:#f5dcd5;
+  --water:#2b5f93;
+  --live:#2d7a4b;
+  --gold:#9a6f00;
+  --cw:9.5px; --rh:20px; --fs:15.8px;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --serif:"Newsreader",Georgia,serif;
+  --atlasW:288px; --cartoW:324px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased}
+body{overflow:hidden}
+.caps kbd,.caps .kc{text-transform:none}
+.caps{font-family:var(--cond);text-transform:uppercase;letter-spacing:.11em;font-size:10.5px;font-weight:500;color:var(--ink-3)}
+.serif{font-family:var(--serif)}
+kbd,.kc{font-family:var(--cond);font-size:10.5px;font-weight:600;letter-spacing:.02em;display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 5px;border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;background:#fff;color:var(--ink-2);line-height:1}
+
+/* ---------- top bar ---------- */
+.top{height:44px;display:flex;align-items:center;gap:18px;padding:0 16px;border-bottom:1px solid var(--rule);background:var(--sheet)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--cond);font-weight:600;letter-spacing:.14em;text-transform:uppercase;font-size:11.5px;white-space:nowrap}
+.brand svg{flex:none}
+.brand .who{font-family:var(--serif);font-style:italic;letter-spacing:0;text-transform:none;font-weight:400;font-size:15px;color:var(--ink-2)}
+.mode{margin:0 auto;display:flex;align-items:center;gap:8px;height:26px;padding:0 12px 0 10px;border-radius:13px;border:1px solid var(--rule);background:#fff;font-family:var(--cond);font-size:11.5px;letter-spacing:.04em;color:var(--ink-2);white-space:nowrap}
+.mode .dot{width:8px;height:8px;border-radius:50%;background:var(--live);box-shadow:0 0 0 3px #2d7a4b22}
+.mode b{font-weight:600;color:var(--ink);letter-spacing:.1em}
+body.s-browse .mode{border-color:#c2402c66;background:#fff8f5}
+body.s-browse .mode .dot{background:transparent;border:2px solid var(--accent);box-shadow:none}
+body.s-plate .mode .dot{background:transparent;border:2px solid var(--ink-2);box-shadow:none}
+body.s-menu .mode .dot,body.s-yn .mode .dot,body.s-text .mode .dot{background:var(--gold);box-shadow:0 0 0 3px #9a6f0022}
+.fkeys{display:flex;gap:12px;align-items:center;font-family:var(--cond);font-size:11px;color:var(--ink-3);white-space:nowrap}
+.fkeys span{display:inline-flex;gap:5px;align-items:center}
+
+/* ---------- 3-column shell ---------- */
+.shell{display:grid;grid-template-columns:var(--atlasW) 1fr var(--cartoW);height:calc(100% - 44px)}
+
+/* ---------- atlas column ---------- */
+.atlas{border-right:1px solid var(--rule);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.atlas-h{padding:14px 16px 8px;display:flex;align-items:baseline;justify-content:space-between}
+.atlas-h h2{margin:0;font-family:var(--cond);font-size:12px;letter-spacing:.2em;text-transform:uppercase;font-weight:600}
+.atlas-h .sub{font-family:var(--cond);font-size:11px;color:var(--ink-3)}
+.atlas-body{flex:1;min-height:0;position:relative;padding:0 6px 0 4px}
+.atlas-body svg{display:block;overflow:visible}
+.atlas-foot{border-top:1px solid var(--rule-2);padding:10px 16px 12px}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;font-family:var(--cond);font-size:11px;color:var(--ink-2)}
+.legend i{display:inline-block;width:14px;text-align:center;margin-right:5px;font-style:normal}
+.atlas-keys{margin-top:10px;display:flex;flex-wrap:wrap;gap:4px 10px;font-family:var(--cond);font-size:11px;color:var(--ink-3)}
+.atlas-keys span{display:inline-flex;gap:4px;align-items:center}
+.thumb{cursor:pointer}
+#plateSvg .thumb *{vector-effect:non-scaling-stroke}
+.thumb:hover .tframe{stroke:var(--ink-2)}
+
+/* ---------- centre: sheet ---------- */
+.centre{display:flex;flex-direction:column;min-width:0;padding:12px 16px 14px;gap:10px}
+.msg{min-height:50px;display:flex;align-items:center;gap:14px;padding:0 14px;background:var(--sheet);border:1px solid var(--rule);border-radius:3px;position:relative}
+.msg .t{font-family:var(--caps);font-family:var(--cond);font-size:10.5px;color:var(--ink-4);letter-spacing:.06em;width:34px;flex:none}
+.msg .line{flex:1;min-width:0;font-family:var(--mono);font-size:13.5px;line-height:1.4;color:var(--ink);padding:6px 0}
+.msg .prev{position:absolute;left:62px;top:4px;font-family:var(--mono);font-size:11px;color:var(--ink-4)}
+.msg .under{flex:none;display:flex;align-items:center;gap:6px;font-family:var(--cond);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.msg .under b{font-family:var(--mono);font-weight:600;color:var(--ink)}
+/* prompt variants */
+.msg.ask{border-color:var(--gold);background:#fffbef;box-shadow:inset 3px 0 0 var(--gold)}
+.msg .ans{flex:none;display:flex;gap:6px;align-items:center;font-family:var(--cond);font-size:11.5px;color:var(--ink-3)}
+.msg .ans .kc{height:24px;min-width:28px;font-size:13px;font-family:var(--mono)}
+.msg .ans .kc.def{border-color:var(--ink-2);box-shadow:0 0 0 2px #1f222612}
+
+.sheet{position:relative;background:var(--sheet);border:1px solid var(--ink-2);outline:1px solid var(--rule);outline-offset:3px;margin:4px;padding:10px 14px 12px 12px}
+.sheet-h{display:flex;align-items:flex-end;justify-content:space-between;padding:0 0 8px 24px;border-bottom:1px solid var(--rule-2);margin-bottom:6px}
+.sheet-h .title{font-family:var(--serif);font-size:21px;line-height:1;font-weight:400;letter-spacing:.005em}
+.sheet-h .title em{font-style:italic;color:var(--ink-2)}
+.sheet-h .title .lv{font-family:var(--cond);font-style:normal;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-left:10px;font-weight:500;vertical-align:3px}
+.sheet-h .meta{display:flex;gap:16px;align-items:flex-end;font-family:var(--cond);font-size:11px;color:var(--ink-3)}
+.badge{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:2px;font-family:var(--cond);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
+.badge.live{color:var(--live);border:1px solid #2d7a4b55;background:#2d7a4b0d}
+.badge.rem{color:var(--accent);border:1px solid #c2402c66;background:#fff4f0}
+.scalebar{display:flex;flex-direction:column;gap:2px;align-items:flex-start}
+.scalebar .bar{display:flex;height:5px;border:1px solid var(--ink-2)}
+.scalebar .bar i{display:block;height:100%;width:calc(var(--cw) * 5)}
+.scalebar .bar i:nth-child(odd){background:var(--ink-2)}
+.scalebar .lab{display:flex;justify-content:space-between;width:calc(var(--cw) * 10 + 2px);font-size:9.5px;color:var(--ink-3)}
+
+.mapwrap{position:relative;display:grid;grid-template-columns:20px auto;grid-template-rows:16px auto;width:max-content}
+.ruler-top{grid-column:2;position:relative;height:16px;border-bottom:1px solid var(--ink-3)}
+.ruler-left{grid-row:2;position:relative;width:20px;border-right:1px solid var(--ink-3)}
+.ruler-top span,.ruler-left span{position:absolute;font-family:var(--cond);font-size:9.5px;color:var(--ink-3);letter-spacing:.06em}
+.ruler-top i,.ruler-left i{position:absolute;background:var(--ink-3)}
+.grid{grid-column:2;grid-row:2;position:relative;width:calc(var(--cw) * 80);height:calc(var(--rh) * 21);font-family:var(--mono);font-size:var(--fs);line-height:var(--rh);
+  background-image:linear-gradient(to right,#00000008 1px,transparent 1px),linear-gradient(to bottom,#00000008 1px,transparent 1px);background-size:calc(var(--cw) * 10) calc(var(--rh) * 7)}
+.row{height:var(--rh);white-space:nowrap;display:flex}
+.c{width:var(--cw);height:var(--rh);text-align:center;flex:none;font-weight:500}
+.c.fl{background:var(--tint)}
+.c.fd{background:var(--tint-d)}
+.c.wl{font-weight:500}
+.c.hero{font-weight:700;position:relative}
+.c.hero::before{content:"";position:absolute;inset:-1px -3px;border:1.5px solid var(--accent);border-radius:50%;}
+.overlay{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+.k0{color:#8a8577}.k1{color:#b3261e}.k2{color:#2e6b1f}.k3{color:#86521a}.k4{color:#1f4fbf}.k5{color:#8c2a8c}.k6{color:#0b6c7d}.k7{color:#34332f}
+.k8{color:#5c5c5c}.k9{color:#b04807;font-weight:600}.k10{color:#1f7a27;font-weight:600}.k11{color:#8a6400;font-weight:600}.k12{color:#2a5fc6;font-weight:600}.k13{color:#ad2d94;font-weight:600}.k14{color:#077a8c;font-weight:600}.k15{color:#000;font-weight:700}
+.c.k7.floor{color:#8f8a7c}.c.k7.corr{color:#948e81}.c.k0.floor{color:#a09b8d}
+
+/* hover inspector tooltip */
+.tip{position:absolute;pointer-events:none;line-height:1.25;background:#fff;border:1px solid var(--ink-2);padding:6px 9px 7px;border-radius:2px;box-shadow:0 3px 10px #0000001a;white-space:nowrap;z-index:5}
+.tip .d{font-family:var(--serif);font-style:italic;font-size:15px;color:var(--ink)}
+.tip .g{font-family:var(--cond);font-size:10.5px;color:var(--ink-3);letter-spacing:.04em;margin-top:2px}
+.tip.below::after{top:-6px;bottom:auto;transform:rotate(225deg)}
+.tip::after{content:"";position:absolute;left:14px;bottom:-6px;width:9px;height:9px;background:#fff;border-right:1px solid var(--ink-2);border-bottom:1px solid var(--ink-2);transform:rotate(45deg)}
+
+/* callouts drawn by the cartographer */
+.callout{position:absolute;z-index:4;line-height:1.3;background:#fff;border:1px solid var(--accent);padding:6px 10px 7px;border-radius:2px;box-shadow:0 2px 8px #c2402c1f}
+.callout .h{font-family:var(--serif);font-style:italic;font-size:15.5px;color:var(--accent);line-height:1.15}
+.callout .s{font-family:var(--cond);font-size:11px;color:var(--ink-2);margin-top:3px;letter-spacing:.02em}
+.callout.quiet{border-color:var(--ink-3);box-shadow:none}
+.callout.quiet .h{color:var(--ink)}
+
+/* locator inset (live level while previewing) */
+.inset{position:absolute;z-index:6;line-height:1.2;background:var(--sheet);border:1px solid var(--ink-2);outline:1px solid var(--rule);outline-offset:2px;padding:5px 6px 6px;cursor:pointer}
+.inset .caps{display:flex;justify-content:space-between;gap:8px;font-size:9.5px;margin-bottom:3px}
+.inset .caps b{color:var(--live);font-weight:600}
+.preview-hatch{position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(135deg,transparent 0 7px,#c2402c09 7px 8px)}
+
+/* game overlays: menu / text window */
+.dim{position:absolute;inset:0;background:#fcfbf7b3;z-index:7}
+.gwin{position:absolute;z-index:8;font-family:var(--sans);line-height:1.4;background:#fff;border:1px solid var(--ink);box-shadow:0 10px 30px #1f22261f,0 0 0 4px #fcfbf7;border-radius:2px}
+.gwin .wh{padding:11px 16px 9px;border-bottom:1px solid var(--rule-2);display:flex;justify-content:space-between;align-items:baseline;gap:20px}
+.gwin .wh .q{font-family:var(--serif);font-size:18px}
+.gwin .wh .caps{font-size:10px}
+.gwin .wb{padding:6px 0 8px}
+.gwin .grp{font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;font-size:10px;font-weight:600;color:var(--ink-3);padding:9px 16px 3px}
+.gwin .it{display:grid;grid-template-columns:28px 16px 1fr auto;align-items:center;gap:8px;padding:4px 16px;font-size:13.5px}
+.gwin .it .kc{font-family:var(--mono);font-size:12px;height:20px}
+.gwin .it .bx{width:13px;height:13px;border:1.3px solid var(--ink-3);border-radius:2px}
+.gwin .it.sel{background:#fff6e2}
+.gwin .it.sel .bx{background:var(--ink);border-color:var(--ink);box-shadow:inset 0 0 0 2px #fff}
+.gwin .it .tag{font-family:var(--cond);font-size:10.5px;color:var(--ink-3);letter-spacing:.04em}
+.gwin .it .g{font-family:var(--mono);font-weight:600}
+.gwin .wf{border-top:1px solid var(--rule-2);padding:8px 16px;display:flex;flex-wrap:wrap;gap:6px 14px;font-family:var(--cond);font-size:11px;color:var(--ink-3)}
+.gwin .wf span{display:inline-flex;gap:5px;align-items:center}
+.gwin pre{margin:0;padding:12px 18px;font-family:var(--mono);font-size:13.5px;line-height:1.55;color:var(--ink)}
+.more{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)}
+.more .kc{height:22px}
+
+/* below the sheet: title block, inventory, inspector */
+.below{display:grid;grid-template-columns:1.05fr 1.25fr .8fr;gap:0;flex:1;min-height:0;border:1px solid var(--rule);background:var(--sheet);border-radius:3px}
+.below > div{padding:12px 16px;min-width:0}
+.below > div + div{border-left:1px solid var(--rule-2)}
+.tb-name{font-family:var(--serif);font-size:19px;line-height:1.1}
+.tb-sub{font-family:var(--cond);font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.bars{margin-top:11px;display:grid;grid-template-columns:24px 1fr 46px;gap:6px 8px;align-items:center;font-family:var(--cond);font-size:11.5px}
+.bars .lab{color:var(--ink-3);letter-spacing:.06em}
+.bars .tr{height:6px;background:var(--rule-2);border-radius:1px;position:relative;overflow:hidden}
+.bars .tr i{position:absolute;inset:0 auto 0 0;background:var(--ink-2)}
+.bars .tr.hp i{background:#2f7a43}
+.bars .tr.pw i{background:var(--water)}
+.bars .v{font-family:var(--mono);font-size:12px;text-align:right}
+.stats{margin-top:11px;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--rule-2);border-bottom:1px solid var(--rule-2)}
+.stats div{padding:5px 0 4px;text-align:left}
+.stats .caps{font-size:9.5px;display:block}
+.stats b{font-family:var(--mono);font-size:13.5px;font-weight:500}
+.attrs{margin-top:8px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.attrs span em{font-style:normal;font-family:var(--cond);color:var(--ink-3);font-size:10.5px;margin-right:3px;letter-spacing:.06em}
+.conds{margin-top:8px;font-family:var(--cond);font-size:11px;color:var(--ink-4)}
+.blk-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.inv .grp{font-family:var(--cond);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin:7px 0 2px}
+.inv .grp:first-of-type{margin-top:0}
+.inv .ii{display:grid;grid-template-columns:20px 1fr;gap:6px;align-items:baseline;padding:2px 0;font-size:12.5px;line-height:1.35}
+.inv .ii .l{font-family:var(--mono);font-weight:600;color:var(--ink-2)}
+.inv .ii .st{font-family:var(--cond);font-size:10.5px;color:var(--ink-3)}
+.insp .d{font-family:var(--serif);font-style:italic;font-size:17px;line-height:1.2;margin-top:2px}
+.insp .gl{display:flex;align-items:center;gap:10px;margin-top:4px}
+.insp .gl .gbox{width:34px;height:40px;border:1px solid var(--rule);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:22px;background:#fff}
+.insp .rel{font-family:var(--cond);font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.insp .look{margin-top:8px;font-size:11.5px;color:var(--ink-3);line-height:1.4}
+
+/* ---------- cartographer (assistant) ---------- */
+.carto{border-left:1px solid var(--rule);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.carto-h{padding:12px 16px 10px;border-bottom:1px solid var(--rule-2)}
+.carto-h .row1{display:flex;justify-content:space-between;align-items:center}
+.carto-h h2{margin:0;font-family:var(--cond);font-size:12px;letter-spacing:.2em;text-transform:uppercase;font-weight:600}
+.vstate{display:flex;align-items:center;gap:7px;font-family:var(--cond);font-size:11px;color:var(--ink-3)}
+.vstate .led{width:7px;height:7px;border-radius:50%;background:var(--ink-4)}
+.vstate.on .led{background:var(--accent);box-shadow:0 0 0 3px #c2402c22}
+.carto-h .ctx{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border:1px solid var(--rule);border-radius:11px;background:#fff;font-family:var(--cond);font-size:11px;color:var(--ink-2);white-space:nowrap}
+.chip.map{border-color:#c2402c88;color:var(--accent);cursor:pointer}
+.chip.map.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.chip.src{border-style:dashed}
+.chip.wait{border-color:var(--gold);color:#7a5800;background:#fffbef}
+.log{flex:1;min-height:0;overflow:auto;padding:6px 16px 10px}
+.turn{padding:11px 0 10px;border-bottom:1px solid var(--rule-2)}
+.turn:last-child{border-bottom:none}
+.who{display:flex;align-items:center;gap:6px;font-family:var(--cond);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:500;margin-bottom:4px}
+.who .via{letter-spacing:.02em;text-transform:none;color:var(--ink-4);font-weight:400}
+.turn.you .txt{font-family:var(--serif);font-size:16px;line-height:1.35;color:var(--ink-2);font-style:italic}
+.turn.ai .who{color:var(--accent)}
+.turn.ai .txt{font-size:13.5px;line-height:1.5;color:var(--ink)}
+.turn.ai .txt b{font-weight:600}
+.turn .acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.srcs{margin-top:8px;border-left:2px solid var(--rule);padding:2px 0 2px 9px;font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.srcs .caps{font-size:9.5px;display:block;margin-bottom:1px}
+.srcs q{font-family:var(--mono);font-size:11px;color:var(--ink-2);quotes:none}
+.gate{margin-top:8px;border:1px solid var(--gold);background:#fffbef;border-radius:3px;padding:9px 11px}
+.gate .caps{color:#7a5800;font-size:10px}
+.gate p{margin:4px 0 8px;font-size:13px;line-height:1.45}
+.gate .btns{display:flex;gap:6px}
+.btn{height:26px;padding:0 10px;border:1px solid var(--ink-2);background:#fff;border-radius:2px;font-family:var(--cond);font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.btn.pri{background:var(--ink);color:#fff}
+.speaking{display:flex;align-items:center;gap:8px;margin-top:8px;font-family:var(--cond);font-size:11px;color:var(--ink-3)}
+.wave{display:flex;gap:2px;align-items:center;height:14px}
+.wave i{display:block;width:2px;background:var(--accent);border-radius:1px}
+.compose{border-top:1px solid var(--rule);padding:10px 12px 12px;background:var(--sheet)}
+.compose .inp{display:flex;align-items:center;gap:8px;height:36px;border:1px solid var(--rule);border-radius:3px;background:#fff;padding:0 6px 0 11px}
+.compose .inp .ph{flex:1;color:var(--ink-4);font-size:13px}
+.mic{display:flex;align-items:center;gap:10px;margin-top:9px}
+.micbtn{width:34px;height:34px;border-radius:50%;border:1px solid var(--ink-2);display:flex;align-items:center;justify-content:center;background:#fff}
+.micbtn.on{background:var(--accent);border-color:var(--accent)}
+.mic .lbl{flex:1;font-family:var(--cond);font-size:11.5px;color:var(--ink-3);line-height:1.35}
+.mic .lbl b{color:var(--ink);font-weight:600}
+
+/* ---------- plate (full atlas) ---------- */
+.plate{position:absolute;left:0;right:0;top:44px;bottom:0;background:var(--paper);display:none;z-index:20}
+body.s-plate .plate{display:grid;grid-template-columns:1fr 380px}
+.plate-main{position:relative;padding:18px 26px;min-width:0}
+.plate-main .ph{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--ink-2);padding-bottom:8px}
+.plate-main .ph h1{margin:0;font-family:var(--serif);font-weight:400;font-size:28px;letter-spacing:.005em}
+.plate-main .ph h1 em{color:var(--ink-3)}
+.plate-side{border-left:1px solid var(--rule);background:var(--panel);padding:18px 22px;overflow:hidden;display:flex;flex-direction:column;gap:16px}
+.gaz{width:100%;border-collapse:collapse;font-size:12.5px}
+.gaz td{padding:5px 0;border-bottom:1px dotted var(--rule);vertical-align:baseline}
+.gaz td.lv{font-family:var(--mono);font-size:12px;text-align:right;color:var(--ink-2);white-space:nowrap;padding-left:8px}
+.gaz td.ref{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);text-align:right;width:34px}
+.gaz .ic{display:inline-block;width:16px;text-align:center;margin-right:6px;font-family:var(--mono);font-weight:600}
+.gaz .un{color:var(--ink-3);font-style:italic;font-family:var(--serif);font-size:13px}
+
+/* ---------- mockup state switcher (not part of the product) ---------- */
+.mock{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:100;display:flex;gap:2px;padding:3px;background:#1f2226;border-radius:6px;box-shadow:0 4px 14px #0003;font-family:var(--cond);font-size:11.5px}
+.mock button{all:unset;cursor:pointer;color:#c9c6bd;padding:4px 9px;border-radius:4px}
+.mock button.on{background:#fff;color:#1f2226}
+.mock .lab{color:#8b877d;padding:4px 8px;letter-spacing:.1em;text-transform:uppercase;font-size:10px;align-self:center}
+body.clean .mock{display:none}
+
+/* state visibility: elements tagged data-only="..." are shown only in those states (set by script) */
+[hidden]{display:none!important}
+
+@media (max-width:1366px){ :root{--atlasW:258px;--cartoW:304px} .centre{padding:10px 14px 12px} .fkeys .opt{display:none} }
+@media (min-width:1800px){ :root{--atlasW:340px;--cartoW:400px} .turn.ai .txt{font-size:14.5px} }
+</style>
+</head>
+<body class="s-play">
+
+<!-- ================= TOP BAR ================= -->
+<header class="top">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.5" fill="none" stroke="#1f2226" stroke-width="1"/><path d="M10 2.5 L12 10 L10 17.5 L8 10Z" fill="#1f2226"/><path d="M10 2.5 L12 10 L8 10Z" fill="#c2402c"/></svg>
+    NetHack 5.0 <span class="who">Agnes · neutral human Valkyrie</span>
+  </div>
+  <div class="mode" id="mode"></div>
+  <div class="fkeys">
+    <span><kbd>F2</kbd> Mic</span><span><kbd>F3</kbd> Hold to talk</span><span class="opt"><kbd>F4</kbd> Ask</span><span><kbd>F6</kbd> Atlas</span><span class="opt"><kbd>F7</kbd> Plate</span>
+  </div>
+</header>
+
+<div class="shell">
+  <!-- ================= ATLAS ================= -->
+  <aside class="atlas">
+    <div class="atlas-h"><h2>Atlas</h2><span class="sub">5 levels surveyed · T:11</span></div>
+    <div class="atlas-body" id="atlasBody"><svg id="atlasSvg"></svg></div>
+    <div class="atlas-foot">
+      <div class="legend">
+        <span><i>▲</i>Up stairs</span><span><i>▼</i>Down stairs</span>
+        <span><i style="color:#946a00">◆</i>Branch stairs</span><span><i style="color:#8c2a8c">×</i>Trap</span>
+        <span><i style="color:#c2402c">◉</i>You</span><span><i style="color:#a39d90">┄</i>Corridor</span>
+      </div>
+      <div class="atlas-keys"><span><kbd>F6</kbd> browse</span><span><kbd>↑</kbd><kbd>↓</kbd> level</span><span><kbd>Esc</kbd> back to live</span></div>
+    </div>
+  </aside>
+
+  <!-- ================= CENTRE ================= -->
+  <section class="centre">
+    <!-- message strip -->
+    <div class="msg" id="msgPlay" data-only="play browse text menu">
+      <span class="t">T:1</span>
+      <span class="line">Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie.</span>
+      <span class="under">Underfoot <b class="k7">&lt;</b> staircase up</span>
+    </div>
+    <div class="msg ask" data-only="yn">
+      <span class="t" style="color:#7a5800">ASK</span>
+      <span class="line">Are you sure you want to pray? <span style="color:var(--ink-3)">[yn] (n)</span></span>
+      <span class="ans"><span class="kc">y</span><span class="kc def">n</span> <span>default&nbsp;n · <kbd>Esc</kbd> = n</span></span>
+    </div>
+
+    <!-- the map sheet -->
+    <div class="sheet" id="sheet">
+      <div class="sheet-h">
+        <div class="title" id="sheetTitle"></div>
+        <div class="meta">
+          <span id="sheetBadge"></span>
+          <div class="scalebar"><div class="bar"><i></i><i></i></div><div class="lab"><span>0</span><span>5</span><span>10 sq</span></div></div>
+          <svg width="18" height="26" viewBox="0 0 18 26" aria-label="North"><text x="9" y="8" text-anchor="middle" font-family="IBM Plex Sans Condensed" font-size="8.5" font-weight="600" fill="#464a51">N</text><path d="M9 10 L13 25 L9 21 L5 25Z" fill="none" stroke="#464a51" stroke-width="1"/><path d="M9 10 L9 21 L5 25Z" fill="#464a51"/></svg>
+        </div>
+      </div>
+      <div class="mapwrap" id="mapwrap">
+        <div></div>
+        <div class="ruler-top" id="rulerTop"></div>
+        <div class="ruler-left" id="rulerLeft"></div>
+        <div class="grid" id="grid"></div>
+      </div>
+    </div>
+
+    <!-- below the sheet -->
+    <div class="below">
+      <div class="tb">
+        <div class="tb-name">Agnes the Stripling</div>
+        <div class="tb-sub">Valkyrie · human · female · neutral</div>
+        <div class="bars">
+          <span class="lab">HP</span><span class="tr hp"><i style="width:93.75%"></i></span><span class="v">15(16)</span>
+          <span class="lab">Pw</span><span class="tr pw"><i style="width:100%"></i></span><span class="v">2(2)</span>
+        </div>
+        <div class="stats">
+          <div><span class="caps">Dlvl</span><b>4</b></div>
+          <div><span class="caps">AC</span><b>6</b></div>
+          <div><span class="caps">Xp</span><b>1/0</b></div>
+          <div><span class="caps">Gold</span><b>$0</b></div>
+          <div><span class="caps">Turn</span><b>11</b></div>
+        </div>
+        <div class="attrs"><span><em>St</em>18</span><span><em>Dx</em>13</span><span><em>Co</em>18</span><span><em>In</em>7</span><span><em>Wi</em>9</span><span><em>Ch</em>8</span></div>
+        <div class="conds">Not hungry · unencumbered · no conditions</div>
+      </div>
+      <div class="inv">
+        <div class="blk-h"><span class="caps">Inventory</span><span class="caps" style="font-size:9.5px">4 items · <kbd>i</kbd> in game</span></div>
+        <div class="grp">Weapons</div>
+        <div class="ii"><span class="l">a</span><span>a blessed +1 spear <span class="st">wielded, right hand</span></span></div>
+        <div class="ii"><span class="l">b</span><span>a +0 dagger <span class="st">alternate weapon</span></span></div>
+        <div class="grp">Armor</div>
+        <div class="ii"><span class="l">c</span><span>an uncursed +3 small shield <span class="st">worn</span></span></div>
+        <div class="grp">Comestibles</div>
+        <div class="ii"><span class="l">d</span><span>an uncursed food ration</span></div>
+      </div>
+      <div class="insp" id="insp"></div>
+    </div>
+  </section>
+
+  <!-- ================= CARTOGRAPHER ================= -->
+  <aside class="carto">
+    <div class="carto-h">
+      <div class="row1"><h2>Cartographer</h2>
+        <span class="vstate" data-only="play menu yn text"><span class="led"></span>Mic off · <kbd>F2</kbd></span>
+        <span class="vstate on" data-only="browse"><span class="led"></span>Speaking</span>
+      </div>
+      <div class="ctx">
+        <span class="chip">Sees: Dlvl 1–4, Mines 1</span>
+        <span class="chip">Spoilers: ask first</span>
+        <span class="chip wait" data-only="menu">Game waiting · menu</span>
+        <span class="chip wait" data-only="yn">Game waiting · y/n</span>
+        <span class="chip wait" data-only="text">Game waiting · --More--</span>
+      </div>
+    </div>
+    <div class="log">
+      <!-- play -->
+      <div data-only="play">
+        <div class="turn you"><div class="who">You <span class="via">· voice · 1 min ago</span></div><div class="txt">“Anything worth knowing on this level?”</div></div>
+        <div class="turn ai"><div class="who">Cartographer</div>
+          <div class="txt">There's a <b>scroll shop</b> here — the overview lists it, but you haven't found its door yet, so it's not on the map. The <b>downstairs</b> are southwest: about 47 left and 12 down.</div>
+          <div class="acts"><span class="chip map" data-hl="down">◎ Show downstairs</span><span class="chip src">overview · ^O</span></div>
+        </div>
+        <div class="turn you"><div class="who">You <span class="via">· typed</span></div><div class="txt">“Can I tell which scrolls are good by their price?”</div></div>
+        <div class="turn ai"><div class="who">Cartographer</div>
+          <div class="gate"><span class="caps">Spoiler check</span>
+            <p>That's price identification — it works from the game's base prices, which is spoiler territory. Want it?</p>
+            <div class="btns"><span class="btn pri">Yes, tell me</span><span class="btn">Keep it unspoiled</span></div>
+          </div>
+          <div class="srcs" style="margin-top:7px">Or just say “yes” / “no”. Your answer is remembered for shop prices only.</div>
+        </div>
+      </div>
+      <!-- browse -->
+      <div data-only="browse">
+        <div class="turn you"><div class="who">You <span class="via">· voice · just now</span></div><div class="txt">“Where were the stairs to the Mines again?”</div></div>
+        <div class="turn ai"><div class="who">Cartographer</div>
+          <div class="txt">On <b>level 2</b>. Go up from here, cross level 3 to its upstairs in the west, then up again. You'll come out in level 2's <b>east room</b> — the Mines stairs are in the small room <b>top-middle, about 38 west and 11 north</b>. I've drawn the route.</div>
+          <div class="acts"><span class="chip map on" data-hl="route">◎ Route · 2 stairs up · ~150 moves</span><span class="chip map">Dlvl 3 leg</span></div>
+          <div class="srcs"><span class="caps">Sources</span>Remembered map, Dlvl 2 (T:7) · Dlvl 3 (T:9)<br>Dungeon overview: <q>Level 2: Stairs down to The Gnomish Mines.</q></div>
+          <div class="speaking"><span class="wave"><i style="height:6px"></i><i style="height:11px"></i><i style="height:14px"></i><i style="height:8px"></i><i style="height:12px"></i><i style="height:5px"></i><i style="height:9px"></i></span>speaking · <kbd>F3</kbd> to interrupt</div>
+        </div>
+        <div class="turn ai" style="padding-top:8px"><div class="who">Note on the map</div>
+          <div class="txt" style="font-size:12.5px;color:var(--ink-2)">On level 3 there's a gap in your survey between the stair room's door and the western corridors — that stretch is drawn dotted.</div>
+        </div>
+      </div>
+      <!-- menu -->
+      <div data-only="menu">
+        <div class="turn you"><div class="who">You <span class="via">· voice</span></div><div class="txt">“Which one's the dagger?”</div></div>
+        <div class="turn ai"><div class="who">Cartographer</div>
+          <div class="txt"><b>b</b> — the +0 dagger, your alternate weapon. It's already ticked; press <b>Enter</b> to drop it, or <b>b</b> again to untick.</div>
+          <div class="srcs"><span class="caps">Reading</span>Open menu: <q>What would you like to drop?</q> · 4 items, 1 selected</div>
+        </div>
+      </div>
+      <!-- y/n -->
+      <div data-only="yn">
+        <div class="turn you"><div class="who">You <span class="via">· voice</span></div><div class="txt">“Should I pray?”</div></div>
+        <div class="turn ai"><div class="who">Cartographer</div>
+          <div class="txt">I'd press <b>n</b>. You're not in trouble — 15 of 16 HP — and on turn 11 your prayer timeout is still high. Odin would be angered and you'd lose luck.</div>
+          <div class="srcs"><span class="caps">Lookup · wiki · Prayer</span>Prayer timeout starts at 300. Safe only if it is under 200 in major trouble, under 100 in minor trouble — and 0 when not in trouble.</div>
+          <div class="srcs"><span class="caps">Lookup · src/pray.c</span><code style="font-family:var(--mono);font-size:11px;color:var(--ink-2);white-space:pre;display:block;line-height:1.5">if (gp.p_type == 0) {
+    u.ublesscnt += rnz(250);
+    change_luck(-3);
+    gods_upset(u.ualign.type);</code></div>
+        </div>
+      </div>
+      <!-- text window -->
+      <div data-only="text">
+        <div class="turn you"><div class="who">You <span class="via">· voice</span></div><div class="txt">“Remind me what's on each level.”</div></div>
+        <div class="turn ai"><div class="who">Cartographer</div>
+          <div class="txt">Level 2 has the <b>Mines stairs</b>, level 3 a <b>general store</b>, and this one a <b>scroll shop</b>. In the Mines you've only seen the arrival stairs. It's all pinned in the atlas — press <b>Enter</b> to close the overview.</div>
+          <div class="acts"><span class="chip map">◎ Open plate · F7</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="compose">
+      <div class="inp"><span class="ph">Ask the cartographer…</span><kbd>F4</kbd></div>
+      <div class="mic">
+        <div class="micbtn" id="micbtn"><svg width="14" height="16" viewBox="0 0 14 16"><rect x="4" y="1" width="6" height="9" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.5 7.5a5.5 5.5 0 0 0 11 0M7 13v2.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></div>
+        <div class="lbl"><b>Mic off.</b> <kbd>F2</kbd> toggle · hold <kbd>F3</kbd> to talk.<br>Typing here never sends keys to the game; <kbd>Esc</kbd> returns.</div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ================= PLATE (full atlas) ================= -->
+<div class="plate" id="plate">
+  <div class="plate-main">
+    <div class="ph"><h1>Atlas of the Dungeon <em>— as surveyed by Agnes, turn 11</em></h1>
+      <div class="caps" style="display:flex;gap:14px;align-items:center"><span><kbd>F7</kbd> close</span><span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> select</span><span><kbd>Enter</kbd> preview</span></div></div>
+    <svg id="plateSvg"></svg>
+  </div>
+  <div class="plate-side">
+    <div>
+      <div class="caps" style="margin-bottom:6px">Gazetteer</div>
+      <table class="gaz">
+        <tr><td><span class="ic k11">◆</span>Stairs to the Gnomish Mines</td><td class="ref">D1</td><td class="lv">Dlvl 2</td></tr>
+        <tr><td><span class="ic">⌂</span>General store <span class="un">— reported, not located</span></td><td class="ref">—</td><td class="lv">Dlvl 3</td></tr>
+        <tr><td><span class="ic">⌂</span>Scroll shop <span class="un">— reported, not located</span></td><td class="ref">—</td><td class="lv">Dlvl 4</td></tr>
+        <tr><td><span class="ic k5">^</span>Teleportation trap</td><td class="ref">G1</td><td class="lv">Dlvl 4</td></tr>
+        <tr><td><span class="ic k4">^</span>Rust trap</td><td class="ref">E2</td><td class="lv">Dlvl 2</td></tr>
+        <tr><td><span class="ic k12">^</span>Magic trap</td><td class="ref">G2</td><td class="lv">Dlvl 1</td></tr>
+        <tr><td><span class="ic k6">#</span>Iron bars</td><td class="ref">D3</td><td class="lv">Dlvl 3</td></tr>
+        <tr><td><span class="ic k11">$</span>4 gold pieces</td><td class="ref">H2</td><td class="lv">Dlvl 2</td></tr>
+        <tr><td><span class="ic k12">`</span>Engravings</td><td class="ref"></td><td class="lv">1 · 3 · 4</td></tr>
+      </table>
+    </div>
+    <div>
+      <div class="caps" style="margin-bottom:6px">Survey record</div>
+      <table class="gaz">
+        <tr><td>Dlvl 1 <span class="un">Dungeons of Doom</span></td><td class="ref"></td><td class="lv">T:2 · 426 sq</td></tr>
+        <tr><td>Dlvl 2 <span class="un">Dungeons of Doom</span></td><td class="ref"></td><td class="lv">T:7 · 369 sq</td></tr>
+        <tr><td>Dlvl 3 <span class="un">Dungeons of Doom</span></td><td class="ref"></td><td class="lv">T:9 · 486 sq</td></tr>
+        <tr><td>Dlvl 3 <span class="un">Gnomish Mines</span></td><td class="ref"></td><td class="lv">T:5 · 9 sq</td></tr>
+        <tr><td>Dlvl 4 <span class="un">Dungeons of Doom</span></td><td class="ref"></td><td class="lv">live · 552 sq</td></tr>
+      </table>
+    </div>
+    <div>
+      <div class="caps" style="margin-bottom:8px">Legend</div>
+      <div class="legend" style="grid-template-columns:1fr 1fr 1fr">
+        <span><i>▲</i>Up stairs</span><span><i>▼</i>Down stairs</span><span><i style="color:#946a00">◆</i>Branch stairs</span>
+        <span><i style="color:#c2402c">◉</i>You</span><span><i style="color:#8c2a8c">×</i>Trap</span><span><i style="color:#c99a12">●</i>Gold</span>
+        <span><i>┊</i>Stair shaft</span><span><i style="color:#b08f3a">⬚</i>Projected</span><span><i style="color:#a29f96">⬚</i>Uncharted</span>
+      </div>
+      <div style="margin-top:8px;font-size:11.5px;color:var(--ink-3);line-height:1.45">Exploded axonometric: every level drawn to the same horizontal scale; vertical spacing is schematic. Click a level, or select it and press <kbd>Enter</kbd>, to open its full map.</div>
+    </div>
+    <div class="turn ai" style="border:none;padding:0">
+      <div class="who" style="margin-bottom:5px">Cartographer · on projections</div>
+      <div class="txt" style="font-size:13px">Dashed outlines are <b>projected</b>, not surveyed. You allowed dungeon-layout spoilers, so I've sketched where Minetown should be: three or four levels into the Mines — Dlvl 5 or 6 for you.</div>
+      <div class="acts"><span class="chip src">wiki · Gnomish Mines</span><span class="chip src">dat/dungeon.lua · minetn base 3, range 2</span></div>
+    </div>
+  </div>
+</div>
+
+<nav class="mock" id="mock"><span class="lab">Mockup state</span></nav>
+
+<script>
+const DATA={"levels":{"0:1":{"key":"0:1","dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","seen":2,"cells":[[45,2,"-",7,0],[46,2,"-",7,0],[47,2,"-",7,0],[48,2,"-",7,0],[49,2,"-",7,0],[50,2,"-",7,0],[51,2,"-",7,0],[52,2,"-",7,0],[53,2,"-",7,0],[54,2,"-",7,0],[62,2,"-",7,0],[63,2,"-",7,0],[64,2,"-",7,0],[65,2,"-",7,0],[66,2,"-",7,0],[67,2,"-",7,0],[68,2,"-",7,0],[69,2,"-",7,0],[70,2,"-",7,0],[71,2,"-",7,0],[72,2,"-",7,0],[45,3,"|",7,0],[46,3,".",0,1],[47,3,".",0,1],[48,3,".",0,1],[49,3,".",0,1],[50,3,".",0,1],[51,3,".",0,1],[52,3,".",0,1],[53,3,".",0,1],[54,3,"|",7,0],[61,3,"#",7,2],[62,3,".",7,3],[63,3,".",7,4],[64,3,".",7,4],[65,3,".",7,4],[66,3,".",7,4],[67,3,">",7,5],[68,3,".",7,4],[69,3,".",7,4],[70,3,".",7,4],[71,3,".",7,4],[72,3,"|",7,0],[35,4,"-",7,0],[36,4,"-",7,0],[37,4,"-",7,0],[38,4,"-",7,0],[39,4,"-",7,0],[40,4,"-",7,0],[45,4,"|",7,0],[46,4,".",0,1],[47,4,".",0,1],[48,4,".",0,1],[49,4,".",0,1],[50,4,".",0,1],[51,4,".",0,1],[52,4,".",0,1],[53,4,".",0,1],[54,4,"|",7,0],[61,4,"#",7,2],[62,4,"|",7,0],[63,4,".",7,4],[64,4,".",7,4],[65,4,".",7,4],[66,4,".",7,4],[67,4,".",7,4],[68,4,".",7,4],[69,4,".",7,4],[70,4,".",7,4],[71,4,".",7,4],[72,4,"|",7,0],[35,5,"|",7,0],[36,5,".",0,1],[37,5,".",0,1],[38,5,".",0,1],[39,5,".",0,1],[40,5,"|",7,0],[45,5,"|",7,0],[46,5,".",0,1],[47,5,".",0,1],[48,5,".",0,1],[49,5,".",0,1],[50,5,".",0,1],[51,5,".",0,1],[52,5,".",0,1],[53,5,".",0,1],[54,5,"|",7,0],[60,5,"#",7,2],[61,5,"#",7,2],[62,5,".",7,3],[63,5,".",7,4],[64,5,".",7,4],[65,5,".",7,4],[66,5,".",7,4],[67,5,".",7,4],[68,5,".",7,4],[69,5,".",7,4],[70,5,".",7,4],[71,5,".",7,4],[72,5,"|",7,0],[35,6,"|",7,0],[36,6,".",0,1],[37,6,".",0,1],[38,6,".",0,1],[39,6,".",0,1],[40,6,".",7,3],[41,6,"#",7,2],[45,6,"|",7,0],[46,6,".",0,1],[47,6,".",0,1],[48,6,".",0,1],[49,6,".",0,1],[50,6,".",0,1],[51,6,".",0,1],[52,6,".",0,1],[53,6,".",0,1],[54,6,"|",7,0],[59,6,"#",7,2],[60,6,"#",7,2],[61,6,"#",7,2],[62,6,"-",7,0],[63,6,"-",7,0],[64,6,"-",7,0],[65,6,"-",7,0],[66,6,"-",7,0],[67,6,".",7,3],[68,6,"-",7,0],[69,6,"-",7,0],[70,6,"-",7,0],[71,6,"-",7,0],[72,6,"-",7,0],[32,7,"#",7,2],[33,7,"#",7,2],[34,7,"#",7,2],[35,7,".",7,3],[36,7,".",0,1],[37,7,".",0,1],[38,7,".",0,1],[39,7,".",0,1],[40,7,"|",7,0],[41,7,"#",7,2],[45,7,"|",7,0],[46,7,".",0,1],[47,7,".",0,1],[48,7,".",0,1],[49,7,".",0,1],[50,7,"`",12,6],[51,7,".",0,1],[52,7,".",0,1],[53,7,".",0,1],[54,7,".",7,3],[55,7,"#",7,2],[59,7,"#",7,2],[60,7,"#",7,2],[61,7,"#",7,2],[67,7,"#",7,2],[31,8,"#",7,2],[32,8,"#",7,2],[35,8,"-",7,0],[36,8,"-",7,0],[37,8,"-",7,0],[38,8,"-",7,0],[39,8,"-",7,0],[40,8,"-",7,0],[41,8,"#",7,2],[42,8,"#",7,2],[43,8,"#",7,2],[44,8,"#",7,2],[45,8,".",7,3],[46,8,".",0,1],[47,8,".",0,1],[48,8,".",0,1],[49,8,".",0,1],[50,8,".",0,1],[51,8,".",0,1],[52,8,".",0,1],[53,8,".",0,1],[54,8,"|",7,0],[55,8,"#",7,2],[58,8,"#",7,2],[59,8,"#",7,2],[60,8,"#",7,2],[67,8,"#",7,2],[13,9,"-",7,0],[14,9,"-",7,0],[15,9,"-",7,0],[16,9,"-",7,0],[17,9,"-",7,0],[18,9,"-",7,0],[19,9,"-",7,0],[20,9,"-",7,0],[21,9,"-",7,0],[22,9,"-",7,0],[23,9,"-",7,0],[24,9,"-",7,0],[25,9,"-",7,0],[31,9,"#",7,2],[40,9,"#",7,2],[41,9,"#",7,2],[45,9,"-",7,0],[46,9,"-",7,0],[47,9,"-",7,0],[48,9,".",7,3],[49,9,"-",7,0],[50,9,"-",7,0],[51,9,"-",7,0],[52,9,"-",7,0],[53,9,"-",7,0],[54,9,"-",7,0],[55,9,"#",7,2],[58,9,"#",7,2],[60,9,"#",7,2],[66,9,"#",7,2],[67,9,"#",7,2],[13,10,"|",7,0],[14,10,"<",11,7],[15,10,".",0,1],[16,10,".",0,1],[17,10,".",0,1],[18,10,".",0,1],[19,10,".",0,1],[20,10,".",0,1],[21,10,".",0,1],[22,10,".",0,1],[23,10,".",0,1],[24,10,".",0,1],[25,10,"|",7,0],[31,10,"#",7,2],[39,10,"#",7,2],[40,10,"#",7,2],[48,10,"#",7,2],[51,10,"#",7,2],[52,10,"#",7,2],[53,10,"#",7,2],[54,10,"#",7,2],[55,10,"#",7,2],[56,10,"#",7,2],[57,10,"#",7,2],[58,10,"#",7,2],[60,10,"#",7,2],[66,10,"#",7,2],[13,11,"|",7,0],[14,11,".",0,1],[15,11,".",0,1],[16,11,".",0,1],[17,11,".",0,1],[18,11,".",0,1],[19,11,".",0,1],[20,11,".",0,1],[21,11,".",0,1],[22,11,".",0,1],[23,11,".",0,1],[24,11,".",0,1],[25,11,".",7,3],[26,11,"#",7,2],[27,11,"#",7,2],[28,11,"#",7,2],[29,11,"#",7,2],[30,11,"#",7,2],[31,11,"#",7,2],[38,11,"#",7,2],[39,11,"#",7,2],[43,11,"#",7,2],[44,11,"#",7,2],[45,11,"#",7,2],[46,11,"#",7,2],[47,11,"#",7,2],[48,11,"#",7,2],[51,11,"#",7,2],[55,11,"#",7,2],[60,11,"#",7,2],[66,11,"#",7,2],[13,12,"|",7,0],[14,12,".",0,1],[15,12,".",0,1],[16,12,".",0,1],[17,12,".",0,1],[18,12,".",0,1],[19,12,".",0,1],[20,12,".",0,1],[21,12,".",0,1],[22,12,".",0,1],[23,12,".",0,1],[24,12,".",0,1],[25,12,"|",7,0],[38,12,"#",7,2],[42,12,"#",7,2],[43,12,"#",7,2],[50,12,"#",7,2],[51,12,"#",7,2],[55,12,"#",7,2],[60,12,"#",7,2],[64,12,"-",7,0],[65,12,"-",7,0],[66,12,".",7,3],[67,12,"-",7,0],[68,12,"-",7,0],[69,12,"-",7,0],[13,13,"-",7,0],[14,13,"-",7,0],[15,13,"-",7,0],[16,13,"-",7,0],[17,13,"-",7,0],[18,13,"-",7,0],[19,13,"-",7,0],[20,13,"-",7,0],[21,13,"-",7,0],[22,13,"-",7,0],[23,13,"-",7,0],[24,13,"-",7,0],[25,13,"-",7,0],[38,13,"#",7,2],[39,13,"-",7,0],[40,13,"-",7,0],[41,13,"-",7,0],[42,13,"+",3,8],[43,13,"-",7,0],[44,13,"-",7,0],[45,13,"-",7,0],[46,13,"-",7,0],[47,13,"-",7,0],[48,13,"#",7,2],[49,13,"#",7,2],[50,13,"#",7,2],[55,13,"#",7,2],[60,13,"#",7,2],[64,13,"|",7,0],[65,13,".",0,1],[66,13,".",0,1],[67,13,"^",12,9],[68,13,".",0,1],[69,13,"|",7,0],[38,14,"#",7,2],[39,14,"|",7,0],[40,14,".",0,1],[41,14,".",0,1],[42,14,".",0,1],[43,14,".",0,1],[44,14,".",0,1],[45,14,".",0,1],[46,14,".",0,1],[47,14,".",7,3],[48,14,"#",7,2],[53,14,"#",7,2],[54,14,"#",7,2],[55,14,"#",7,2],[59,14,"#",7,2],[60,14,"#",7,2],[64,14,"|",7,0],[65,14,".",0,1],[66,14,".",0,1],[67,14,".",0,1],[68,14,".",0,1],[69,14,"|",7,0],[38,15,"#",7,2],[39,15,"+",3,8],[40,15,".",0,1],[41,15,".",0,1],[42,15,".",0,1],[43,15,".",0,1],[44,15,".",0,1],[45,15,".",0,1],[46,15,".",0,1],[47,15,"|",7,0],[53,15,"#",7,2],[54,15,"-",7,0],[55,15,"-",7,0],[56,15,"-",7,0],[57,15,"-",7,0],[58,15,"-",7,0],[59,15,"#",7,2],[64,15,"|",7,0],[65,15,".",0,1],[66,15,".",0,1],[67,15,".",0,1],[68,15,".",0,1],[69,15,"|",7,0],[39,16,"|",7,0],[40,16,".",0,1],[41,16,".",0,1],[42,16,".",0,1],[43,16,".",0,1],[44,16,".",0,1],[45,16,".",0,1],[46,16,".",0,1],[47,16,"|",7,0],[53,16,"#",7,2],[54,16,"|",7,0],[55,16,".",0,1],[56,16,".",0,1],[57,16,".",0,1],[58,16,".",7,3],[59,16,"#",7,2],[64,16,"-",7,0],[65,16,"-",7,0],[66,16,"-",7,0],[67,16,"-",7,0],[68,16,"-",7,0],[69,16,"-",7,0],[39,17,"-",7,0],[40,17,"-",7,0],[41,17,"-",7,0],[42,17,"-",7,0],[43,17,"-",7,0],[44,17,"-",7,0],[45,17,"-",7,0],[46,17,"-",7,0],[47,17,"-",7,0],[53,17,"#",7,2],[54,17,"|",7,0],[55,17,".",0,1],[56,17,".",0,1],[57,17,".",0,1],[58,17,"|",7,0],[43,18,"#",7,2],[53,18,"#",7,2],[54,18,".",7,3],[55,18,".",0,1],[56,18,".",0,1],[57,18,".",0,1],[58,18,"|",7,0],[54,19,"-",7,0],[55,19,"-",7,0],[56,19,"-",7,0],[57,19,"-",7,0],[58,19,"-",7,0]]},"0:2":{"key":"0:2","dnum":0,"dlevel":2,"depth":2,"dungeon":"The Dungeons of Doom","seen":7,"cells":[[29,1,"-",7,0],[30,1,"-",7,0],[31,1,"-",7,0],[32,1,"-",7,0],[33,1,"-",7,0],[60,1,"-",7,0],[61,1,"-",7,0],[62,1,"-",7,0],[63,1,"-",7,0],[64,1,"-",7,0],[65,1,"-",7,0],[29,2,"|",7,0],[30,2,".",0,1],[31,2,">",11,10],[32,2,".",0,1],[33,2,"|",7,0],[49,2,"#",7,2],[50,2,"#",7,2],[51,2,"#",7,2],[52,2,"#",7,2],[53,2,"#",7,2],[54,2,"#",7,2],[55,2,"#",7,2],[56,2,"#",7,2],[57,2,"#",7,2],[58,2,"#",7,2],[59,2,"#",7,2],[60,2,".",7,3],[61,2,".",0,1],[62,2,".",0,1],[63,2,".",0,1],[64,2,".",0,1],[65,2,"|",7,0],[29,3,"|",7,0],[30,3,".",0,1],[31,3,".",0,1],[32,3,".",0,1],[33,3,".",7,3],[34,3,"#",7,2],[60,3,"|",7,0],[61,3,".",0,1],[62,3,".",0,1],[63,3,".",0,1],[64,3,".",0,1],[65,3,"+",3,8],[66,3,"#",7,2],[21,4,"#",7,2],[22,4,"#",7,2],[23,4,"#",7,2],[24,4,"#",7,2],[25,4,"#",7,2],[26,4,"#",7,2],[27,4,"#",7,2],[28,4,"#",7,2],[29,4,".",7,3],[30,4,".",0,1],[31,4,".",0,1],[32,4,".",0,1],[33,4,"|",7,0],[34,4,"#",7,2],[56,4,"#",7,2],[57,4,"#",7,2],[58,4,"#",7,2],[59,4,"#",7,2],[60,4,".",7,3],[61,4,".",0,1],[62,4,".",0,1],[63,4,".",0,1],[64,4,".",0,1],[65,4,"|",7,0],[66,4,"#",7,2],[21,5,"#",7,2],[29,5,"-",7,0],[30,5,"+",3,8],[31,5,"-",7,0],[32,5,"-",7,0],[33,5,"-",7,0],[34,5,"#",7,2],[35,5,"#",7,2],[36,5,"#",7,2],[54,5,"#",7,2],[55,5,"#",7,2],[56,5,"#",7,2],[60,5,"-",7,0],[61,5,"-",7,0],[62,5,"-",7,0],[63,5,"-",7,0],[64,5,"-",7,0],[65,5,"-",7,0],[66,5,"#",7,2],[21,6,"#",7,2],[30,6,"#",7,2],[36,6,"#",7,2],[54,6,"#",7,2],[64,6,"#",7,2],[66,6,"#",7,2],[21,7,"#",7,2],[30,7,"#",7,2],[36,7,"#",7,2],[46,7,"#",7,2],[51,7,"#",7,2],[54,7,"#",7,2],[66,7,"#",7,2],[9,8,"-",7,0],[10,8,"-",7,0],[11,8,"-",7,0],[12,8,"-",7,0],[13,8,"-",7,0],[14,8,"-",7,0],[15,8,"-",7,0],[16,8,"-",7,0],[17,8,"-",7,0],[21,8,"#",7,2],[29,8,"#",7,2],[30,8,"#",7,2],[36,8,"#",7,2],[42,8,"-",7,0],[43,8,"-",7,0],[44,8,"-",7,0],[45,8,"-",7,0],[46,8,"-",7,0],[47,8,"-",7,0],[48,8,"-",7,0],[49,8,"-",7,0],[50,8,"-",7,0],[51,8,"-",7,0],[52,8,"-",7,0],[54,8,"#",7,2],[66,8,"#",7,2],[9,9,"|",7,0],[10,9,".",0,1],[11,9,".",0,1],[12,9,".",0,1],[13,9,".",0,1],[14,9,".",0,1],[15,9,".",0,1],[16,9,".",0,1],[17,9,"|",7,0],[18,9,"#",7,2],[19,9,"#",7,2],[20,9,"#",7,2],[21,9,"#",7,2],[29,9,"#",7,2],[36,9,"#",7,2],[37,9,"#",7,2],[38,9,"#",7,2],[42,9,"|",7,0],[43,9,".",0,1],[44,9,".",0,1],[45,9,".",0,1],[46,9,".",0,1],[47,9,".",0,1],[48,9,".",0,1],[49,9,".",0,1],[50,9,".",0,1],[51,9,".",0,1],[52,9,"|",7,0],[54,9,"#",7,2],[66,9,"#",7,2],[67,9,"#",7,2],[9,10,"|",7,0],[10,10,"<",7,11],[11,10,".",0,1],[12,10,".",0,1],[13,10,".",0,1],[14,10,".",0,1],[15,10,".",0,1],[16,10,".",0,1],[17,10,"+",3,8],[18,10,"#",7,2],[29,10,"#",7,2],[38,10,"#",7,2],[39,10,"#",7,2],[42,10,"|",7,0],[43,10,".",0,1],[44,10,".",0,1],[45,10,".",0,1],[46,10,".",0,1],[47,10,".",0,1],[48,10,".",0,1],[49,10,".",0,1],[50,10,".",0,1],[51,10,".",0,1],[52,10,".",7,3],[53,10,"#",7,2],[54,10,"#",7,2],[67,10,"#",7,2],[68,10,"-",7,0],[69,10,"-",7,0],[70,10,"-",7,0],[71,10,"-",7,0],[72,10,"-",7,0],[73,10,"-",7,0],[74,10,"-",7,0],[9,11,"|",7,0],[10,11,".",0,1],[11,11,".",0,1],[12,11,".",0,1],[13,11,".",0,1],[14,11,".",0,1],[15,11,".",0,1],[16,11,".",0,1],[17,11,"|",7,0],[18,11,"#",7,2],[19,11,"#",7,2],[25,11,"#",7,2],[26,11,"#",7,2],[27,11,"#",7,2],[28,11,"#",7,2],[29,11,"#",7,2],[39,11,"#",7,2],[40,11,"#",7,2],[41,11,"#",7,2],[42,11,"+",3,8],[43,11,".",0,1],[44,11,".",0,1],[45,11,".",0,1],[46,11,".",0,1],[47,11,".",0,1],[48,11,".",0,1],[49,11,".",0,1],[50,11,".",0,1],[51,11,".",0,1],[52,11,"|",7,0],[67,11,"#",7,2],[68,11,".",7,3],[69,11,".",7,4],[70,11,".",7,4],[71,11,".",7,4],[72,11,".",7,4],[73,11,".",7,4],[74,11,"|",7,0],[9,12,"-",7,0],[10,12,"-",7,0],[11,12,"-",7,0],[12,12,"-",7,0],[13,12,"-",7,0],[14,12,"-",7,0],[15,12,"-",7,0],[16,12,"-",7,0],[17,12,"-",7,0],[19,12,"#",7,2],[20,12,"#",7,2],[24,12,"-",7,0],[25,12,".",7,3],[26,12,"-",7,0],[27,12,"-",7,0],[28,12,"-",7,0],[29,12,"-",7,0],[30,12,"-",7,0],[31,12,"-",7,0],[32,12,"-",7,0],[33,12,"-",7,0],[34,12,"-",7,0],[42,12,"|",7,0],[43,12,".",0,1],[44,12,".",0,1],[45,12,".",0,1],[46,12,".",0,1],[47,12,".",0,1],[48,12,"^",4,12],[49,12,".",0,1],[50,12,".",0,1],[51,12,".",0,1],[52,12,"|",7,0],[68,12,"|",7,0],[69,12,".",7,4],[70,12,".",7,4],[71,12,"$",11,13],[72,12,".",7,4],[73,12,".",7,4],[74,12,"|",7,0],[20,13,"#",7,2],[21,13,"#",7,2],[24,13,"|",7,0],[25,13,".",0,1],[26,13,".",0,1],[27,13,".",0,1],[28,13,".",0,1],[29,13,".",0,1],[30,13,".",0,1],[31,13,".",0,1],[32,13,".",0,1],[33,13,".",0,1],[34,13,"|",7,0],[42,13,"-",7,0],[43,13,"-",7,0],[44,13,"-",7,0],[45,13,"-",7,0],[46,13,"-",7,0],[47,13,"-",7,0],[48,13,"-",7,0],[49,13,"-",7,0],[50,13,"-",7,0],[51,13,"-",7,0],[52,13,"-",7,0],[68,13,"|",7,0],[69,13,">",7,5],[70,13,".",7,4],[71,13,".",7,4],[72,13,".",7,4],[73,13,".",7,4],[74,13,"|",7,0],[21,14,"#",7,2],[22,14,"#",7,2],[23,14,"#",7,2],[24,14,".",7,3],[25,14,".",0,1],[26,14,".",0,1],[27,14,".",0,1],[28,14,".",0,1],[29,14,".",0,1],[30,14,".",0,1],[31,14,".",0,1],[32,14,".",0,1],[33,14,".",0,1],[34,14,"|",7,0],[68,14,"-",7,0],[69,14,"-",7,0],[70,14,"-",7,0],[71,14,"-",7,0],[72,14,"-",7,0],[73,14,"-",7,0],[74,14,"-",7,0],[24,15,"|",7,0],[25,15,".",0,1],[26,15,".",0,1],[27,15,".",0,1],[28,15,".",0,1],[29,15,".",0,1],[30,15,".",0,1],[31,15,".",0,1],[32,15,".",0,1],[33,15,".",0,1],[34,15,"|",7,0],[24,16,"|",7,0],[25,16,".",0,1],[26,16,".",0,1],[27,16,".",0,1],[28,16,".",0,1],[29,16,".",0,1],[30,16,".",0,1],[31,16,".",0,1],[32,16,".",0,1],[33,16,".",0,1],[34,16,"|",7,0],[24,17,"|",7,0],[25,17,".",0,1],[26,17,".",0,1],[27,17,".",0,1],[28,17,".",0,1],[29,17,".",0,1],[30,17,".",0,1],[31,17,".",0,1],[32,17,".",0,1],[33,17,".",0,1],[34,17,"|",7,0],[24,18,"-",7,0],[25,18,"-",7,0],[26,18,"-",7,0],[27,18,"-",7,0],[28,18,"-",7,0],[29,18,"-",7,0],[30,18,"-",7,0],[31,18,"-",7,0],[32,18,"-",7,0],[33,18,"-",7,0],[34,18,"-",7,0],[33,19,"#",7,2]]},"2:1":{"key":"2:1","dnum":2,"dlevel":1,"depth":3,"dungeon":"The Gnomish Mines","seen":5,"cells":[[26,9,"|",7,0],[27,9,".",7,4],[28,9,".",7,4],[26,10,".",7,4],[27,10,"<",11,7],[28,10,".",7,4],[26,11,".",7,4],[27,11,".",7,4],[28,11,".",7,4]]},"0:3":{"key":"0:3","dnum":0,"dlevel":3,"depth":3,"dungeon":"The Dungeons of Doom","seen":9,"cells":[[68,2,"-",7,0],[69,2,"-",7,0],[70,2,"-",7,0],[71,2,"-",7,0],[72,2,"-",7,0],[73,2,"-",7,0],[74,2,"-",7,0],[75,2,"-",7,0],[76,2,"-",7,0],[77,2,"-",7,0],[78,2,"-",7,0],[3,3,"-",7,0],[4,3,"-",7,0],[5,3,"-",7,0],[6,3,"-",7,0],[7,3,"-",7,0],[8,3,"-",7,0],[9,3,"-",7,0],[10,3,"-",7,0],[11,3,"-",7,0],[12,3,"-",7,0],[13,3,"-",7,0],[14,3,"-",7,0],[40,3,"-",7,0],[41,3,"-",7,0],[42,3,"-",7,0],[43,3,"-",7,0],[44,3,"-",7,0],[45,3,"-",7,0],[46,3,"-",7,0],[47,3,"-",7,0],[48,3,"-",7,0],[49,3,"-",7,0],[50,3,"-",7,0],[51,3,"-",7,0],[52,3,"-",7,0],[53,3,"-",7,0],[54,3,"-",7,0],[55,3,"-",7,0],[68,3,"|",7,0],[69,3,".",7,4],[70,3,".",7,4],[71,3,".",7,4],[72,3,".",7,4],[73,3,".",7,4],[74,3,".",7,4],[75,3,".",7,4],[76,3,".",7,4],[77,3,".",7,4],[78,3,"|",7,0],[3,4,"|",7,0],[4,4,".",0,1],[5,4,".",0,1],[6,4,".",0,1],[7,4,".",0,1],[8,4,".",0,1],[9,4,".",0,1],[10,4,".",0,1],[11,4,".",0,1],[12,4,".",0,1],[13,4,".",0,1],[14,4,"|",7,0],[40,4,"|",7,0],[41,4,".",0,1],[42,4,".",0,1],[43,4,".",0,1],[44,4,".",0,1],[45,4,".",0,1],[46,4,".",0,1],[47,4,"`",12,6],[48,4,".",0,1],[49,4,".",0,1],[50,4,".",0,1],[51,4,".",0,1],[52,4,".",0,1],[53,4,".",0,1],[54,4,".",0,1],[55,4,"|",7,0],[62,4,"#",7,2],[63,4,"#",7,2],[64,4,"#",7,2],[65,4,"#",7,2],[66,4,"#",7,2],[67,4,"#",7,2],[68,4,"+",3,8],[69,4,".",7,4],[70,4,".",7,4],[71,4,".",7,4],[72,4,".",7,4],[73,4,".",7,4],[74,4,".",7,4],[75,4,".",7,4],[76,4,".",7,4],[77,4,".",7,4],[78,4,"|",7,0],[3,5,"|",7,0],[4,5,".",0,1],[5,5,".",0,1],[6,5,".",0,1],[7,5,".",0,1],[8,5,".",0,1],[9,5,".",0,1],[10,5,".",0,1],[11,5,".",0,1],[12,5,".",0,1],[13,5,".",0,1],[14,5,"|",7,0],[22,5,"-",7,0],[23,5,"-",7,0],[24,5,"-",7,0],[25,5,"-",7,0],[26,5,"-",7,0],[40,5,"|",7,0],[41,5,".",0,1],[42,5,".",0,1],[43,5,".",0,1],[44,5,".",0,1],[45,5,".",0,1],[46,5,".",0,1],[47,5,".",0,1],[48,5,".",0,1],[49,5,".",0,1],[50,5,".",0,1],[51,5,".",0,1],[52,5,".",0,1],[53,5,".",0,1],[54,5,".",0,1],[55,5,"|",7,0],[68,5,"|",7,0],[69,5,".",7,4],[70,5,".",7,4],[71,5,".",7,4],[72,5,".",7,4],[73,5,".",7,4],[74,5,".",7,4],[75,5,".",7,4],[76,5,">",7,5],[77,5,".",7,4],[78,5,"|",7,0],[3,6,"|",7,0],[4,6,".",0,1],[5,6,".",0,1],[6,6,".",0,1],[7,6,".",0,1],[8,6,".",0,1],[9,6,".",0,1],[10,6,".",0,1],[11,6,".",0,1],[12,6,".",0,1],[13,6,".",0,1],[14,6,"+",3,8],[15,6,"#",7,2],[16,6,"#",7,2],[17,6,"#",7,2],[22,6,"|",7,0],[23,6,".",0,1],[24,6,".",0,1],[25,6,".",0,1],[26,6,"|",7,0],[39,6,"#",7,2],[40,6,"-",3,14],[41,6,".",0,1],[42,6,".",0,1],[43,6,".",0,1],[44,6,".",0,1],[45,6,".",0,1],[46,6,".",0,1],[47,6,".",0,1],[48,6,".",0,1],[49,6,".",0,1],[50,6,".",0,1],[51,6,".",0,1],[52,6,".",0,1],[53,6,".",0,1],[54,6,".",0,1],[55,6,".",7,3],[56,6,"#",7,2],[68,6,"|",7,0],[69,6,".",7,4],[70,6,".",7,4],[71,6,".",7,4],[72,6,".",7,4],[73,6,".",7,4],[74,6,".",7,4],[75,6,".",7,4],[76,6,".",7,4],[77,6,"o",7,15],[78,6,"|",7,0],[3,7,"-",7,0],[4,7,"-",7,0],[5,7,"-",7,0],[6,7,"-",7,0],[7,7,"-",7,0],[8,7,"-",7,0],[9,7,"-",7,0],[10,7,"-",7,0],[11,7,"-",7,0],[12,7,"-",7,0],[13,7,"-",7,0],[14,7,"-",7,0],[17,7,"#",7,2],[18,7,"#",7,2],[19,7,"#",7,2],[20,7,"#",7,2],[21,7,"#",7,2],[22,7,"|",7,0],[23,7,".",0,1],[24,7,".",0,1],[25,7,".",0,1],[26,7,".",7,3],[27,7,"#",7,2],[28,7,"#",7,2],[29,7,"#",7,2],[30,7,"#",7,2],[31,7,"#",7,2],[32,7,"#",7,2],[40,7,"-",7,0],[41,7,"-",7,0],[42,7,"-",7,0],[43,7,"-",7,0],[44,7,"-",7,0],[45,7,"-",7,0],[46,7,"-",7,0],[47,7,"-",7,0],[48,7,"-",7,0],[49,7,"-",7,0],[50,7,".",7,3],[51,7,"-",7,0],[52,7,"-",7,0],[53,7,".",7,3],[54,7,"-",7,0],[55,7,"-",7,0],[56,7,"#",7,2],[68,7,"-",7,0],[69,7,"-",7,0],[70,7,"-",7,0],[71,7,"-",7,0],[72,7,"-",7,0],[73,7,"-",7,0],[74,7,"-",7,0],[75,7,"-",7,0],[76,7,"-",7,0],[77,7,"-",7,0],[78,7,"-",7,0],[21,8,"#",7,2],[22,8,"|",7,0],[23,8,".",0,1],[24,8,".",0,1],[25,8,".",0,1],[26,8,"|",7,0],[32,8,"#",7,2],[44,8,"#",7,2],[45,8,"#",7,2],[46,8,"#",7,2],[47,8,"#",7,2],[48,8,"#",7,2],[49,8,"#",7,2],[50,8,"#",7,2],[53,8,"#",7,2],[54,8,"#",7,2],[55,8,"#",7,2],[56,8,"#",7,2],[57,8,"#",7,2],[58,8,"#",7,2],[66,8,"#",7,2],[67,8,"#",7,2],[68,8,"#",7,2],[69,8,"#",7,2],[22,9,"|",7,0],[23,9,".",0,1],[24,9,".",0,1],[25,9,"<",7,11],[26,9,"|",7,0],[32,9,"#",7,2],[33,9,"#",7,2],[34,9,"#",7,2],[44,9,"#",7,2],[57,9,"#",7,2],[58,9,"#",7,2],[59,9,"#",7,2],[60,9,"#",7,2],[61,9,"#",7,2],[62,9,"#",7,2],[64,9,"#",7,2],[65,9,"#",7,2],[66,9,"#",7,2],[22,10,"|",7,0],[23,10,".",0,1],[24,10,".",0,1],[25,10,".",0,1],[26,10,"|",7,0],[34,10,"#",7,2],[35,10,"#",7,2],[41,10,"#",7,2],[42,10,"#",7,2],[43,10,"#",7,2],[44,10,"#",7,2],[57,10,"#",7,2],[58,10,"#",7,2],[62,10,"#",7,2],[64,10,"#",7,2],[22,11,"-",7,0],[23,11,"-",7,0],[24,11,"-",7,0],[25,11,"-",7,0],[26,11,"-",7,0],[35,11,"#",7,2],[36,11,"-",7,0],[37,11,"-",7,0],[38,11,"-",7,0],[39,11,"-",7,0],[40,11,"-",7,0],[41,11,".",7,3],[42,11,"-",7,0],[43,11,"-",7,0],[44,11,"-",7,0],[45,11,"-",7,0],[58,11,"#",7,2],[62,11,"#",7,2],[63,11,"#",7,2],[64,11,"#",7,2],[65,11,"#",7,2],[66,11,"#",7,2],[67,11,"#",7,2],[68,11,"#",7,2],[69,11,"#",7,2],[35,12,"#",7,2],[36,12,"|",7,0],[37,12,".",0,1],[38,12,".",0,1],[39,12,".",0,1],[40,12,".",0,1],[41,12,".",0,1],[42,12,".",0,1],[43,12,".",0,1],[44,12,".",0,1],[45,12,"|",7,0],[58,12,"#",7,2],[61,12,"#",7,2],[62,12,"#",7,2],[69,12,"#",7,2],[7,13,"-",7,0],[8,13,"-",7,0],[9,13,"-",7,0],[10,13,"-",7,0],[35,13,"#",7,2],[36,13,"+",3,8],[37,13,".",0,1],[38,13,".",0,1],[39,13,".",0,1],[40,13,".",0,1],[41,13,".",0,1],[42,13,".",0,1],[43,13,".",0,1],[44,13,".",0,1],[45,13,"|",7,0],[58,13,"#",7,2],[60,13,"-",7,0],[61,13,".",7,3],[62,13,"-",7,0],[63,13,"-",7,0],[64,13,"-",7,0],[65,13,"-",7,0],[66,13,"-",7,0],[67,13,"-",7,0],[68,13,"-",7,0],[69,13,".",7,3],[70,13,"-",7,0],[7,14,"|",7,0],[8,14,".",0,1],[9,14,".",0,1],[10,14,"|",7,0],[36,14,"|",7,0],[37,14,".",0,1],[38,14,".",0,1],[39,14,".",0,1],[40,14,".",0,1],[41,14,".",0,1],[42,14,".",0,1],[43,14,".",0,1],[44,14,".",0,1],[45,14,"+",3,8],[46,14,"#",7,2],[47,14,"#",7,2],[48,14,"#",7,2],[49,14,"#",7,2],[50,14,"#",7,2],[58,14,"#",7,2],[60,14,"|",7,0],[61,14,".",0,1],[62,14,".",0,1],[63,14,".",0,1],[64,14,".",0,1],[65,14,".",0,1],[66,14,".",0,1],[67,14,".",0,1],[68,14,".",0,1],[69,14,".",0,1],[70,14,"|",7,0],[7,15,"|",7,0],[8,15,".",0,1],[9,15,".",0,1],[10,15,"|",7,0],[36,15,"-",7,0],[37,15,"#",6,16],[38,15,"-",7,0],[39,15,"-",7,0],[40,15,"-",7,0],[41,15,"-",7,0],[42,15,"-",7,0],[43,15,"-",7,0],[44,15,"-",7,0],[45,15,"-",7,0],[50,15,"#",7,2],[51,15,"#",7,2],[52,15,"#",7,2],[53,15,"#",7,2],[54,15,"#",7,2],[55,15,"#",7,2],[56,15,"#",7,2],[57,15,"#",7,2],[58,15,"#",7,2],[59,15,"#",7,2],[60,15,".",7,3],[61,15,".",0,1],[62,15,".",0,1],[63,15,".",0,1],[64,15,".",0,1],[65,15,".",0,1],[66,15,".",0,1],[67,15,".",0,1],[68,15,".",0,1],[69,15,".",0,1],[70,15,"|",7,0],[7,16,"-",7,0],[8,16,"-",7,0],[9,16,"-",7,0],[10,16,"-",7,0],[37,16,"#",7,2],[44,16,"#",7,2],[60,16,"|",7,0],[61,16,".",0,1],[62,16,".",0,1],[63,16,".",0,1],[64,16,".",0,1],[65,16,".",0,1],[66,16,".",0,1],[67,16,".",0,1],[68,16,".",0,1],[69,16,".",0,1],[70,16,"|",7,0],[60,17,"|",7,0],[61,17,".",0,1],[62,17,".",0,1],[63,17,".",0,1],[64,17,".",0,1],[65,17,".",0,1],[66,17,".",0,1],[67,17,".",0,1],[68,17,".",0,1],[69,17,".",0,1],[70,17,"|",7,0],[60,18,"|",7,0],[61,18,".",0,1],[62,18,".",0,1],[63,18,".",0,1],[64,18,".",0,1],[65,18,".",0,1],[66,18,".",0,1],[67,18,".",0,1],[68,18,".",0,1],[69,18,".",0,1],[70,18,"|",7,0],[60,19,"-",7,0],[61,19,"-",7,0],[62,19,"-",7,0],[63,19,"-",7,0],[64,19,"-",7,0],[65,19,"-",7,0],[66,19,"-",7,0],[67,19,"-",7,0],[68,19,"-",7,0],[69,19,"-",7,0],[70,19,"-",7,0],[62,20,"#",7,2],[65,20,"#",7,2]]},"0:4":{"key":"0:4","dnum":0,"dlevel":4,"depth":4,"dungeon":"The Dungeons of Doom","seen":10,"cells":[[52,1,"#",7,2],[17,2,"-",7,0],[18,2,"-",7,0],[19,2,"-",7,0],[20,2,"-",7,0],[21,2,"-",7,0],[22,2,"-",7,0],[47,2,"-",7,0],[48,2,"-",7,0],[49,2,"-",7,0],[50,2,"-",7,0],[51,2,"-",7,0],[52,2,"-",7,0],[53,2,"-",7,0],[66,2,"^",5,17],[16,3,"#",7,2],[17,3,".",7,3],[18,3,".",0,1],[19,3,".",0,1],[20,3,".",0,1],[21,3,".",0,1],[22,3,"+",3,8],[23,3,"#",7,2],[24,3,"#",7,2],[25,3,"#",7,2],[26,3,"#",7,2],[27,3,"#",7,2],[28,3,"#",7,2],[29,3,"#",7,2],[30,3,"#",7,2],[31,3,"#",7,2],[32,3,"#",7,2],[33,3,"#",7,2],[34,3,"#",7,2],[35,3,"#",7,2],[47,3,"|",7,0],[48,3,".",0,1],[49,3,".",0,1],[50,3,".",0,1],[51,3,".",0,1],[52,3,".",0,1],[53,3,"|",7,0],[62,3,"-",7,0],[63,3,"-",7,0],[64,3,"-",7,0],[65,3,"-",7,0],[66,3,"-",7,0],[67,3,"-",7,0],[68,3,"-",7,0],[69,3,"-",7,0],[70,3,"-",7,0],[16,4,"#",7,2],[17,4,"|",7,0],[18,4,".",0,1],[19,4,".",0,1],[20,4,".",0,1],[21,4,".",0,1],[22,4,"|",7,0],[47,4,"|",7,0],[48,4,".",0,1],[49,4,".",0,1],[50,4,".",0,1],[51,4,".",0,1],[52,4,".",0,1],[53,4,".",7,3],[54,4,"#",7,2],[62,4,"|",7,0],[63,4,".",7,4],[64,4,".",7,4],[65,4,".",7,4],[66,4,"`",12,6],[67,4,".",7,4],[68,4,".",7,4],[69,4,".",7,4],[70,4,"|",7,0],[16,5,"#",7,2],[17,5,"|",7,0],[18,5,".",0,1],[19,5,".",0,1],[20,5,".",0,1],[21,5,".",0,1],[22,5,".",7,3],[23,5,"#",7,2],[24,5,"#",7,2],[25,5,"#",7,2],[30,5,"-",7,0],[31,5,"-",7,0],[32,5,"-",7,0],[33,5,"-",7,0],[34,5,"-",7,0],[35,5,"-",7,0],[36,5,"-",7,0],[37,5,"-",7,0],[38,5,"#",7,2],[39,5,"#",7,2],[40,5,"#",7,2],[41,5,"#",7,2],[42,5,"#",7,2],[43,5,"#",7,2],[44,5,"#",7,2],[45,5,"#",7,2],[46,5,"#",7,2],[47,5,".",7,3],[48,5,".",0,1],[49,5,".",0,1],[50,5,".",0,1],[51,5,".",0,1],[52,5,".",0,1],[53,5,"|",7,0],[54,5,"#",7,2],[62,5,"|",7,0],[63,5,".",7,4],[64,5,".",7,4],[65,5,".",7,4],[66,5,".",7,4],[67,5,".",7,4],[68,5,".",7,4],[69,5,".",7,4],[70,5,"|",7,0],[15,6,"#",7,2],[16,6,"#",7,2],[17,6,"-",7,0],[18,6,"-",7,0],[19,6,"-",7,0],[20,6,"-",7,0],[21,6,"-",7,0],[22,6,"-",7,0],[25,6,"#",7,2],[26,6,"#",7,2],[27,6,"#",7,2],[28,6,"#",7,2],[29,6,"#",7,2],[30,6,".",7,3],[31,6,".",0,1],[32,6,".",0,1],[33,6,".",0,1],[34,6,".",0,1],[35,6,".",0,1],[36,6,".",0,1],[37,6,"|",7,0],[38,6,"#",7,2],[47,6,"|",7,0],[48,6,".",0,1],[49,6,".",0,1],[50,6,".",0,1],[51,6,".",0,1],[52,6,".",0,1],[53,6,".",7,3],[54,6,"#",7,2],[55,6,"#",7,2],[56,6,"#",7,2],[57,6,"#",7,2],[58,6,"#",7,2],[62,6,"|",7,0],[63,6,".",7,4],[64,6,".",7,4],[65,6,".",7,4],[66,6,".",7,4],[67,6,"@",15,18],[68,6,".",7,4],[69,6,".",7,4],[70,6,"|",7,0],[14,7,"#",7,2],[15,7,"#",7,2],[18,7,"#",7,2],[19,7,"#",7,2],[30,7,"|",7,0],[31,7,".",0,1],[32,7,".",0,1],[33,7,".",0,1],[34,7,".",0,1],[35,7,".",0,1],[36,7,".",0,1],[37,7,"|",7,0],[38,7,"#",7,2],[47,7,"|",7,0],[48,7,".",0,1],[49,7,".",0,1],[50,7,".",0,1],[51,7,".",0,1],[52,7,".",0,1],[53,7,"|",7,0],[54,7,"#",7,2],[58,7,"#",7,2],[59,7,"#",7,2],[60,7,"#",7,2],[61,7,"#",7,2],[62,7,"+",3,8],[63,7,".",7,4],[64,7,".",7,4],[65,7,".",7,4],[66,7,".",7,4],[67,7,".",7,4],[68,7,".",7,4],[69,7,".",7,4],[70,7,"|",7,0],[6,8,"-",7,0],[7,8,"-",7,0],[8,8,"-",7,0],[9,8,"-",7,0],[10,8,"-",7,0],[11,8,"-",7,0],[12,8,"-",7,0],[14,8,"#",7,2],[19,8,"#",7,2],[28,8,"#",7,2],[29,8,"#",7,2],[30,8,"|",7,0],[31,8,".",0,1],[32,8,".",0,1],[33,8,".",0,1],[34,8,".",0,1],[35,8,".",0,1],[36,8,".",0,1],[37,8,".",7,3],[38,8,"#",7,2],[47,8,"|",7,0],[48,8,".",0,1],[49,8,".",0,1],[50,8,".",0,1],[51,8,".",0,1],[52,8,".",0,1],[53,8,"|",7,0],[54,8,"#",7,2],[62,8,"|",7,0],[63,8,".",7,4],[64,8,".",7,4],[65,8,".",7,4],[66,8,".",7,4],[67,8,".",7,4],[68,8,".",7,4],[69,8,".",7,4],[70,8,"|",7,0],[6,9,"|",7,0],[7,9,".",0,1],[8,9,".",0,1],[9,9,".",0,1],[10,9,".",0,1],[11,9,".",0,1],[12,9,"|",7,0],[14,9,"#",7,2],[19,9,"#",7,2],[20,9,"#",7,2],[21,9,"#",7,2],[28,9,"#",7,2],[29,9,"#",7,2],[30,9,"-",7,0],[31,9,"-",7,0],[32,9,"-",7,0],[33,9,"-",7,0],[34,9,"-",7,0],[35,9,"-",7,0],[36,9,"-",7,0],[37,9,"-",7,0],[38,9,"#",7,2],[47,9,"-",7,0],[48,9,".",7,3],[49,9,"-",7,0],[50,9,"-",7,0],[51,9,"-",7,0],[52,9,"-",7,0],[53,9,"-",7,0],[54,9,"#",7,2],[62,9,"-",7,0],[63,9,"-",7,0],[64,9,"-",7,0],[65,9,".",7,3],[66,9,"-",7,0],[67,9,"-",7,0],[68,9,"-",7,0],[69,9,"-",7,0],[70,9,"-",7,0],[6,10,"|",7,0],[7,10,".",0,1],[8,10,".",0,1],[9,10,".",0,1],[10,10,".",0,1],[11,10,".",0,1],[12,10,"|",7,0],[14,10,"#",7,2],[21,10,"#",7,2],[29,10,"#",7,2],[30,10,"#",7,2],[31,10,"#",7,2],[32,10,"#",7,2],[33,10,"#",7,2],[34,10,"#",7,2],[35,10,"#",7,2],[36,10,"#",7,2],[37,10,"#",7,2],[38,10,"#",7,2],[44,10,"#",7,2],[45,10,"#",7,2],[46,10,"#",7,2],[47,10,"#",7,2],[48,10,"#",7,2],[50,10,"#",7,2],[54,10,"#",7,2],[65,10,"#",7,2],[6,11,"|",7,0],[7,11,".",0,1],[8,11,".",0,1],[9,11,".",0,1],[10,11,".",0,1],[11,11,".",0,1],[12,11,"|",7,0],[14,11,"#",7,2],[21,11,"#",7,2],[22,11,"#",7,2],[23,11,"#",7,2],[29,11,"#",7,2],[38,11,"#",7,2],[43,11,"#",7,2],[44,11,"#",7,2],[54,11,"#",7,2],[65,11,"#",7,2],[6,12,"|",7,0],[7,12,".",0,1],[8,12,".",0,1],[9,12,".",0,1],[10,12,".",0,1],[11,12,".",0,1],[12,12,"|",7,0],[13,12,"#",7,2],[14,12,"#",7,2],[23,12,"#",7,2],[29,12,"#",7,2],[38,12,"#",7,2],[40,12,"#",7,2],[41,12,"#",7,2],[42,12,"#",7,2],[43,12,"#",7,2],[54,12,"#",7,2],[59,12,"#",7,2],[60,12,"#",7,2],[61,12,"#",7,2],[62,12,"#",7,2],[63,12,"#",7,2],[64,12,"#",7,2],[65,12,"#",7,2],[6,13,"|",7,0],[7,13,".",0,1],[8,13,".",0,1],[9,13,".",0,1],[10,13,".",0,1],[11,13,".",0,1],[12,13,"+",3,8],[13,13,"#",12,6],[23,13,"#",7,2],[24,13,"#",7,2],[25,13,"#",7,2],[26,13,"#",7,2],[28,13,"#",7,2],[29,13,"#",7,2],[36,13,"#",7,2],[37,13,"#",7,2],[38,13,"#",7,2],[40,13,"#",7,2],[54,13,"#",7,2],[55,13,"#",7,2],[57,13,"-",7,0],[58,13,"-",7,0],[59,13,".",7,3],[60,13,"-",7,0],[61,13,"-",7,0],[62,13,"-",7,0],[63,13,"-",7,0],[64,13,"-",7,0],[65,13,"-",7,0],[6,14,"-",7,0],[7,14,"-",7,0],[8,14,"-",7,0],[9,14,"-",7,0],[10,14,"-",7,0],[11,14,"-",7,0],[12,14,"-",7,0],[26,14,"#",7,2],[28,14,"#",7,2],[36,14,"#",7,2],[37,14,"-",7,0],[38,14,"-",7,0],[39,14,"-",7,0],[40,14,"|",3,14],[41,14,"-",7,0],[42,14,"-",7,0],[43,14,"-",7,0],[44,14,"-",7,0],[45,14,"-",7,0],[46,14,"-",7,0],[47,14,"-",7,0],[48,14,"-",7,0],[49,14,"-",7,0],[50,14,"-",7,0],[55,14,"#",7,2],[56,14,"#",7,2],[57,14,"|",7,0],[58,14,".",0,1],[59,14,".",0,1],[60,14,".",0,1],[61,14,".",0,1],[62,14,".",0,1],[63,14,".",0,1],[64,14,".",0,1],[65,14,"|",7,0],[71,14,"-",7,0],[72,14,"-",7,0],[73,14,"-",7,0],[74,14,"-",7,0],[26,15,"#",7,2],[28,15,"#",7,2],[36,15,"#",7,2],[37,15,".",7,3],[38,15,".",0,1],[39,15,".",0,1],[40,15,".",0,1],[41,15,".",0,1],[42,15,".",0,1],[43,15,".",0,1],[44,15,".",0,1],[45,15,".",0,1],[46,15,".",0,1],[47,15,".",0,1],[48,15,".",0,1],[49,15,".",0,1],[50,15,"+",3,8],[51,15,"#",7,2],[52,15,"#",7,2],[53,15,"#",7,2],[54,15,"#",7,2],[55,15,"#",7,2],[56,15,"#",7,2],[57,15,"|",7,0],[58,15,".",0,1],[59,15,".",0,1],[60,15,".",0,1],[61,15,".",0,1],[62,15,".",0,1],[63,15,".",0,1],[64,15,".",0,1],[65,15,"|",7,0],[71,15,"|",7,0],[72,15,".",0,1],[73,15,".",0,1],[74,15,"|",7,0],[19,16,"-",7,0],[20,16,"-",7,0],[21,16,"-",7,0],[22,16,"-",7,0],[23,16,"-",7,0],[24,16,"-",7,0],[25,16,"-",7,0],[26,16,"+",3,8],[27,16,"-",7,0],[28,16,"#",7,2],[37,16,"|",7,0],[38,16,".",0,1],[39,16,".",0,1],[40,16,".",0,1],[41,16,".",0,1],[42,16,".",0,1],[43,16,".",0,1],[44,16,".",0,1],[45,16,".",0,1],[46,16,".",0,1],[47,16,".",0,1],[48,16,".",0,1],[49,16,".",0,1],[50,16,"|",7,0],[56,16,"#",7,2],[57,16,"+",3,8],[58,16,".",0,1],[59,16,".",0,1],[60,16,".",0,1],[61,16,".",0,1],[62,16,".",0,1],[63,16,".",0,1],[64,16,".",0,1],[65,16,"|",7,0],[71,16,"|",7,0],[72,16,".",0,1],[73,16,".",0,1],[74,16,"|",7,0],[19,17,"|",7,0],[20,17,".",0,1],[21,17,".",0,1],[22,17,".",0,1],[23,17,".",0,1],[24,17,".",0,1],[25,17,".",0,1],[26,17,".",0,1],[27,17,".",7,3],[28,17,"#",7,2],[37,17,"|",7,0],[38,17,".",0,1],[39,17,".",0,1],[40,17,".",0,1],[41,17,".",0,1],[42,17,".",0,1],[43,17,".",0,1],[44,17,".",0,1],[45,17,".",0,1],[46,17,".",0,1],[47,17,".",0,1],[48,17,".",0,1],[49,17,".",0,1],[50,17,"|",7,0],[57,17,"-",7,0],[58,17,"-",7,0],[59,17,"-",7,0],[60,17,"-",7,0],[61,17,"-",7,0],[62,17,"-",7,0],[63,17,"-",7,0],[64,17,"-",7,0],[65,17,"-",7,0],[71,17,"-",7,0],[72,17,"-",7,0],[73,17,"-",7,0],[74,17,"-",7,0],[19,18,"|",7,0],[20,18,">",7,5],[21,18,".",0,1],[22,18,".",0,1],[23,18,".",0,1],[24,18,".",0,1],[25,18,".",0,1],[26,18,".",0,1],[27,18,"|",7,0],[37,18,"-",7,0],[38,18,"-",7,0],[39,18,"-",7,0],[40,18,"-",7,0],[41,18,"-",7,0],[42,18,"-",7,0],[43,18,"-",7,0],[44,18,"-",7,0],[45,18,"-",7,0],[46,18,"-",7,0],[47,18,"-",7,0],[48,18,"-",7,0],[49,18,"-",7,0],[50,18,"-",7,0],[64,18,"#",7,2],[19,19,"-",7,0],[20,19,"-",7,0],[21,19,"-",7,0],[22,19,"-",7,0],[23,19,"-",7,0],[24,19,"-",7,0],[25,19,"-",7,0],[26,19,"-",7,0],[27,19,"-",7,0]]}},"descs":["wall","dark part of a room","corridor","doorway","floor of a room","staircase down","engraving","branch staircase up","closed door","magic trap","branch staircase down","staircase up","rust trap","4 gold pieces","open door","goblin","iron bars","teleportation trap","human valkyrie called Agnes"],"hero":{"x":67,"y":6},"cur":"0:4","status":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"11","hunger":"","hp":"15","hp_max":"16","level_desc":"Dlvl:4","exp_points":"0"},"inv":[{"letter":"a","text":"a blessed +1 spear (weapon in right hand)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"a +0 dagger (alternate weapon; not wielded)","class_sym":")","class":"weapons","quan":1,"slots":["alternate"],"worn":false,"wielded":false},{"letter":"c","text":"an uncursed +3 small shield (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["shield"],"worn":true,"wielded":false},{"letter":"d","text":"an uncursed food ration","class_sym":"%","class":"food","quan":1,"slots":[],"worn":false,"wielded":false}],"overview":["The Dungeons of Doom: levels 1 to 4","   Level 2:","      Stairs down to The Gnomish Mines.","   Level 3:","      A general store.","   Level 4: <- You are here.","      A scroll shop.","The Gnomish Mines:","   Level 3:"],"msgs":["Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie."],"game":{"origin":"new","name":"Agnes","birthday":1794700800,"uuid":"84b4b51b-0c4e-48f6-ad52-cf67c4e0bb4d","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral","mode":"normal","id":"agnes-1794700800","memoryRestored":false}};
+</script>
+<script>
+(() => {
+const L = DATA.levels, DESCS = DATA.descs, HERO = DATA.hero;
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+/* ---------- level model ---------- */
+function model(key) {
+  const lv = L[key]; if (lv._m) return lv._m;
+  const g = Array.from({length: 21}, () => Array(80).fill(null));
+  for (const [x, y, ch, color, d] of lv.cells) g[y][x] = {x, y, ch, color, desc: DESCS[d]};
+  const kind = c => {
+    if (!c) return 'none';
+    const d = c.desc;
+    if (d === 'wall') return 'wall';
+    if (d === 'closed door' || d === 'open door') return 'door';
+    if (d === 'corridor' || (c.ch === '#' && d !== 'iron bars' && d !== 'tree' && d !== 'sink')) return 'corr';
+    if (d === 'doorway') return 'doorway';
+    if (d === 'iron bars') return 'bars';
+    return 'floor';
+  };
+  for (const row of g) for (const c of row) if (c) c.k = kind(c);
+  const find = pred => { for (const row of g) for (const c of row) if (c && pred(c)) return c; return null; };
+  lv._m = {g, kind, find, lv};
+  return lv._m;
+}
+
+/* ---------- route finding (Dijkstra; unknown squares allowed at a cost, drawn dotted) ---------- */
+function route(key, from, to) {
+  const {g} = model(key);
+  const W = 80, H = 21, idx = (x, y) => y * W + x;
+  const cost = (c) => { if (!c) return 7; if (c.k === 'wall' || c.k === 'bars') return Infinity; if (c.ch === '^') return 40; if (c.ch === '`' && c.desc === 'a boulder') return Infinity; return 1; };
+  const dist = new Float64Array(W * H).fill(Infinity), prev = new Int32Array(W * H).fill(-1);
+  dist[idx(from.x, from.y)] = 0; const open = [[0, from.x, from.y]];
+  while (open.length) {
+    open.sort((a, b) => a[0] - b[0]); const [d, x, y] = open.shift();
+    if (d > dist[idx(x, y)]) continue; if (x === to.x && y === to.y) break;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      if (!dx && !dy) continue; const nx = x + dx, ny = y + dy;
+      if (nx < 1 || ny < 0 || nx >= W || ny >= H) continue;
+      const a = g[y][x], b = g[ny][nx];
+      if (dx && dy && ((a && a.k === 'door') || (b && b.k === 'door'))) continue;
+      let c = cost(b); if (c === Infinity) continue; if (dx && dy) c += 0.01;
+      const nd = d + c; if (nd < dist[idx(nx, ny)]) { dist[idx(nx, ny)] = nd; prev[idx(nx, ny)] = idx(x, y); open.push([nd, nx, ny]); }
+    }
+  }
+  const pts = []; let i = idx(to.x, to.y); if (prev[i] < 0) return null;
+  while (i >= 0) { const x = i % W, y = (i - x) / W; pts.unshift({x, y, known: !!g[y][x]}); if (x === from.x && y === from.y) break; i = prev[i]; }
+  return pts;
+}
+/* split a path into runs of known / unknown squares */
+function runs(pts) { const out = []; let cur = null; pts.forEach((p, i) => { const k = p.known; if (!cur || cur.known !== k) { cur = {known: k, pts: i ? [pts[i - 1]] : []}; out.push(cur); } cur.pts.push(p); }); return out; }
+
+/* the canonical journey: Dlvl 4 (hero) -> up to 3 -> across -> up to 2 -> Mines stairs */
+const m2 = model('0:2'), m3 = model('0:3');
+const D2_ARRIVE = m2.find(c => c.desc === 'staircase down');
+const D2_MINES = m2.find(c => c.desc === 'branch staircase down');
+const D3_DOWN = m3.find(c => c.desc === 'staircase down');
+const D3_UP = m3.find(c => c.desc === 'staircase up');
+const ROUTE2 = route('0:2', D2_ARRIVE, D2_MINES);
+const ROUTE3 = route('0:3', D3_DOWN, D3_UP);
+const ROUTES = {'0:2': ROUTE2, '0:3': ROUTE3};
+
+/* ---------- glyph colour class ---------- */
+function cls(c) {
+  let s = 'c k' + c.color;
+  if (c.k === 'floor' && c.ch === '.') s += ' floor';
+  if (c.k === 'corr' && c.desc === 'corridor') s += ' corr';
+  if (c.k === 'wall') s += ' wl';
+  if (c.k === 'floor' || c.k === 'doorway') s += c.desc === 'dark part of a room' ? ' fd' : ' fl';
+  return s;
+}
+
+/* ---------- map grid ---------- */
+let CW = 9.5, RH = 20, viewing = DATA.cur;
+function sizeGrid() {
+  const centre = $('.centre');
+  const avail = centre.clientWidth - 2 * parseFloat(getComputedStyle(centre).paddingLeft) - 20 - 26 - 8 - 4;
+  CW = Math.max(7.5, Math.min(13, Math.floor(avail / 80 * 4) / 4));
+  RH = Math.round(CW * 2.2);
+  const r = document.documentElement.style;
+  r.setProperty('--cw', CW + 'px'); r.setProperty('--rh', RH + 'px'); r.setProperty('--fs', (CW / 0.6).toFixed(2) + 'px');
+}
+function rulers() {
+  const t = $('#rulerTop'), l = $('#rulerLeft'); t.innerHTML = l.innerHTML = '';
+  for (let x = 0; x <= 80; x += 5) { const i = document.createElement('i'); i.style.cssText = `left:${x * CW}px;bottom:0;width:1px;height:${x % 10 ? 4 : 7}px`; t.appendChild(i); }
+  'ABCDEFGH'.split('').forEach((ch, n) => { const s = document.createElement('span'); s.textContent = ch; s.style.cssText = `left:${(n * 10 + 5) * CW - 3}px;top:0`; t.appendChild(s); });
+  for (let y = 0; y <= 21; y++) { const i = document.createElement('i'); const major = y % 7 === 0; i.style.cssText = `top:${y * RH}px;right:0;height:1px;width:${major ? 7 : 3}px`; l.appendChild(i); }
+  [1, 2, 3].forEach(n => { const s = document.createElement('span'); s.textContent = n; s.style.cssText = `top:${((n - 1) * 7 + 3.5) * RH - 7}px;left:3px`; l.appendChild(s); });
+}
+function renderGrid(key) {
+  const {g} = model(key), grid = $('#grid'); grid.innerHTML = '';
+  const live = key === DATA.cur;
+  for (let y = 0; y < 21; y++) {
+    const row = document.createElement('div'); row.className = 'row';
+    for (let x = 0; x < 80; x++) {
+      const c = g[y][x], s = document.createElement('span');
+      if (c) { s.className = cls(c) + (live && x === HERO.x && y === HERO.y ? ' hero' : ''); s.textContent = c.ch; } else s.className = 'c';
+      row.appendChild(s);
+    }
+    grid.appendChild(row);
+  }
+  const ov = el('svg', {class: 'overlay', width: 80 * CW, height: 21 * RH}); grid.appendChild(ov);
+  grid.onmousemove = e => { const r = grid.getBoundingClientRect(); inspect(key, Math.floor((e.clientX - r.left) / CW), Math.floor((e.clientY - r.top) / RH), true); };
+  grid.onmouseleave = () => { const t = grid.querySelector('.tip'); if (t) t.remove(); inspect(key, ...(STATE === 'play' ? [66, 2] : [HERO.x, HERO.y]), false); };
+  return ov;
+}
+const ctr = (x, y) => [(x + .5) * CW, (y + .5) * RH];
+function rel(x, y) {
+  const dx = x - HERO.x, dy = y - HERO.y; if (!dx && !dy) return 'under you';
+  const p = []; if (dx) p.push(Math.abs(dx) + (dx > 0 ? ' east' : ' west')); if (dy) p.push(Math.abs(dy) + (dy > 0 ? ' south' : ' north'));
+  return p.join(', ') + ' of you';
+}
+const gridRef = (x, y) => 'ABCDEFGH'[Math.min(7, Math.floor(x / 10))] + (Math.floor(y / 7) + 1);
+function inspect(key, x, y, tip) {
+  const {g} = model(key), c = g[y] && g[y][x];
+  const grid = $('#grid'); let t = grid.querySelector('.tip'); if (t) t.remove();
+  const live = key === DATA.cur;
+  const d = c ? (live && x === HERO.x && y === HERO.y ? 'human valkyrie called Agnes — on a staircase up' : c.desc) : 'unexplored';
+  $('#insp').innerHTML = `<div class="blk-h"><span class="caps">Under the pointer</span><span class="caps" style="font-size:9.5px">${gridRef(x, y)} · ${x},${y}</span></div>
+    <div class="gl"><div class="gbox ${c ? cls(c).replace(/\bf[ld]\b/, '') : ''}">${c ? c.ch.replace('<', '&lt;') : '&nbsp;'}</div><div><div class="d">${d}</div><div class="rel">${live ? rel(x, y) : 'Dlvl ' + L[key].depth + ' · remembered'}</div></div></div>
+    <div class="look">Same text the cartographer reads. <kbd>;</kbd> in game farlooks with the keyboard.</div>`;
+  if (!tip || !c) return;
+  t = document.createElement('div'); t.className = 'tip';
+  t.innerHTML = `<div class="d">${d}</div><div class="g">${live ? rel(x, y) : 'remembered'} · ${gridRef(x, y)}</div>`;
+  grid.appendChild(t);
+  const [cx, cy] = ctr(x, y); t.style.left = (cx - 18) + 'px'; let ty = cy - RH / 2 - t.offsetHeight - 8; if (ty < -64) { ty = cy + RH / 2 + 8; t.classList.add('below'); } t.style.top = ty + 'px';
+}
+
+/* ---------- overlay drawing on the big map ---------- */
+function drawRoute(ov, pts, opts = {}) {
+  const P = p => ctr(p.x, p.y).join(',');
+  for (const r of runs(pts)) {
+    const d = 'M' + r.pts.map(P).join('L');
+    el('path', {d, fill: 'none', stroke: '#fcfbf7', 'stroke-width': 6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .9}, ov);
+    el('path', {d, fill: 'none', stroke: '#c2402c', 'stroke-width': r.known ? 2.2 : 1.6, 'stroke-dasharray': r.known ? '7 4' : '1.5 4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}, ov);
+  }
+}
+function ring(ov, x, y, r = 13, label) {
+  const [cx, cy] = ctr(x, y);
+  el('circle', {cx, cy, r, fill: 'none', stroke: '#c2402c', 'stroke-width': 1.8}, ov);
+  el('circle', {cx, cy, r: r + 5, fill: 'none', stroke: '#c2402c', 'stroke-width': .8, opacity: .55}, ov);
+}
+function startMark(ov, x, y) {
+  const [cx, cy] = ctr(x, y);
+  el('rect', {x: cx - 8, y: cy - 10, width: 16, height: 20, fill: 'none', stroke: '#c2402c', 'stroke-width': 1.4, rx: 2}, ov);
+}
+function leader(ov, x1, y1, x2, y2) { el('path', {d: `M${x1},${y1}L${x2},${y2}`, stroke: '#c2402c', 'stroke-width': 1, fill: 'none'}, ov); el('circle', {cx: x2, cy: y2, r: 2, fill: '#c2402c'}, ov); }
+function callout(html, x, y, cls = '') { const c = document.createElement('div'); c.className = 'callout ' + cls; c.innerHTML = html; c.style.left = x + 'px'; c.style.top = y + 'px'; $('#grid').appendChild(c); return c; }
+
+/* ---------- map symbols (shared by thumbnails and the plate) ---------- */
+function marker(G, c, a, b, s) {
+  if (c.desc === 'staircase up' || c.desc === 'staircase down') {
+    const up = c.desc.endsWith('up'); const z = 3.3 * s;
+    el('path', {d: up ? `M${a},${b - z}L${a + z},${b + z * .8}L${a - z},${b + z * .8}Z` : `M${a},${b + z}L${a + z},${b - z * .8}L${a - z},${b - z * .8}Z`, fill: '#1f2226', stroke: '#fcfbf7', 'stroke-width': s > 1 ? 1 : 0}, G);
+  } else if (c.desc.startsWith('branch staircase')) {
+    const z = 3.8 * s; el('path', {d: `M${a},${b - z}L${a + z},${b}L${a},${b + z}L${a - z},${b}Z`, fill: '#c99a12', stroke: '#5b4300', 'stroke-width': .8}, G);
+  } else if (c.ch === '^') {
+    const z = 2.2 * s, col = {4: '#1f4fbf', 5: '#8c2a8c', 12: '#2a5fc6', 0: '#777'}[c.color] || '#8c2a8c';
+    el('path', {d: `M${a - z},${b - z}L${a + z},${b + z}M${a + z},${b - z}L${a - z},${b + z}`, stroke: col, 'stroke-width': 1.2 * Math.min(s, 1.3)}, G);
+  } else if (c.ch === '{') {
+    el('circle', {cx: a, cy: b, r: 2.4 * s, fill: '#2b5f93'}, G);
+  } else if (c.ch === '$') {
+    el('circle', {cx: a, cy: b, r: 1.7 * s, fill: '#c99a12'}, G);
+  } else if (c.desc === 'iron bars') {
+    el('path', {d: `M${a - 1.5 * s},${b - 2.5 * s}v${5 * s}M${a + 1.5 * s},${b - 2.5 * s}v${5 * s}`, stroke: '#0b6c7d', 'stroke-width': .9 * s}, G);
+  }
+}
+function heroMark(G, a, b, s) { el('circle', {cx: a, cy: b, r: 4.6 * s, fill: '#c2402c22', stroke: '#c2402c', 'stroke-width': 1.5}, G); el('circle', {cx: a, cy: b, r: 1.6 * s, fill: '#c2402c'}, G); }
+
+/* ---------- thumbnails (linework) ---------- */
+function thumb(parent, key, x0, y0, w, h, o = {}) {
+  const {g} = model(key), cw = w / 80, rh = h / 21;
+  const G = el('g', {class: 'thumb', 'data-key': key}, parent);
+  el('rect', {x: x0, y: y0, width: w, height: h, fill: o.sel ? '#fff' : '#fcfbf7', class: 'tframe', stroke: o.sel ? '#c2402c' : '#b9b2a0', 'stroke-width': o.sel ? 1.6 : .8}, G);
+  // faint graticule
+  for (let i = 1; i < 8; i++) el('line', {x1: x0 + i * 10 * cw, x2: x0 + i * 10 * cw, y1: y0, y2: y0 + h, stroke: '#00000009', 'stroke-width': .6}, G);
+  // floor fills
+  let fd = '';
+  for (const row of g) for (const c of row) if (c && (c.k === 'floor' || c.k === 'doorway')) fd += `M${(x0 + c.x * cw).toFixed(2)},${(y0 + c.y * rh).toFixed(2)}h${(cw + .05).toFixed(2)}v${(rh + .05).toFixed(2)}h-${(cw + .05).toFixed(2)}z`;
+  el('path', {d: fd, fill: '#e6dfcb'}, G);
+  const C = (c) => [x0 + (c.x + .5) * cw, y0 + (c.y + .5) * rh];
+  const at = (x, y) => (g[y] && g[y][x]) || null;
+  // corridors
+  let cd = '';
+  const isC = c => c && (c.k === 'corr' || c.k === 'door' || c.k === 'doorway');
+  for (const row of g) for (const c of row) if (c && c.k === 'corr') {
+    for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [-1, 1]]) {
+      const n = at(c.x + dx, c.y + dy); if (!isC(n)) continue;
+      if (dx && dy && (isC(at(c.x + dx, c.y)) || isC(at(c.x, c.y + dy)))) continue;
+      const [a, b] = C(c), [p, q] = C(n); cd += `M${a.toFixed(1)},${b.toFixed(1)}L${p.toFixed(1)},${q.toFixed(1)}`;
+    }
+    for (const [dx, dy] of [[-1, 0], [0, -1], [-1, -1], [1, -1]]) { const n = at(c.x + dx, c.y + dy); if (n && (n.k === 'door' || n.k === 'doorway')) { const [a, b] = C(c), [p, q] = C(n); cd += `M${a.toFixed(1)},${b.toFixed(1)}L${p.toFixed(1)},${q.toFixed(1)}`; } }
+  }
+  el('path', {d: cd, fill: 'none', stroke: '#aaa393', 'stroke-width': Math.max(.7, cw * .5), 'stroke-linecap': 'round', 'stroke-dasharray': o.big ? '2 1.6' : 'none'}, G);
+  // walls as linework
+  let wd = '';
+  const isW = c => c && (c.k === 'wall' || c.k === 'door' || c.k === 'doorway' || c.k === 'bars');
+  for (const row of g) for (const c of row) if (c && (c.k === 'wall' || c.k === 'door' || c.k === 'doorway')) {
+    let any = false;
+    for (const [dx, dy] of [[1, 0], [0, 1]]) { const n = at(c.x + dx, c.y + dy); if (isW(n)) { const [a, b] = C(c), [p, q] = C(n); wd += `M${a.toFixed(1)},${b.toFixed(1)}L${p.toFixed(1)},${q.toFixed(1)}`; any = true; } }
+    if (!any && !isW(at(c.x - 1, c.y)) && !isW(at(c.x, c.y - 1))) { const [a, b] = C(c); wd += `M${(a - cw / 2).toFixed(1)},${b.toFixed(1)}h${cw.toFixed(1)}`; }
+  }
+  el('path', {d: wd, fill: 'none', stroke: '#2e2f31', 'stroke-width': o.big ? 1.15 : .85, 'stroke-linecap': 'square'}, G);
+  // doors: small gap marks
+  for (const row of g) for (const c of row) if (c && c.k === 'door') { const [a, b] = C(c); el('rect', {x: a - cw * .55, y: b - rh * .32, width: cw * 1.1, height: rh * .64, fill: '#a0662a'}, G); }
+  // features
+  if (!o.noMarkers) {
+    for (const row of g) for (const c of row) if (c) { const [a, b] = C(c); marker(G, c, a, b, 1); }
+    if (o.hero) heroMark(G, ...C(g[HERO.y][HERO.x]), 1);
+  }
+  if (o.route && ROUTES[key]) {
+    for (const r of runs(ROUTES[key])) el('path', {d: 'M' + r.pts.map(p => C(p).map(v => v.toFixed(1)).join(',')).join('L'), fill: 'none', stroke: '#c2402c', 'stroke-width': o.big ? 1.8 : 1.4, 'stroke-dasharray': r.known ? (o.big ? '5 3' : '3.5 2') : '1 2.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}, G);
+  }
+  G.addEventListener('click', () => key === DATA.cur ? setState('play') : preview(key));
+  return {G, C, cw, rh, at};
+}
+
+const NOTES = {
+  '0:1': ['Exit stairs · magic trap'],
+  '0:2': ['◆ Mines stairs · rust trap · $4'],
+  '0:3': ['General store (unlocated) · bars'],
+  '0:4': ['Scroll shop (unlocated) · trap'],
+};
+const NOTES_LONG = {
+  '0:1': ['Exit stairs to the surface', 'Magic trap · engraving'],
+  '0:2': ['◆ Stairs to the Gnomish Mines', 'Rust trap · 4 gold pieces'],
+  '0:3': ['General store — reported,', 'not yet located · iron bars'],
+  '0:4': ['Scroll shop — reported,', 'not yet located · teleport trap'],
+};
+const txt = (p, x, y, s, a = {}) => { const e = el('text', Object.assign({x, y, 'font-family': 'IBM Plex Sans Condensed', 'font-size': 10.5, fill: '#5d6168'}, a), p); e.textContent = s; return e; };
+
+/* ---------- sidebar: flat cross-section ---------- */
+function atlas(svg, o) {
+  svg.innerHTML = '';
+  const W = o.width, tw = o.tw, th = Math.round(tw * 0.541);
+  const ax = o.axis, tx = ax + 12, bx = tx + tw + o.gap, bw = o.bw, bh = Math.round(bw * 0.541);
+  const pitch = th + o.labelH;
+  const yOf = depth => o.top + (depth - 1) * pitch;
+  svg.setAttribute('width', W); svg.setAttribute('height', o.top + 4 * pitch + o.tail);
+  txt(svg, tx, o.top - 9, 'Dungeons of Doom', {'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 13.5, fill: '#464a51'});
+  el('line', {x1: ax, x2: ax, y1: o.top - 2, y2: o.top + 4 * pitch + o.tail - 8, stroke: '#a29f96', 'stroke-width': .8}, svg);
+  for (let d = 1; d <= 5; d++) {
+    const y = d <= 4 ? yOf(d) + th / 2 : o.top + 4 * pitch + 29;
+    el('line', {x1: ax - 4, x2: ax, y1: y, y2: y, stroke: '#767a80', 'stroke-width': .8}, svg);
+    txt(svg, ax - 7, y + 4, String(d), {'text-anchor': 'end', 'font-family': 'IBM Plex Mono', 'font-size': 11, fill: d <= 4 ? '#464a51' : '#b0ada4', 'font-weight': 500});
+  }
+  const keys = ['0:1', '0:2', '0:3', '0:4'], T = {};
+  keys.forEach(k => { T[k] = thumb(svg, k, tx, yOf(L[k].depth), tw, th, {hero: k === DATA.cur, sel: o.sel === k, route: o.route}); });
+  const mk = '2:1', my = yOf(3) + Math.round((th - bh) / 2);
+  T[mk] = thumb(svg, mk, bx, my, bw, bh, {sel: o.sel === mk});
+  const pos = (k, desc) => { const c = model(k).find(c => c.desc === desc); return c ? T[k].C(c) : null; };
+  const conn = el('g', {}, svg);
+  const link = (a, b, rt) => { if (!a || !b) return; const m = (a[1] + b[1]) / 2;
+    el('path', {d: `M${a[0]},${a[1]}C${a[0]},${m} ${b[0]},${m} ${b[0]},${b[1]}`, fill: 'none', stroke: rt ? '#c2402c' : '#6d6a62', 'stroke-width': rt ? 1.5 : .9, 'stroke-dasharray': rt ? '4 2.5' : '2 2'}, conn); };
+  link(pos('0:1', 'staircase down'), pos('0:2', 'staircase up'));
+  link(pos('0:2', 'staircase down'), pos('0:3', 'staircase up'), o.route);
+  link(pos('0:3', 'staircase down'), T['0:4'].C({x: HERO.x, y: HERO.y}), o.route);
+  // branch: Mines stairs on Dlvl 2 -> up over the sheet edge -> across -> down into Mines level 1
+  const bs = pos('0:2', 'branch staircase down'), mu = pos(mk, 'branch staircase up'), ty = yOf(2) - 6;
+  el('path', {d: `M${bs[0]},${bs[1]}L${bs[0]},${ty + 4}Q${bs[0]},${ty} ${bs[0] + 4},${ty}L${mu[0] - 4},${ty}Q${mu[0]},${ty} ${mu[0]},${ty + 4}L${mu[0]},${mu[1]}`, fill: 'none', stroke: o.route ? '#c2402c' : '#946a00', 'stroke-width': 1.3, 'stroke-dasharray': o.route ? '4 2.5' : 'none'}, conn);
+  txt(svg, bx, my + bh + 13, 'Gnomish', {'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 12.5, fill: '#7a5800'});
+  txt(svg, bx, my + bh + 26, 'Mines', {'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 12.5, fill: '#7a5800'});
+  txt(svg, bx, my + bh + 39, 'arrival only', {'font-size': 9.5, fill: '#8d8a82'});
+  keys.forEach(k => {
+    const y = yOf(L[k].depth) + th + 13;
+    txt(svg, tx, y, 'LEVEL ' + L[k].depth, {'font-size': 9.5, 'letter-spacing': '1.1', fill: k === o.sel ? '#c2402c' : '#1f2226', 'font-weight': 600});
+    txt(svg, tx, y + 13, NOTES[k][0], {'font-size': 10.5});
+  });
+  { const [a, b] = T['0:4'].C({x: HERO.x, y: HERO.y}); const fx = tx + tw + 8, fy = yOf(4) + 6; const g = el('g', {}, svg);
+    el('path', {d: `M${a + 5},${b - 2}L${fx},${fy + 7}`, stroke: '#c2402c', 'stroke-width': .9}, g);
+    el('rect', {x: fx, y: fy, width: 30, height: 14, fill: '#c2402c', rx: 1}, g);
+    txt(g, fx + 15, fy + 10.2, 'YOU', {'text-anchor': 'middle', 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.8', fill: '#fff'}); }
+  const uy = o.top + 4 * pitch;
+  { const d4 = pos('0:4', 'staircase down'); el('path', {d: `M${d4[0]},${d4[1]}L${d4[0]},${uy + 16}`, stroke: '#6d6a62', 'stroke-width': .9, 'stroke-dasharray': '2 2'}, svg);
+    el('rect', {x: tx, y: uy + 16, width: tw, height: 26, fill: 'none', stroke: '#b9b2a0', 'stroke-width': .8, 'stroke-dasharray': '3 3'}, svg);
+    txt(svg, tx + tw / 2, uy + 33, 'Level 5 — uncharted', {'text-anchor': 'middle', 'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 12, fill: '#8d8a82'}); }
+  return {T};
+}
+
+/* ---------- plate: exploded axonometric cross-section ---------- */
+function plateAxo(svg, W, H) {
+  svg.innerHTML = '';
+  const k = 0.62, sy = 0.47, gut = 168, gap = 34;
+  const tw = Math.min(470, Math.floor((W - gut - gap - 10) / ((1 + k * 0.541) * 1.6)));
+  const thL = tw * 0.541, ph = thL * sy, sw = tw + k * thL;
+  const tw2 = Math.round(tw * 0.6), thL2 = tw2 * 0.541, ph2 = thL2 * sy, sw2 = tw2 + k * thL2;
+  const top = 34, band = ph + 34;
+  const pitch = Math.min(ph + 92, (H - top - band - 10) / 4);
+  svg.setAttribute('width', W); svg.setAttribute('height', top + 4 * pitch + band + 10);
+  const X = gut, X2 = gut + sw + gap;
+  const Y = d => top + (d - 1) * pitch;
+  const mat = (x, y, t, h) => ({m: `matrix(1,0,${-k},${sy},${x + h * k},${y})`, f: p => [x + h * k + p[0] - k * p[1], y + sy * p[1]]});
+  const para = (x, y, w, h, a) => { const p = [[x + h * k, y], [x + h * k + w, y], [x + w, y + h * sy], [x, y + h * sy]]; return el('path', Object.assign({d: 'M' + p.map(q => q.join(',')).join('L') + 'Z'}, a), svg); };
+  // column headings
+  txt(svg, X + k * thL, top - 14, 'Dungeons of Doom', {'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 18, fill: '#1f2226'});
+  txt(svg, X2 + k * thL2 + tw2, Y(3) - 12, 'The Gnomish Mines', {'text-anchor': 'end', 'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 18, fill: '#7a5800'});
+  const planes = {};
+  const draw = (key, x, y, w, h, o = {}) => {
+    para(x + 5, y + 7, w, h, {fill: '#1f222610'});
+    const g = el('g', {}, svg); const M = mat(x, y, w, h); g.setAttribute('transform', M.m);
+    const t = thumb(g, key, 0, 0, w, h, Object.assign({big: true, noMarkers: true}, o));
+    planes[key] = {C: c => M.f(t.C(c)), key};
+  };
+  ['0:1', '0:2', '0:3', '0:4'].forEach(key => draw(key, X, Y(L[key].depth), tw, thL, {hero: key === DATA.cur}));
+  draw('2:1', X2, Y(3), tw2, thL2);
+  para(X, Y(4), tw, thL, {fill: 'none', stroke: '#c2402c', 'stroke-width': 1.3});
+  // depth gutter labels
+  ['0:1', '0:2', '0:3', '0:4'].forEach(key => {
+    const d = L[key].depth, y = Y(d) + ph / 2;
+    txt(svg, 4, y + 9, String(d), {'font-family': 'Newsreader', 'font-size': 34, fill: '#1f2226'});
+    txt(svg, 34, y - 9, 'LEVEL ' + d + (key === DATA.cur ? '  ·  YOU' : ''), {'font-size': 10.5, 'letter-spacing': '1.3', 'font-weight': 600, fill: key === DATA.cur ? '#c2402c' : '#1f2226'});
+    NOTES_LONG[key].forEach((s, i) => txt(svg, 34, y + 6 + i * 14, s, {'font-size': 12}));
+    txt(svg, 34, y + 6 + 2 * 14 + 2, key === DATA.cur ? 'live' : 'surveyed T:' + L[key].seen, {'font-family': 'IBM Plex Mono', 'font-size': 10, fill: '#a29f96'});
+    el('line', {x1: 34, x2: X + 6, y1: Y(d) + ph + 22, y2: Y(d) + ph + 22, stroke: '#00000000'}, svg);
+  });
+  // stair shafts
+  const P = (key, desc) => { const c = model(key).find(c => c.desc === desc); return planes[key].C(c); };
+  const shaft = (a, b, col = '#4b4f56', dash = '3 2.5') => {
+    el('path', {d: `M${a[0]},${a[1]}L${b[0]},${b[1]}`, stroke: '#fcfbf7', 'stroke-width': 4, opacity: .8}, svg);
+    el('path', {d: `M${a[0]},${a[1]}L${b[0]},${b[1]}`, stroke: col, 'stroke-width': 1.1, 'stroke-dasharray': dash}, svg);
+    el('circle', {cx: a[0], cy: a[1], r: 2.4, fill: col}, svg); el('circle', {cx: b[0], cy: b[1], r: 2.4, fill: col}, svg);
+  };
+  shaft(P('0:1', 'staircase down'), P('0:2', 'staircase up'));
+  shaft(P('0:2', 'staircase down'), P('0:3', 'staircase up'));
+  shaft(P('0:3', 'staircase down'), planes['0:4'].C({x: HERO.x, y: HERO.y}));
+  { const a = P('0:2', 'branch staircase down'), b = P('2:1', 'branch staircase up');
+    el('path', {d: `M${a[0]},${a[1]}C${a[0] + 40},${a[1] - 30} ${b[0]},${b[1] - pitch * .9} ${b[0]},${b[1]}`, fill: 'none', stroke: '#fcfbf7', 'stroke-width': 4}, svg);
+    el('path', {d: `M${a[0]},${a[1]}C${a[0] + 40},${a[1] - 30} ${b[0]},${b[1] - pitch * .9} ${b[0]},${b[1]}`, fill: 'none', stroke: '#946a00', 'stroke-width': 1.4}, svg);
+    el('circle', {cx: b[0], cy: b[1], r: 2.6, fill: '#946a00'}, svg); }
+  // symbols drawn upright, after the planes, so they stay legible
+  for (const pk in planes) { const {g} = model(pk); for (const row of g) for (const c of row) if (c) marker(svg, c, ...planes[pk].C(c), 1.5); }
+  heroMark(svg, ...planes['0:4'].C({x: HERO.x, y: HERO.y}), 1.4);
+  { const [a, b] = planes['0:2'].C(D2_MINES); txt(svg, a - 10, b - 10, 'Mines stairs', {'text-anchor': 'end', 'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 13, fill: '#7a5800'}); }
+  { const [a, b] = planes['0:4'].C({x: HERO.x, y: HERO.y}); txt(svg, a + 9, b + 15, 'you', {'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 13, fill: '#c2402c'}); }
+  // Mines label under its plane
+  txt(svg, X2, Y(3) + ph2 + 22, 'MINES LEVEL 1 · DLVL 3', {'font-size': 10.5, 'letter-spacing': '1.3', 'font-weight': 600, fill: '#7a5800'});
+  txt(svg, X2, Y(3) + ph2 + 37, 'Only the arrival stairs seen (T:5)', {'font-size': 12});
+  // uncharted / projected
+  const d4 = P('0:4', 'staircase down'), uy = Y(5);
+  para(X, uy, tw, thL, {fill: 'none', stroke: '#b9b2a0', 'stroke-dasharray': '4 4'});
+  shaft(d4, [d4[0] - 0, uy + 0.5 * ph], '#8d8a82', '2 3');
+  txt(svg, X + k * thL * .5 + tw / 2, uy + ph / 2 + 5, 'Level 5 — uncharted', {'text-anchor': 'middle', 'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 15, fill: '#8d8a82'});
+  txt(svg, 4, uy + ph / 2 + 12, '5', {'font-family': 'Newsreader', 'font-size': 34, fill: '#b9b2a0'});
+  // Mines 2 (uncharted) and Minetown (projected)
+  para(X2, Y(4) + 10, tw2, thL2, {fill: 'none', stroke: '#cdbf95', 'stroke-dasharray': '4 4'});
+  txt(svg, X2 + k * thL2 * .5 + tw2 / 2, Y(4) + 10 + ph2 / 2 + 4, 'Mines 2 — uncharted', {'text-anchor': 'middle', 'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 13.5, fill: '#9d8f66'});
+  para(X2, uy, tw2, thL2, {fill: '#f7efd6', stroke: '#b08f3a', 'stroke-dasharray': '6 3', 'stroke-width': 1.1});
+  txt(svg, X2 + k * thL2 * .5 + tw2 / 2, uy + ph2 / 2 + 1, 'Minetown — projected', {'text-anchor': 'middle', 'font-family': 'Newsreader', 'font-style': 'italic', 'font-size': 15, fill: '#7a5800'});
+  txt(svg, X2 + k * thL2 * .5 + tw2 / 2, uy + ph2 / 2 + 16, 'Dlvl 5 or 6 · temple, shops, watch', {'text-anchor': 'middle', 'font-size': 11, fill: '#8d7a4a'});
+  const mb = P('2:1', 'branch staircase up');
+  el('path', {d: `M${mb[0]},${mb[1]}L${mb[0] - 12},${uy + ph2 * .5}`, stroke: '#b08f3a', 'stroke-width': 1, 'stroke-dasharray': '2 3'}, svg);
+}
+
+/* ---------- states ---------- */
+let STATE = 'play';
+const MODE = {
+  play: '<span class="dot"></span><b>LIVE</b> keys go to the game',
+  browse: '<span class="dot"></span><b>PREVIEW · DLVL 2</b> read-only · <kbd>Esc</kbd> back to live (any game key also returns)',
+  menu: '<span class="dot"></span><b>GAME MENU</b> letters pick · <kbd>Enter</kbd> confirm · <kbd>Esc</kbd> cancel',
+  yn: '<span class="dot"></span><b>GAME ASKS</b> answer with <kbd>y</kbd> or <kbd>n</kbd>',
+  text: '<span class="dot"></span><b>TEXT WINDOW</b> <kbd>Enter</kbd> / <kbd>Space</kbd> for more',
+  plate: '<span class="dot"></span><b>ATLAS PLATE</b> game paused behind · <kbd>F7</kbd> or <kbd>Esc</kbd> returns',
+};
+function header(key) {
+  const lv = L[key], live = key === DATA.cur;
+  const name = lv.dnum === 2 ? 'Gnomish Mines' : 'Dungeons of Doom';
+  $('#sheetTitle').innerHTML = `<em>${name}</em><span class="lv">Level ${lv.depth}</span>`;
+  $('#sheetBadge').innerHTML = live ? '<span class="badge live">● Live · T:11</span>' : `<span class="badge rem">Remembered · T:${lv.seen} · read-only</span>`;
+}
+function renderSidebarAtlas(sel, rt) {
+  const box = $('#atlasBody'); const w = box.clientWidth - 10;
+  const bw = Math.round(Math.max(56, w * 0.22)), tw = w - 36 - 12 - bw - 2;
+  const th = Math.round(tw * 0.541);
+  const labelH = Math.max(34, Math.min(60, Math.floor((box.clientHeight - 30 - 4 * th - 60) / 4)));
+  atlas($('#atlasSvg'), {width: w, axis: 24, tw, bw, gap: 12, top: 24, labelH, tail: 50, sel, route: rt});
+}
+function preview(key) { STATE = 'browse'; apply(key); }
+function apply(key) {
+  document.body.className = 's-' + STATE + (CLEAN ? ' clean' : '');
+  document.querySelectorAll('[data-only]').forEach(e => e.hidden = !e.dataset.only.split(' ').includes(STATE));
+  $('#mode').innerHTML = MODE[STATE];
+  document.querySelectorAll('.mock button').forEach(b => b.classList.toggle('on', b.dataset.s === STATE));
+  sizeGrid(); rulers();
+  const k = STATE === 'browse' ? (key || '0:2') : DATA.cur; viewing = k;
+  header(k);
+  const ov = renderGrid(k);
+  const grid = $('#grid');
+  const showRoute = STATE === 'browse' && k === '0:2';
+  renderSidebarAtlas(STATE === 'browse' ? k : null, showRoute);
+  if (STATE === 'browse') {
+    const h = document.createElement('div'); h.className = 'preview-hatch'; grid.appendChild(h);
+    if (showRoute) {
+      drawRoute(ov, ROUTE2);
+      startMark(ov, D2_ARRIVE.x, D2_ARRIVE.y);
+      ring(ov, D2_MINES.x, D2_MINES.y, 12);
+      const [sx, sy] = ctr(D2_ARRIVE.x, D2_ARRIVE.y);
+      const [mx, my] = ctr(D2_MINES.x, D2_MINES.y);
+      leader(ov, mx - 15, my, 25.6 * CW, my);
+      callout(`<div class="h">Stairs down to the Gnomish Mines</div><div class="s">38 west · 11 north of where you arrive · D1</div>`, 0.8 * CW, 0.35 * RH).style.width = (24.8 * CW) + 'px';
+      leader(ov, sx - 9, sy + 8, 62.6 * CW, 16.2 * RH);
+      callout(`<div class="h">You arrive here</div><div class="s">coming up from Dlvl 3</div>`, 48.5 * CW, 15.5 * RH, 'quiet').style.width = (14 * CW) + 'px';
+    }
+    // locator inset: the live level stays one key away
+    const ins = document.createElement('div'); ins.className = 'inset';
+    const iw = Math.round(CW * 15), ih = Math.round(iw * 0.541);
+    ins.innerHTML = `<div class="caps"><b>● Live · Dlvl 4</b><span>Esc</span></div>`;
+    const s = el('svg', {width: iw, height: ih}); ins.appendChild(s); thumb(s, DATA.cur, 0, 0, iw, ih, {hero: true});
+    ins.style.right = (CW * 0.5) + 'px'; ins.style.bottom = (RH * 0.35) + 'px';
+    ins.onclick = () => setState('play');
+    grid.appendChild(ins);
+    inspect(k, D2_MINES.x, D2_MINES.y, false);
+  } else {
+    inspect(k, 66, 2, STATE === 'play');
+  }
+  if (STATE === 'play' && hlDown) {
+    const d = model(DATA.cur).find(c => c.desc === 'staircase down');
+    const pts = route(DATA.cur, {x: HERO.x, y: HERO.y}, d); drawRoute(ov, pts); ring(ov, d.x, d.y, 12);
+  }
+  if (STATE === 'menu') menuWin(grid);
+  if (STATE === 'text') textWin(grid);
+  if (STATE === 'plate') plate();
+}
+let hlDown = false;
+function menuWin(grid) {
+  const d = document.createElement('div'); d.className = 'dim'; grid.appendChild(d);
+  const w = document.createElement('div'); w.className = 'gwin';
+  w.style.cssText = `right:${CW * 1.5}px;top:${RH * 0.6}px;width:${Math.max(380, CW * 44)}px`;
+  w.innerHTML = `<div class="wh"><span class="q">What would you like to drop?</span><span class="caps">pick any · page 1 of 1</span></div>
+  <div class="wb">
+    <div class="grp">Weapons</div>
+    <div class="it"><span class="kc">a</span><span class="bx"></span><span>a blessed +1 spear <span class="tag">· weapon in right hand</span></span><span class="g k7">)</span></div>
+    <div class="it sel"><span class="kc">b</span><span class="bx"></span><span>a +0 dagger <span class="tag">· alternate weapon; not wielded</span></span><span class="g k7">)</span></div>
+    <div class="grp">Armor</div>
+    <div class="it"><span class="kc">c</span><span class="bx"></span><span>an uncursed +3 small shield <span class="tag">· being worn</span></span><span class="g k7">[</span></div>
+    <div class="grp">Comestibles</div>
+    <div class="it"><span class="kc">d</span><span class="bx"></span><span>an uncursed food ration</span><span class="g k3">%</span></div>
+  </div>
+  <div class="wf"><span><kbd>a</kbd>–<kbd>d</kbd> toggle</span><span><kbd>,</kbd> all</span><span><kbd>-</kbd> none</span><span><kbd>Enter</kbd> drop 1 item</span><span><kbd>Esc</kbd> cancel</span></div>`;
+  grid.appendChild(w);
+}
+function textWin(grid) {
+  const d = document.createElement('div'); d.className = 'dim'; grid.appendChild(d);
+  const w = document.createElement('div'); w.className = 'gwin';
+  w.style.cssText = `left:${CW * 18}px;top:${RH * 1.4}px;width:${CW * 44}px`;
+  const ov = DATA.overview.map(s => s.replace('&', '&amp;').replace('<', '&lt;')).join('\n').replace('&lt;- You are here.', '<b style="color:#c2402c">&lt;- You are here.</b>');
+  w.innerHTML = `<div class="wh"><span class="q">Dungeon overview</span><span class="caps">Ctrl-O · text window</span></div>
+  <pre>${ov}</pre>
+  <div class="wf" style="justify-content:space-between"><span class="more">--More--</span><span><kbd>Enter</kbd> <kbd>Space</kbd> continue · <kbd>Esc</kbd> close</span></div>`;
+  grid.appendChild(w);
+}
+function plate() {
+  const main = $('.plate-main'); const svg = $('#plateSvg');
+  svg.style.marginTop = '14px';
+  plateAxo(svg, main.clientWidth - 52, main.clientHeight - 84);
+}
+function setState(s) { STATE = s; apply(); }
+
+/* ---------- mockup switcher + product keys ---------- */
+const STATES = [['play', 'Play'], ['browse', 'Atlas + route'], ['menu', 'Menu'], ['yn', 'y/n prompt'], ['text', 'Text window'], ['plate', 'Atlas plate']];
+const mock = $('#mock');
+STATES.forEach(([s, n], i) => { const b = document.createElement('button'); b.dataset.s = s; b.textContent = (i + 1) + ' ' + n; b.onclick = () => setState(s); mock.appendChild(b); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'F6') { e.preventDefault(); setState(STATE === 'browse' ? 'play' : 'browse'); }
+  else if (e.key === 'F7') { e.preventDefault(); setState(STATE === 'plate' ? 'play' : 'plate'); }
+  else if (e.key === 'Escape' && (STATE === 'browse' || STATE === 'plate')) setState('play');
+  else if (e.altKey && /^[1-6]$/.test(e.key)) setState(STATES[+e.key - 1][0]);
+});
+document.addEventListener('click', e => { const c = e.target.closest('.chip.map[data-hl="down"]'); if (c) { hlDown = !hlDown; c.classList.toggle('on', hlDown); apply(); } });
+const q = new URLSearchParams(location.search);
+const CLEAN = q.has('clean');
+if (q.get('s')) STATE = q.get('s');
+window.addEventListener('resize', () => apply(viewing));
+document.fonts.ready.then(() => apply());
+apply();
+})();
+</script>
+</body>
+</html>

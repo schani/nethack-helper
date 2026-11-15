@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Field Journal — NetHack 5.0 web client (design proposal)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --desk:#d8cdb6;
+  --paper:#f5eedd;
+  --paper-hi:#f9f4e7;
+  --paper-lo:#ece2cb;
+  --print:#231e18;      /* printed: the game's voice */
+  --print-2:#5b5348;
+  --pencil:#6d665b;     /* pencil: the player's hand */
+  --pencil-lt:#9a9285;
+  --ink:#22407c;        /* blue-black: the companion's hand */
+  --ink-wet:#16306a;
+  --rule:#c25a4c;       /* margin rule */
+  --line:rgba(52,92,140,.13);
+  --hl:rgba(255,206,40,.55);
+  --fs:19.8px;          /* map glyph size, set by JS */
+  --cw:calc(var(--fs)*.6);
+  --ch:calc(var(--fs)*1.25);
+  --serif:"Newsreader",Georgia,serif;
+  --hand:"Caveat","Segoe Print",cursive;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--desk);
+  background-image:
+    radial-gradient(ellipse at 50% 40%,rgba(255,255,255,.25),transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .28 0 0 0 0 .18 0 0 0 .22 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  font-family:var(--serif);color:var(--print);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+.desk{position:absolute;inset:0;padding:30px 18px 14px 18px;display:flex;flex-direction:column}
+
+/* ---------- thumb-index tabs (level pages) ---------- */
+.tabs{position:absolute;top:6px;left:44px;display:flex;gap:3px;z-index:3}
+.tab{font:500 12.5px/1 var(--serif);letter-spacing:.02em;color:var(--print-2);
+  background:#e9dfc6;border:1px solid rgba(80,60,30,.18);border-bottom:none;
+  padding:6px 13px 8px;border-radius:7px 7px 0 0;cursor:pointer;position:relative;top:1px;
+  box-shadow:inset 0 -6px 8px -6px rgba(80,60,30,.18)}
+.tab small{font:600 10px/1 var(--mono);color:var(--pencil-lt);margin-left:5px}
+.tab.mines{background:#e3dcc3;font-style:italic}
+.tab.on{background:var(--paper);color:var(--print);box-shadow:none;z-index:2;font-weight:600}
+.tab.now::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--rule);margin-left:6px;vertical-align:1px}
+.tabs .hint{font:400 11.5px/1 var(--serif);font-style:italic;color:#7a705f;align-self:center;margin-left:10px}
+.tabs kbd{font:600 10px/1 var(--mono);border:1px solid #b5a98f;border-bottom-width:2px;border-radius:3px;padding:1px 4px;background:#f3ecdb;color:#5b5348;font-style:normal}
+
+/* ---------- the page ---------- */
+.page{flex:1;position:relative;background:var(--paper);border-radius:3px 6px 6px 3px;
+  box-shadow:0 1px 0 #fff inset,1px 1px 0 #e3d8c0,2px 2px 0 #efe6d2,3px 3px 0 #e1d5bb,4px 4px 0 #ece2cb,5px 5px 0 #dccfb3,8px 10px 24px rgba(60,40,10,.22);
+  display:grid;grid-template-columns:minmax(0,1fr) var(--margin-w,372px);grid-template-rows:auto auto auto minmax(0,1fr);
+  overflow:hidden}
+.page::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.55;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .42 0 0 0 0 .3 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at 30% 20%,transparent 55%,rgba(150,120,70,.10));}
+/* margin rule: two thin red lines, like a ledger */
+.margin::before{content:"";position:absolute;top:-1px;bottom:0;left:0;width:4px;border-left:1px solid rgba(194,90,76,.55);border-right:1px solid rgba(194,90,76,.30);pointer-events:none}
+
+/* ---------- masthead ---------- */
+.mast{grid-column:1 / 3;display:grid;grid-template-columns:auto 1fr auto;align-items:end;gap:26px;
+  padding:14px 26px 10px 30px;border-bottom:1px solid rgba(60,45,25,.16);position:relative}
+.who h1{margin:0;font:600 25px/1 var(--serif);font-variation-settings:"opsz" 48;letter-spacing:-.005em}
+.who p{margin:5px 0 0;font:italic 400 13.5px/1.1 var(--serif);color:var(--print-2)}
+.vitals{display:flex;align-items:flex-end;gap:22px;justify-self:center}
+.gauge{width:150px}
+.gauge .lab{display:flex;justify-content:space-between;align-items:baseline;font:600 10.5px/1 var(--serif);letter-spacing:.12em;text-transform:uppercase;color:var(--print-2)}
+.gauge .lab b{font:600 17px/1 var(--mono);letter-spacing:0;color:var(--print)}
+.gauge .lab b small{font-size:12px;color:var(--pencil);font-weight:500}
+.gauge .bar{margin-top:5px;height:8px;border:1.2px solid var(--print);border-radius:2px;position:relative;overflow:hidden;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),rgba(35,30,24,.25) calc(10% - 1px) 10%)}
+.gauge .bar i{position:absolute;left:0;top:0;bottom:0;background:#a3241b;opacity:.85}
+.gauge.pw .bar i{background:#1f3f9a}
+.gauge.low .lab b{color:#a3241b}
+.attrs{display:grid;grid-template-columns:repeat(6,auto);column-gap:12px;row-gap:3px;font:400 10.5px/1 var(--serif);letter-spacing:.1em;text-transform:uppercase;color:var(--print-2)}
+.attrs b{display:block;font:500 15px/1.1 var(--mono);color:var(--print);letter-spacing:0;text-transform:none}
+.attrs.minor{grid-template-columns:repeat(3,auto)}
+.where{text-align:right}
+.where .dl{font:600 18px/1 var(--serif);font-variation-settings:"opsz" 36}
+.where .dl em{font-weight:400;color:var(--print-2)}
+.where .meta{margin-top:5px;font:400 12.5px/1.1 var(--serif);color:var(--print-2)}
+.where .meta b{font:500 13px/1 var(--mono);color:var(--print)}
+.keys-to{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:3px 8px 3px 7px;border:1.3px solid #3c6b3a;color:#2e5a2c;border-radius:3px;
+  font:600 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;transform:rotate(-1.5deg);background:rgba(60,107,58,.06)}
+.keys-to.note{border-color:var(--ink);color:var(--ink);background:rgba(34,64,124,.06)}
+.conds{display:inline-flex;gap:6px;margin-left:8px}
+.stamp{font:700 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#a3241b;border:1.5px solid #a3241b;padding:3px 6px;border-radius:2px;transform:rotate(-2deg);opacity:.9}
+
+/* ---------- prompt rail (the game's top line) ---------- */
+.rail{grid-column:1;display:flex;align-items:center;gap:12px;height:48px;padding:4px 26px 0 30px;position:relative}
+.rail .k{font:600 10px/1 var(--serif);letter-spacing:.14em;text-transform:uppercase;color:var(--pencil-lt);width:46px;flex:none}
+.rail .msg{font:400 16.5px/1.25 var(--serif);color:var(--print)}
+.rail .msg .t{font:500 11px/1 var(--mono);color:var(--pencil-lt);margin-right:8px}
+.slip{display:flex;align-items:center;gap:14px;background:var(--paper-hi);border:1px solid rgba(60,45,25,.22);border-left:4px solid #b0472f;
+  padding:7px 14px 7px 14px;border-radius:2px;box-shadow:0 2px 0 rgba(60,45,25,.06),0 6px 14px -8px rgba(60,40,10,.35);transform:rotate(-.25deg);
+  font:500 17px/1.2 var(--serif);animation:slipin .35s cubic-bezier(.2,.8,.3,1.2)}
+.slip .q{font-weight:600}
+.slip .opts{display:flex;gap:8px;align-items:center}
+.slip .opt{display:flex;align-items:center;gap:6px;font:400 14px/1 var(--serif);color:var(--print-2)}
+.slip .opt.def{color:var(--print)}
+.slip .opt.def::after{content:"default";font:italic 400 11.5px/1 var(--serif);color:#b0472f;margin-left:2px}
+kbd.cap{display:inline-grid;place-items:center;min-width:24px;height:24px;padding:0 6px;font:600 14px/1 var(--mono);color:var(--print);
+  background:linear-gradient(#fffdf6,#efe7d3);border:1px solid #a89b80;border-bottom-width:3px;border-radius:4px}
+.slip .opt.def kbd.cap{border-color:#b0472f;box-shadow:0 0 0 2px rgba(176,71,47,.18)}
+.slip .more{font:600 13px/1 var(--mono);letter-spacing:.06em;color:#b0472f;display:flex;align-items:center;gap:7px}
+.slip .tag{font:600 9.5px/1 var(--serif);letter-spacing:.14em;text-transform:uppercase;color:#b0472f}
+@keyframes slipin{from{transform:translateY(-8px) rotate(-1.2deg);opacity:0}}
+
+/* ---------- map ---------- */
+.mapzone{grid-column:1;position:relative;padding:4px 26px 8px 30px}
+.mapframe{position:relative;width:calc(var(--cw)*80 + 22px);margin:0 auto 0 0;padding:14px 0 0 22px}
+.ruler-x{position:absolute;left:22px;top:0;height:12px;width:calc(var(--cw)*80);font:500 9px/1 var(--mono);color:#a2988a}
+.ruler-x span{position:absolute;top:0;transform:translateX(-50%)}
+.ruler-y{position:absolute;left:0;top:14px;width:18px;font:500 9px/1 var(--mono);color:#a2988a;text-align:right}
+.ruler-y span{position:absolute;right:4px;transform:translateY(-50%)}
+.grid{position:relative;width:calc(var(--cw)*80);height:calc(var(--ch)*21);
+  background-image:
+   linear-gradient(90deg,rgba(52,92,140,.13) 1px,transparent 1px),
+   linear-gradient(rgba(52,92,140,.13) 1px,transparent 1px),
+   linear-gradient(90deg,var(--line) 1px,transparent 1px),
+   linear-gradient(var(--line) 1px,transparent 1px);
+  background-size:calc(var(--cw)*10) calc(var(--ch)*5),calc(var(--cw)*10) calc(var(--ch)*5),var(--cw) var(--ch),var(--cw) var(--ch);
+  background-position:-.5px -.5px;
+  outline:1px solid rgba(52,92,140,.18);cursor:crosshair}
+.grid pre{margin:0;position:absolute;inset:0;font:500 var(--fs)/var(--ch) var(--mono);letter-spacing:0;white-space:pre;font-kerning:none;font-variant-ligatures:none}
+.grid pre span{display:inline-block;width:var(--cw);text-align:center}
+.c0{color:#4a5468}.c1{color:#a3241b}.c2{color:#2c7428}.c3{color:#7a4419}.c4{color:#1f3f9a}.c5{color:#8a2a80}.c6{color:#0c6b75}.c7{color:#4d473f}
+.c8{color:#6c665c}.c9{color:#c2410c}.c10{color:#3f7d0b}.c11{color:#8d6a00}.c12{color:#2f63d6}.c13{color:#b62f98}.c14{color:#0b7f8e}.c15{color:#14110e}
+.obj{font-weight:600}
+.flr{color:#8a8377;font-weight:400}.flr.dark{color:#a59e92}
+.cor{color:#958c7e;font-weight:400}
+.hero{position:relative;font-weight:700;color:#14110e!important;background:linear-gradient(transparent 12%,var(--hl) 12%,var(--hl) 88%,transparent 88%);border-radius:2px}
+.remembered .grid pre{filter:sepia(.55) saturate(.8);opacity:.85}
+.overlay{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+#pre{z-index:1}#ov{z-index:2}
+.overlay .hw{font-family:var(--hand);fill:var(--ink);paint-order:stroke;stroke:var(--paper);stroke-width:5px;stroke-linejoin:round}
+.draw{stroke-dasharray:var(--len);stroke-dashoffset:var(--len);animation:draw 1.1s ease-out forwards}
+.draw.d2{animation-delay:.5s;animation-duration:1.6s}.draw.d3{animation-delay:1.9s}
+@keyframes draw{to{stroke-dashoffset:0}}
+.fadein{opacity:0;animation:fade .6s ease-out forwards}
+.fadein.d2{animation-delay:1.2s}.fadein.d3{animation-delay:2.2s}
+@keyframes fade{to{opacity:1}}
+
+/* specimen tag (hover) */
+.tagx{position:absolute;pointer-events:none;z-index:5;display:flex;align-items:center;transform:translate(10px,-50%)}
+.tagx .tie{width:22px;height:1px;background:#8a7a5c}
+.tagx .card{position:relative;background:#efe2bf;border:1px solid #c2ad7f;border-radius:2px 8px 8px 2px;padding:5px 11px 5px 16px;box-shadow:0 3px 8px -4px rgba(60,40,10,.4);transform:rotate(-1.5deg)}
+.tagx .card::before{content:"";position:absolute;left:5px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--paper);border:1px solid #b09a6c}
+.tagx .nm{font:600 15px/1.1 var(--serif)}
+.tagx .rel{font:500 11px/1.2 var(--mono);color:#7a6a48;margin-top:2px}
+.cellring{position:absolute;pointer-events:none;border:1.5px solid #8a7a5c;border-radius:3px;z-index:4}
+
+/* menu index card */
+.icard{position:absolute;z-index:6;background:var(--paper-hi);border:1px solid rgba(60,45,25,.22);border-radius:3px;
+  box-shadow:0 1px 0 #fff inset,0 14px 30px -12px rgba(60,40,10,.45),0 2px 4px rgba(60,40,10,.08);
+  padding:0 0 10px;min-width:420px;transform:rotate(.4deg);animation:slipin .35s cubic-bezier(.2,.8,.3,1.2);
+  background-image:linear-gradient(transparent 49px,rgba(194,90,76,.5) 49px,rgba(194,90,76,.5) 50px,transparent 50px),repeating-linear-gradient(transparent 0 31px,rgba(52,92,140,.14) 31px 32px);background-position:0 0,0 50px}
+.icard h3{margin:0;padding:15px 22px 0;height:50px;font:600 19px/1.1 var(--serif);display:flex;justify-content:space-between;align-items:baseline}
+.icard h3 small{font:italic 400 12.5px/1 var(--serif);color:var(--pencil)}
+.icard ul{list-style:none;margin:0;padding:0 22px}
+.icard li{height:32px;display:flex;align-items:center;gap:12px;font:400 16px/1 var(--serif);position:relative}
+.icard li kbd.cap{min-width:22px;height:22px;font-size:13px}
+.icard li.sel{background:linear-gradient(90deg,transparent,rgba(255,206,40,.38) 3%,rgba(255,206,40,.38) 97%,transparent);margin:0 -10px;padding:0 10px}
+.icard .foot{display:flex;gap:14px;padding:10px 22px 0;font:400 12.5px/1 var(--serif);color:var(--pencil);align-items:center}
+.icard .foot kbd{font:600 10.5px/1 var(--mono);border:1px solid #b5a98f;border-bottom-width:2px;border-radius:3px;padding:2px 5px;background:#f3ecdb;color:#5b5348}
+.icard li.pick kbd.cap{position:relative}
+.icard li.pick kbd.cap::after{content:"";position:absolute;inset:-7px -9px;border:2px solid var(--ink);border-radius:50% 46% 52% 44%;transform:rotate(-8deg);opacity:.85}
+.icard li.pick::after{content:"";position:absolute;left:46px;right:96px;bottom:4px;height:2px;background:var(--ink);opacity:.5;border-radius:2px;transform:rotate(-.4deg)}
+.icard .note{position:absolute;font:500 21px/1 var(--hand);color:var(--ink);white-space:nowrap}
+
+/* ---------- lower: journal + packing list ---------- */
+.lower{grid-column:1;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.2fr);gap:0;border-top:1px solid rgba(60,45,25,.16);min-height:0;margin-top:2px}
+.sect{padding:10px 22px 10px 30px;min-height:0;overflow:hidden;position:relative}
+.sect + .sect{border-left:1px dashed rgba(60,45,25,.22);padding-left:22px}
+.sect h2{margin:0 0 6px;font:600 11px/1 var(--serif);letter-spacing:.16em;text-transform:uppercase;color:var(--print-2);display:flex;gap:10px;align-items:baseline}
+.sect h2 em{font:italic 400 12.5px/1 var(--serif);letter-spacing:0;text-transform:none;color:var(--pencil)}
+.journal{list-style:none;margin:0;padding:0;background-image:repeating-linear-gradient(transparent 0 22px,rgba(52,92,140,.12) 22px 23px);background-position:0 -3px}
+.journal li{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:baseline;font:400 14.5px/23px var(--serif);color:var(--print-2)}
+.journal li:first-child{color:var(--print);font-weight:500}
+.journal li .t{font:500 10.5px/1 var(--mono);color:var(--pencil-lt);padding-bottom:1px}
+.journal li.old{color:#8f877a}
+.journal li .more{font:600 11.5px/1 var(--mono);color:#b0472f;margin-left:6px}
+.pack{columns:2;column-gap:22px;font:400 13.5px/1.15 var(--serif)}
+.sect.packsect{display:flex;flex-direction:column}
+.packscroll{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#cbbfa5 transparent;mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
+.pack.three{columns:3;column-gap:16px;font-size:13px;line-height:1.12}
+.pack .cls{break-inside:avoid;margin-bottom:5px}
+.pack .cls>b{display:flex;gap:6px;align-items:baseline;font:600 9.5px/1.6 var(--serif);letter-spacing:.14em;text-transform:uppercase;color:var(--pencil)}
+.pack .cls>b i{font:600 12px/1 var(--mono);font-style:normal;letter-spacing:0}
+.pack .it{display:grid;grid-template-columns:18px minmax(0,1fr);gap:5px;padding:1.5px 0;break-inside:avoid}
+.pack .it s{text-decoration:none;color:#8a8275;font-size:.9em}
+.pack .it kbd{font:600 11.5px/1.3 var(--mono);color:var(--print);text-align:center;border:1px solid rgba(60,45,25,.25);border-radius:3px;height:17px;background:rgba(255,255,255,.35)}
+.pack .it span{color:var(--print)}
+.pack .it u{text-decoration:none;font:italic 400 .92em/1 var(--serif);color:#2e5a2c;margin-left:4px}
+.pack .it q{quotes:none;font:500 1.32em/1 var(--hand);color:var(--pencil);margin-left:2px}
+
+/* ---------- margin (companion) ---------- */
+.margin{grid-column:2;grid-row:2 / 5;display:flex;flex-direction:column;min-height:0;padding:10px 20px 12px 24px;position:relative}
+.margin .mh{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+.margin .mh h2{margin:0;font:600 11px/1 var(--serif);letter-spacing:.16em;text-transform:uppercase;color:var(--print-2)}
+.margin .mh span{font:italic 400 12px/1 var(--serif);color:var(--pencil)}
+.notes{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;padding-bottom:6px;
+  mask-image:linear-gradient(transparent,#000 60px)}
+.n-you{font:italic 400 15px/1.3 var(--serif);color:var(--pencil);padding-left:16px;position:relative}
+.n-you::before{content:"";position:absolute;left:-1px;top:4px;width:12px;height:12px;opacity:.75;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236d665b' stroke-width='2' stroke-linecap='round'%3E%3Crect x='2' y='6' width='20' height='13' rx='2'/%3E%3Cpath d='M6 10h1M10 10h1M14 10h1M18 10h1M7 15h10'/%3E%3C/svg%3E")}
+.n-you.spoken::before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236d665b' stroke-width='2' stroke-linecap='round'%3E%3Crect x='8' y='2' width='8' height='13' rx='4'/%3E%3Cpath d='M4 11a8 8 0 0 0 16 0M12 19v3'/%3E%3C/svg%3E")}
+.n-you .live::after{content:"";display:inline-block;width:2px;height:15px;background:var(--pencil);margin-left:2px;vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.n-ink{font:500 21.5px/1.13 var(--hand);color:var(--ink);position:relative;padding-left:2px}
+.n-ink.old{color:#5c6f96}
+.n-ink .fn{display:inline-grid;place-items:center;width:17px;height:17px;border:1.5px solid var(--ink);border-radius:50%;font:700 10.5px/1 var(--mono);vertical-align:3px;margin:0 2px}
+.n-ink .wet{color:var(--ink-wet);text-shadow:0 0 .6px rgba(22,48,106,.6)}
+.n-ink .w{opacity:0;animation:fade .25s ease-out forwards}
+.n-t{font:500 10px/1 var(--mono);color:var(--pencil-lt);display:flex;align-items:center;gap:8px}
+.n-t::after{content:"";flex:1;border-top:1px dotted rgba(60,45,25,.25)}
+.ref{font:400 12px/1.35 var(--serif);color:var(--print-2);border-left:2px solid rgba(34,64,124,.3);padding:1px 0 1px 9px;margin:-3px 0 0 2px}
+.ref b{font:600 9.5px/1 var(--serif);letter-spacing:.12em;text-transform:uppercase;color:var(--pencil)}
+.ref code{font:500 11px/1 var(--mono);color:var(--ink)}
+.ref.busy b::after{content:" …";animation:blink 1s steps(2) infinite}
+.fold{position:relative;border:1px dashed rgba(34,64,124,.45);background:linear-gradient(135deg,rgba(34,64,124,.04),transparent);padding:7px 12px 8px 12px;border-radius:2px;
+  font:400 13px/1.3 var(--serif);color:var(--print-2);clip-path:polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,0 100%)}
+.fold::after{content:"";position:absolute;right:0;top:0;width:16px;height:16px;background:linear-gradient(225deg,var(--desk) 50%,#e5dac2 50%);box-shadow:-1px 1px 2px rgba(60,40,10,.2)}
+.fold b{font:600 9.5px/1 var(--serif);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);display:block;margin-bottom:3px}
+.fold kbd{font:600 10px/1 var(--mono);border:1px solid #b5a98f;border-bottom-width:2px;border-radius:3px;padding:1px 4px;background:#f3ecdb}
+.thinking{display:flex;gap:7px;padding:6px 2px 2px}
+.thinking i{width:8px;height:8px;border-radius:50% 45% 55% 50%;background:var(--ink);opacity:.2;animation:blot 1.4s ease-in-out infinite}
+.thinking i:nth-child(2){animation-delay:.2s}.thinking i:nth-child(3){animation-delay:.4s}
+@keyframes blot{40%{opacity:.85;transform:scale(1.2)}}
+
+.pnotes{margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid rgba(60,45,25,.14)}
+.pnotes ul{list-style:none;margin:4px 0 0;padding:0;font:500 19px/1.12 var(--hand);color:var(--ink)}
+.pnotes li{display:grid;grid-template-columns:20px 1fr;align-items:baseline;padding:1px 0}
+.pnotes li i{font:600 13px/1 var(--mono);font-style:normal;text-align:center}
+.pnotes li small{font:italic 400 12px/1 var(--serif);color:var(--pencil);margin-left:4px}
+/* the pen: voice state */
+.pen{border-top:1px solid rgba(60,45,25,.18);flex:none;padding-top:10px;display:grid;grid-template-columns:44px 1fr;gap:4px 12px;align-items:center}
+.pen .nib{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;border:1.5px solid var(--pencil-lt);color:var(--pencil);background:var(--paper-hi);position:relative}
+.pen .nib svg{width:22px;height:22px}
+.pen[data-v=listening] .nib{border-color:var(--print);color:var(--print);box-shadow:0 0 0 5px rgba(35,30,24,.07)}
+.pen[data-v=thinking] .nib{border-color:var(--ink);color:var(--ink)}
+.pen[data-v=speaking] .nib{border-color:var(--ink);color:#fff;background:var(--ink);box-shadow:0 0 0 5px rgba(34,64,124,.12)}
+.pen .st{display:flex;align-items:baseline;gap:9px}
+.pen .st b{font:700 10.5px/1 var(--serif);letter-spacing:.16em;text-transform:uppercase}
+.pen .st span{font:italic 400 13px/1 var(--serif);color:var(--pencil)}
+.pen[data-v=idle] .st b{color:var(--pencil)}
+.pen[data-v=listening] .st b{color:var(--print)}
+.pen[data-v=thinking] .st b,.pen[data-v=speaking] .st b{color:var(--ink)}
+.trace{grid-column:2;height:26px;width:100%;display:block}
+.write{grid-column:1 / 3;display:flex;align-items:center;gap:10px;margin-top:6px;border-bottom:1.2px solid rgba(60,45,25,.35);padding:6px 0 5px}
+.write span{flex:1;font:italic 400 14.5px/1 var(--serif);color:var(--pencil-lt)}
+.write kbd,.keys kbd{font:600 10px/1 var(--mono);border:1px solid #b5a98f;border-bottom-width:2px;border-radius:3px;padding:2px 5px;background:#f3ecdb;color:#5b5348}
+.keys{grid-column:1 / 3;display:flex;flex-wrap:wrap;gap:4px 12px;font:400 11.5px/1.4 var(--serif);color:var(--pencil);margin-top:6px}
+
+/* contents (atlas) */
+.contents{margin:2px 0 10px}
+.contents .br{font:italic 500 12.5px/1 var(--serif);color:var(--print-2);margin:8px 0 5px;display:flex;gap:8px;align-items:center}
+.contents .br::after{content:"";flex:1;border-top:1px solid rgba(60,45,25,.15)}
+.pg{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;align-items:center;padding:4px 6px;border-radius:3px;cursor:pointer}
+.pg.on{background:rgba(255,206,40,.28);outline:1px solid rgba(176,140,30,.35)}
+.pg svg{grid-row:1 / 3;width:128px;height:34px;background:var(--paper-hi);border:1px solid rgba(60,45,25,.2);box-shadow:2px 2px 0 rgba(60,45,25,.07)}
+.pg b{font:600 13.5px/1 var(--serif)}
+.pg b small{font:500 10px/1 var(--mono);color:var(--pencil-lt);margin-left:4px}
+.pg span{font:italic 400 12px/1.15 var(--serif);color:var(--pencil)}
+.pg.mines{margin-left:22px}
+.pg.mines svg{width:106px}
+
+.banner{margin-left:auto;font:italic 400 13px/1 var(--serif);color:var(--print-2);display:flex;gap:8px;align-items:center;background:var(--paper-hi);padding:6px 10px;border:1px solid rgba(60,45,25,.18);border-radius:2px}
+.banner kbd{font:600 10px/1 var(--mono);border:1px solid #b5a98f;border-bottom-width:2px;border-radius:3px;padding:2px 5px;background:#f3ecdb;font-style:normal}
+
+/* ---------- mockup switcher (not part of the design) ---------- */
+.demo{position:fixed;right:16px;top:5px;z-index:50;display:flex;gap:2px;align-items:center;font:500 11px/1 system-ui,sans-serif;color:#6b6152;
+  background:rgba(255,255,255,.35);border-radius:6px;padding:3px 3px 3px 9px}
+.demo button{font:500 11px/1 system-ui,sans-serif;border:0;background:transparent;color:#6b6152;padding:5px 7px;border-radius:4px;cursor:pointer}
+.demo button.on{background:#5b5348;color:#f5eedd}
+body.clean .demo{display:none}
+</style>
+</head>
+<body>
+<div class="desk">
+  <nav class="tabs" id="tabs"></nav>
+  <main class="page" id="page">
+    <header class="mast" id="mast"></header>
+    <div class="rail" id="rail"></div>
+    <section class="mapzone" id="mapzone">
+      <div class="mapframe" id="mapframe">
+        <div class="ruler-x" id="rx"></div><div class="ruler-y" id="ry"></div>
+        <div class="grid" id="grid"><svg class="overlay" id="ovu"></svg><pre id="pre"></pre><svg class="overlay" id="ov"></svg></div>
+      </div>
+    </section>
+    <section class="lower" id="lower">
+      <div class="sect"><h2>Journal <em id="jmeta"></em></h2><ul class="journal" id="journal"></ul></div>
+      <div class="sect packsect"><h2>Packing list <em id="pmeta"></em></h2><div class="packscroll"><div class="pack" id="pack"></div></div></div>
+    </section>
+    <aside class="margin" id="margin"></aside>
+  </main>
+</div>
+<div class="demo" id="demo">mockup&nbsp;</div>
+
+<script>
+window.FJ={"shop":{"fixture":"shop.json","status":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"3","hunger":"","hp":"16","hp_max":"16","level_desc":"Dlvl:3","exp_points":"0"},"conditions":[],"hero":{"x":75,"y":15},"messages":[[1,"Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie."],[3,"You see here a fizzy potion (for sale, 333 zorkmids)."]],"inventory":[["a","a blessed +1 spear (weapon in right hand)","weapons",")",false,true],["b","a +0 dagger (alternate weapon; not wielded)","weapons",")",false,false],["c","an uncursed +3 small shield (being worn)","armor","[",true,false],["d","an uncursed food ration","food","%",false,false],["e","a potion called maybe healing","potions","!",false,false],["f","a clear potion","potions","!",false,false],["g","a scroll labeled GNIK SISI VLE","scrolls","?",false,false],["h","a scroll labeled DUAM XNAHT","scrolls","?",false,false],["i","an engagement ring","rings","=",false,false],["j","a forked wand","wands","/",false,false],["k","a concave amulet","amulets","\"",false,false]],"cells":[[74,0,"#",7,"corridor"],[4,1,"-",7,"wall"],[5,1,"-",7,"wall"],[6,1,"-",7,"wall"],[7,1,"-",7,"wall"],[8,1,"-",7,"wall"],[9,1,"-",7,"wall"],[10,1,"-",7,"wall"],[11,1,"-",7,"wall"],[22,1,"-",7,"wall"],[23,1,"-",7,"wall"],[24,1,"-",7,"wall"],[25,1,"-",7,"wall"],[26,1,"-",7,"wall"],[70,1,"-",7,"wall"],[71,1,"-",7,"wall"],[72,1,"-",7,"wall"],[73,1,"-",7,"wall"],[74,1,".",7,"doorway"],[75,1,"-",7,"wall"],[76,1,"-",7,"wall"],[77,1,"-",7,"wall"],[78,1,"-",7,"wall"],[4,2,"|",7,"wall"],[5,2,".",0,"dark part of a room"],[6,2,".",0,"dark part of a room"],[7,2,".",0,"dark part of a room"],[8,2,".",0,"dark part of a room"],[9,2,".",0,"dark part of a room"],[10,2,".",0,"dark part of a room"],[11,2,".",7,"doorway"],[12,2,"#",7,"corridor"],[13,2,"#",7,"corridor"],[14,2,"#",7,"corridor"],[15,2,"#",7,"corridor"],[16,2,"#",7,"corridor"],[17,2,"#",7,"corridor"],[18,2,"#",7,"corridor"],[19,2,"#",7,"corridor"],[20,2,"#",7,"corridor"],[21,2,"#",7,"corridor"],[22,2,".",7,"doorway"],[23,2,"%",3,"a food ration"],[24,2,"(",3,"a large box"],[25,2,".",0,"dark part of a room"],[26,2,"|",7,"wall"],[46,2,"$",11,"39 gold pieces (buried)"],[53,2,"$",11,"35 gold pieces (buried)"],[70,2,"|",7,"wall"],[71,2,".",0,"dark part of a room"],[72,2,".",0,"dark part of a room"],[73,2,".",0,"dark part of a room"],[74,2,".",0,"dark part of a room"],[75,2,".",0,"dark part of a room"],[76,2,".",0,"dark part of a room"],[77,2,".",0,"dark part of a room"],[78,2,"|",7,"wall"],[4,3,"|",7,"wall"],[5,3,"<",7,"staircase up"],[6,3,".",0,"dark part of a room"],[7,3,".",0,"dark part of a room"],[8,3,".",0,"dark part of a room"],[9,3,".",0,"dark part of a room"],[10,3,".",0,"dark part of a room"],[11,3,"|",7,"wall"],[13,3,"#",7,"corridor"],[14,3,"#",7,"corridor"],[15,3,"#",7,"corridor"],[16,3,"#",7,"corridor"],[17,3,"#",7,"corridor"],[22,3,"|",7,"wall"],[23,3,".",0,"dark part of a room"],[24,3,">",7,"staircase down"],[25,3,".",0,"dark part of a room"],[26,3,".",7,"doorway"],[27,3,"#",7,"corridor"],[40,3,"$",11,"47 gold pieces embedded in stone"],[70,3,"|",7,"wall"],[71,3,".",0,"dark part of a room"],[72,3,".",0,"dark part of a room"],[73,3,".",0,"dark part of a room"],[74,3,".",0,"dark part of a room"],[75,3,".",0,"dark part of a room"],[76,3,".",0,"dark part of a room"],[77,3,".",0,"dark part of a room"],[78,3,"|",7,"wall"],[4,4,"|",7,"wall"],[5,4,".",0,"dark part of a room"],[6,4,".",0,"dark part of a room"],[7,4,".",0,"dark part of a room"],[8,4,".",0,"dark part of a room"],[9,4,".",0,"dark part of a room"],[10,4,".",0,"dark part of a room"],[11,4,"|",7,"wall"],[12,4,"#",7,"corridor"],[13,4,"#",7,"corridor"],[22,4,"-",7,"wall"],[23,4,"-",7,"wall"],[24,4,"-",7,"wall"],[25,4,"-",7,"wall"],[26,4,"-",7,"wall"],[27,4,"#",7,"corridor"],[32,4,"-",7,"wall"],[33,4,"-",7,"wall"],[34,4,"-",7,"wall"],[35,4,"-",7,"wall"],[36,4,"-",7,"wall"],[37,4,"-",7,"wall"],[60,4,"$",11,"49 gold pieces embedded in stone"],[62,4,"$",11,"49 gold pieces embedded in stone"],[70,4,"|",7,"wall"],[71,4,".",0,"dark part of a room"],[72,4,".",0,"dark part of a room"],[73,4,".",0,"dark part of a room"],[74,4,".",0,"dark part of a room"],[75,4,".",0,"dark part of a room"],[76,4,"$",11,"4 gold pieces"],[77,4,".",0,"dark part of a room"],[78,4,"|",7,"wall"],[4,5,"|",7,"wall"],[5,5,"$",11,"5 gold pieces"],[6,5,".",0,"dark part of a room"],[7,5,".",0,"dark part of a room"],[8,5,".",0,"dark part of a room"],[9,5,".",0,"dark part of a room"],[10,5,".",0,"dark part of a room"],[11,5,"|",7,"wall"],[27,5,"#",7,"corridor"],[31,5,"#",7,"corridor"],[32,5,"-",3,"open door"],[33,5,".",0,"dark part of a room"],[34,5,".",0,"dark part of a room"],[35,5,".",0,"dark part of a room"],[36,5,".",0,"dark part of a room"],[37,5,"+",3,"closed door"],[38,5,"#",7,"corridor"],[45,5,"-",7,"wall"],[46,5,"-",7,"wall"],[47,5,"-",7,"wall"],[48,5,"-",7,"wall"],[49,5,"-",7,"wall"],[50,5,"-",7,"wall"],[51,5,"-",7,"wall"],[52,5,"-",7,"wall"],[69,5,"#",7,"corridor"],[70,5,"|",7,"wall"],[71,5,".",0,"dark part of a room"],[72,5,".",0,"dark part of a room"],[73,5,".",0,"dark part of a room"],[74,5,".",0,"dark part of a room"],[75,5,".",0,"dark part of a room"],[76,5,".",0,"dark part of a room"],[77,5,".",0,"dark part of a room"],[78,5,"|",7,"wall"],[4,6,"-",7,"wall"],[5,6,"-",7,"wall"],[6,6,"-",7,"wall"],[7,6,".",7,"doorway"],[8,6,"-",7,"wall"],[9,6,"-",7,"wall"],[10,6,"-",7,"wall"],[11,6,"-",7,"wall"],[27,6,"#",7,"corridor"],[31,6,"#",7,"corridor"],[32,6,"|",7,"wall"],[33,6,".",0,"dark part of a room"],[34,6,".",0,"dark part of a room"],[35,6,".",0,"dark part of a room"],[36,6,".",0,"dark part of a room"],[37,6,"|",7,"wall"],[38,6,"#",7,"corridor"],[39,6,"#",7,"corridor"],[40,6,"#",7,"corridor"],[41,6,"#",7,"corridor"],[42,6,"#",7,"corridor"],[43,6,"#",7,"corridor"],[44,6,"#",7,"corridor"],[45,6,"|",7,"wall"],[46,6,".",0,"dark part of a room"],[47,6,".",0,"dark part of a room"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,"|",7,"wall"],[63,6,"#",7,"corridor"],[64,6,"#",7,"corridor"],[65,6,"#",7,"corridor"],[66,6,"#",7,"corridor"],[67,6,"#",7,"corridor"],[68,6,"#",7,"corridor"],[69,6,"#",7,"corridor"],[70,6,"-",7,"wall"],[71,6,"-",7,"wall"],[72,6,"-",7,"wall"],[73,6,"-",7,"wall"],[74,6,"-",7,"wall"],[75,6,"-",7,"wall"],[76,6,"-",7,"wall"],[77,6,"-",7,"wall"],[78,6,"-",7,"wall"],[6,7,"#",7,"corridor"],[7,7,"#",7,"corridor"],[27,7,"#",7,"corridor"],[31,7,"#",7,"corridor"],[32,7,"|",7,"wall"],[33,7,".",0,"dark part of a room"],[34,7,".",0,"dark part of a room"],[35,7,"?",15,"a scroll labeled DUAM XNAHT"],[36,7,".",0,"dark part of a room"],[37,7,".",7,"doorway"],[38,7,"#",7,"corridor"],[39,7,"#",7,"corridor"],[40,7,"#",7,"corridor"],[41,7,"#",7,"corridor"],[42,7,"#",7,"corridor"],[43,7,"#",7,"corridor"],[44,7,"#",7,"corridor"],[45,7,".",7,"doorway"],[46,7,".",0,"dark part of a room"],[47,7,"^",12,"anti-magic field"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,".",0,"dark part of a room"],[51,7,".",0,"dark part of a room"],[52,7,"|",7,"wall"],[63,7,"#",7,"corridor"],[68,7,"#",7,"corridor"],[69,7,"#",7,"corridor"],[76,7,"#",7,"corridor"],[77,7,"#",7,"corridor"],[6,8,"#",7,"corridor"],[27,8,"#",7,"corridor"],[31,8,"#",7,"corridor"],[32,8,"-",7,"wall"],[33,8,"-",7,"wall"],[34,8,"-",7,"wall"],[35,8,"-",7,"wall"],[36,8,"-",7,"wall"],[37,8,"-",7,"wall"],[44,8,"#",7,"corridor"],[45,8,"|",7,"wall"],[46,8,".",0,"dark part of a room"],[47,8,".",0,"dark part of a room"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",7,"doorway"],[53,8,"#",7,"corridor"],[54,8,"#",7,"corridor"],[55,8,"#",7,"corridor"],[56,8,"#",7,"corridor"],[62,8,"#",7,"corridor"],[63,8,"#",7,"corridor"],[68,8,"#",7,"corridor"],[76,8,"#",7,"corridor"],[6,9,"#",7,"corridor"],[13,9,"$",11,"28 gold pieces embedded in stone"],[27,9,"#",7,"corridor"],[31,9,"#",7,"corridor"],[32,9,"#",7,"corridor"],[33,9,"#",7,"corridor"],[44,9,"#",7,"corridor"],[45,9,"-",7,"wall"],[46,9,"-",7,"wall"],[47,9,"-",7,"wall"],[48,9,"-",7,"wall"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[56,9,"#",7,"corridor"],[57,9,"#",7,"corridor"],[58,9,"#",7,"corridor"],[59,9,"#",7,"corridor"],[60,9,"#",7,"corridor"],[61,9,"#",7,"corridor"],[62,9,"#",7,"corridor"],[67,9,"#",7,"corridor"],[68,9,"#",7,"corridor"],[70,9,"$",11,"60 gold pieces embedded in stone"],[76,9,"#",7,"corridor"],[6,10,"#",7,"corridor"],[27,10,"#",7,"corridor"],[33,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[45,10,"#",7,"corridor"],[46,10,"#",7,"corridor"],[47,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[56,10,"#",7,"corridor"],[57,10,"-",7,"wall"],[58,10,"-",7,"wall"],[59,10,"-",7,"wall"],[60,10,"-",7,"wall"],[61,10,"-",7,"wall"],[62,10,"-",7,"wall"],[65,10,"#",7,"corridor"],[66,10,"#",7,"corridor"],[67,10,"#",7,"corridor"],[76,10,"#",7,"corridor"],[5,11,"#",7,"corridor"],[6,11,"#",7,"corridor"],[27,11,"#",7,"corridor"],[33,11,"#",7,"corridor"],[48,11,"#",7,"corridor"],[49,11,"`",7,"a boulder"],[56,11,"#",7,"corridor"],[57,11,"|",7,"wall"],[58,11,"{",12,"fountain"],[59,11,".",0,"dark part of a room"],[60,11,"$",11,"11 gold pieces"],[61,11,".",0,"dark part of a room"],[62,11,"|",7,"wall"],[65,11,"#",7,"corridor"],[74,11,"#",7,"corridor"],[75,11,"#",7,"corridor"],[76,11,"#",7,"corridor"],[5,12,"#",7,"corridor"],[27,12,"#",7,"corridor"],[28,12,"#",7,"corridor"],[29,12,"#",7,"corridor"],[30,12,"#",7,"corridor"],[31,12,"#",7,"corridor"],[32,12,"#",7,"corridor"],[33,12,"#",7,"corridor"],[34,12,"#",7,"corridor"],[35,12,"#",7,"corridor"],[36,12,"#",7,"corridor"],[37,12,"#",7,"corridor"],[38,12,"#",7,"corridor"],[39,12,"#",7,"corridor"],[40,12,"#",7,"corridor"],[41,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[44,12,"#",7,"corridor"],[45,12,"#",7,"corridor"],[46,12,"#",7,"corridor"],[47,12,"#",7,"corridor"],[48,12,"#",7,"corridor"],[49,12,"#",7,"corridor"],[50,12,"#",7,"corridor"],[51,12,"#",7,"corridor"],[52,12,"#",7,"corridor"],[53,12,"#",7,"corridor"],[54,12,"#",7,"corridor"],[55,12,"#",7,"corridor"],[56,12,"#",7,"corridor"],[57,12,"+",3,"closed door"],[58,12,".",0,"dark part of a room"],[59,12,".",0,"dark part of a room"],[60,12,".",0,"dark part of a room"],[61,12,".",0,"dark part of a room"],[62,12,"|",7,"wall"],[63,12,"#",7,"corridor"],[64,12,"#",7,"corridor"],[65,12,"#",7,"corridor"],[73,12,"-",7,"wall"],[74,12,"|",3,"open door"],[75,12,"-",7,"wall"],[76,12,"-",7,"wall"],[77,12,"-",7,"wall"],[78,12,"-",7,"wall"],[3,13,"#",7,"corridor"],[4,13,"#",7,"corridor"],[5,13,"#",7,"corridor"],[28,13,"#",7,"corridor"],[29,13,"-",7,"wall"],[30,13,"-",7,"wall"],[31,13,"-",7,"wall"],[32,13,"-",7,"wall"],[33,13,"-",7,"wall"],[34,13,"#",7,"corridor"],[57,13,"|",7,"wall"],[58,13,".",0,"dark part of a room"],[59,13,".",0,"dark part of a room"],[60,13,".",0,"dark part of a room"],[61,13,".",0,"dark part of a room"],[62,13,"+",3,"closed door"],[63,13,"#",7,"corridor"],[73,13,"|",7,"wall"],[74,13,"@",15,"peaceful Hebiwerie"],[75,13,".",7,"floor of a room"],[76,13,".",7,"floor of a room"],[77,13,".",7,"floor of a room"],[78,13,"|",7,"wall"],[2,14,"-",7,"wall"],[3,14,".",7,"doorway"],[4,14,"-",7,"wall"],[5,14,"-",7,"wall"],[6,14,"-",7,"wall"],[7,14,"-",7,"wall"],[8,14,"-",7,"wall"],[9,14,"-",7,"wall"],[10,14,"-",7,"wall"],[11,14,"-",7,"wall"],[12,14,"-",7,"wall"],[13,14,"-",7,"wall"],[28,14,"#",7,"corridor"],[29,14,"|",7,"wall"],[30,14,".",0,"dark part of a room"],[31,14,"{",12,"fountain"],[32,14,"^",6,"dart trap"],[33,14,"|",7,"wall"],[34,14,"#",7,"corridor"],[45,14,"*",11,"a yellow gem (buried)"],[57,14,"|",7,"wall"],[58,14,".",0,"dark part of a room"],[59,14,".",0,"dark part of a room"],[60,14,"(",3,"a chest"],[61,14,".",0,"dark part of a room"],[62,14,"|",7,"wall"],[73,14,"|",7,"wall"],[74,14,"%",11,"a fortune cookie (for sale, 9 zorkmids)"],[75,14,"%",15,"an egg (for sale, 12 zorkmids)"],[76,14,"%",3,"a slime mold (for sale, 23 zorkmids)"],[77,14,"%",3,"a slime mold (for sale, 23 zorkmids)"],[78,14,"|",7,"wall"],[2,15,"|",7,"wall"],[3,15,".",0,"dark part of a room"],[4,15,".",0,"dark part of a room"],[5,15,".",0,"dark part of a room"],[6,15,".",0,"dark part of a room"],[7,15,".",0,"dark part of a room"],[8,15,".",0,"dark part of a room"],[9,15,".",0,"dark part of a room"],[10,15,".",0,"dark part of a room"],[11,15,".",0,"dark part of a room"],[12,15,".",0,"dark part of a room"],[13,15,"+",3,"closed door"],[14,15,"#",7,"corridor"],[15,15,"#",7,"corridor"],[16,15,"#",7,"corridor"],[17,15,"#",7,"corridor"],[18,15,"#",7,"corridor"],[19,15,"`",7,"a boulder"],[20,15,"#",7,"corridor"],[21,15,"#",7,"corridor"],[22,15,"#",7,"corridor"],[23,15,"#",7,"corridor"],[24,15,"#",7,"corridor"],[25,15,"#",7,"corridor"],[26,15,"#",7,"corridor"],[27,15,"#",7,"corridor"],[28,15,"#",7,"corridor"],[29,15,".",7,"doorway"],[30,15,".",0,"dark part of a room"],[31,15,".",0,"dark part of a room"],[32,15,".",0,"dark part of a room"],[33,15,"|",7,"wall"],[34,15,"#",7,"corridor"],[52,15,"$",11,"12 gold pieces embedded in stone"],[57,15,"-",7,"wall"],[58,15,"-",7,"wall"],[59,15,"-",7,"wall"],[60,15,"-",7,"wall"],[61,15,"-",7,"wall"],[62,15,"-",7,"wall"],[73,15,"|",7,"wall"],[74,15,")",3,"a bow (for sale, 80 zorkmids)"],[75,15,"@",15,"human valkyrie called Agnes"],[76,15,"[",3,"a pair of riding boots (for sale, 40 zorkmids)"],[77,15,"%",15,"a clove of garlic (for sale, 9 zorkmids)"],[78,15,"|",7,"wall"],[2,16,"|",7,"wall"],[3,16,".",0,"dark part of a room"],[4,16,".",0,"dark part of a room"],[5,16,".",0,"dark part of a room"],[6,16,".",0,"dark part of a room"],[7,16,".",0,"dark part of a room"],[8,16,".",0,"dark part of a room"],[9,16,".",0,"dark part of a room"],[10,16,".",0,"dark part of a room"],[11,16,".",0,"dark part of a room"],[12,16,".",0,"dark part of a room"],[13,16,"|",7,"wall"],[29,16,"|",7,"wall"],[30,16,".",0,"dark part of a room"],[31,16,".",0,"dark part of a room"],[32,16,".",0,"dark part of a room"],[33,16,".",7,"doorway"],[34,16,"#",7,"corridor"],[73,16,"|",7,"wall"],[74,16,"(",11,"a lamp (for sale, 67 zorkmids)"],[75,16,"f",15,"tame kitten"],[76,16,"(",0,"a blindfold (for sale, 27 zorkmids)"],[77,16,")",7,"a silver saber (for sale, 100 zorkmids)"],[78,16,"|",7,"wall"],[2,17,"|",7,"wall"],[3,17,".",0,"dark part of a room"],[4,17,".",0,"dark part of a room"],[5,17,".",0,"dark part of a room"],[6,17,".",0,"dark part of a room"],[7,17,".",0,"dark part of a room"],[8,17,".",0,"dark part of a room"],[9,17,".",0,"dark part of a room"],[10,17,".",0,"dark part of a room"],[11,17,"{",12,"fountain"],[12,17,".",0,"dark part of a room"],[13,17,"|",7,"wall"],[29,17,"|",7,"wall"],[30,17,".",0,"dark part of a room"],[31,17,".",0,"dark part of a room"],[32,17,"^",7,"rolling boulder trap"],[33,17,"|",7,"wall"],[40,17,"$",11,"42 gold pieces embedded in stone"],[55,17,"$",11,"30 gold pieces embedded in stone"],[73,17,"|",7,"wall"],[74,17,"?",15,"a scroll labeled READ ME (for sale, 80 zorkmids)"],[75,17,"(",6,"a whistle (for sale, 18 zorkmids)"],[76,17,"?",15,"a scroll labeled GNIK SISI VLE (for sale, 107 zorkmids)"],[77,17,"!",7,"a smoky potion (for sale, 267 zorkmids)"],[78,17,"|",7,"wall"],[2,18,"-",7,"wall"],[3,18,"-",7,"wall"],[4,18,"-",7,"wall"],[5,18,"-",7,"wall"],[6,18,"-",7,"wall"],[7,18,"-",7,"wall"],[8,18,"-",7,"wall"],[9,18,"-",7,"wall"],[10,18,"-",7,"wall"],[11,18,"-",7,"wall"],[12,18,"-",7,"wall"],[13,18,"-",7,"wall"],[29,18,"-",7,"wall"],[30,18,"-",7,"wall"],[31,18,"-",7,"wall"],[32,18,"-",7,"wall"],[33,18,"-",7,"wall"],[73,18,"-",7,"wall"],[74,18,"-",7,"wall"],[75,18,"-",7,"wall"],[76,18,"-",7,"wall"],[77,18,"-",7,"wall"],[78,18,"-",7,"wall"]],"level":{"dnum":0,"dlevel":3,"depth":3,"dungeon":"The Dungeons of Doom","desc":"Dlvl:3","long_desc":"level 3, the Dungeons of Doom","known":[]},"overview":["The Dungeons of Doom: levels 1 to 3","   Level 3: <- You are here.","      A general store, many fountains."],"game":{"origin":"new","name":"Agnes","birthday":1794700800,"uuid":"875512af-cadc-478f-8349-e98dfaa763d9","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral","mode":"normal","id":"agnes-1794700800","memoryRestored":false},"menu":null,"awaiting":{"seq":82,"kind":"command","turn":3,"ux":75,"uy":15,"source":"feed"},"underfoot":{"x":75,"y":15,"glyph":3769,"ch":"!","color":6,"desc":"a fizzy potion (for sale, 333 zorkmids)","look":"a potion (a fizzy potion (for sale, 333 zorkmids))"},"route":[[75,15],[74,14],[74,13],[74,12],[74,11],[73,10],[72,9],[71,8],[70,7],[69,7],[68,8],[67,9],[66,10],[65,11],[64,12],[63,13],[62,13],[61,13],[60,12],[59,11],[58,11]]},"menu":{"fixture":"menu-open.json","status":{"title":"Agnes the Evoker","str":"7","dex":"13","con":"12","int":"17","wis":"14","cha":"12","align":"Chaotic","encumbrance":"","gold":"0","power":"4","power_max":"9","xp_level":"1","ac":"9","time":"5","hunger":"","hp":"11","hp_max":"11","level_desc":"Dlvl:1","exp_points":"6"},"conditions":[],"hero":{"x":7,"y":10},"messages":[[1,"Hello Agnes, welcome to NetHack!  You are a chaotic female elven Wizard."],[1,"In what direction? "],[1,"The spell hits the goblin!"],[1,"You kill the goblin!"],[3,"You see here a scroll labeled ASHPD SODALG."],[4,"p - a scroll labeled ASHPD SODALG."],[5,"# "]],"inventory":[["a","a blessed +1 quarterstaff (weapon in hands)","weapons",")",false,true],["b","an uncursed +0 cloak of magic resistance (being worn)","armor","[",true,false],["c","a wand of locking (0:5)","wands","/",false,false],["d","an uncursed ring of sustain ability","rings","=",false,false],["e","an uncursed +1 ring of increase damage","rings","=",false,false],["f","a potion of holy water","potions","!",false,false],["g","an uncursed potion of booze","potions","!",false,false],["h","an uncursed potion of oil","potions","!",false,false],["i","an uncursed scroll of destroy armor","scrolls","?",false,false],["j","an uncursed scroll of magic mapping","scrolls","?",false,false],["k","an uncursed scroll of identify","scrolls","?",false,false],["l","a blessed spellbook of force bolt","spellbooks","+",false,false],["m","an uncursed spellbook of confuse monster","spellbooks","+",false,false],["n","a magic marker (0:22)","tools","(",false,false],["o","an uncursed bell","tools","(",false,false],["p","a scroll labeled ASHPD SODALG","scrolls","?",false,false]],"cells":[[3,4,"-",7,"wall"],[4,4,"-",7,"wall"],[5,4,"-",7,"wall"],[6,4,"-",7,"wall"],[7,4,"-",7,"wall"],[8,4,"-",7,"wall"],[9,4,"-",7,"wall"],[10,4,"-",7,"wall"],[11,4,"-",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",7,"floor of a room"],[5,5,".",7,"floor of a room"],[6,5,".",7,"floor of a room"],[7,5,".",7,"floor of a room"],[8,5,".",7,"floor of a room"],[9,5,".",7,"floor of a room"],[10,5,".",7,"floor of a room"],[11,5,".",7,"doorway"],[3,6,"|",7,"wall"],[4,6,".",7,"floor of a room"],[5,6,".",7,"floor of a room"],[6,6,".",7,"floor of a room"],[7,6,".",7,"floor of a room"],[8,6,".",7,"floor of a room"],[9,6,".",7,"floor of a room"],[10,6,".",7,"floor of a room"],[11,6,"|",7,"wall"],[3,7,"|",7,"wall"],[4,7,".",7,"floor of a room"],[5,7,"{",12,"fountain"],[6,7,".",7,"floor of a room"],[7,7,".",7,"floor of a room"],[8,7,".",7,"floor of a room"],[9,7,".",7,"floor of a room"],[10,7,".",7,"floor of a room"],[11,7,"|",7,"wall"],[3,8,"|",7,"wall"],[4,8,".",7,"floor of a room"],[5,8,".",7,"floor of a room"],[6,8,".",7,"floor of a room"],[7,8,".",7,"floor of a room"],[8,8,".",7,"floor of a room"],[9,8,".",7,"floor of a room"],[10,8,".",7,"floor of a room"],[11,8,"|",7,"wall"],[3,9,"|",7,"wall"],[4,9,".",7,"floor of a room"],[5,9,"<",11,"branch staircase up"],[6,9,".",7,"floor of a room"],[7,9,".",7,"floor of a room"],[8,9,"%",7,"a goblin corpse"],[9,9,".",7,"floor of a room"],[10,9,".",7,"floor of a room"],[11,9,"+",3,"closed door"],[3,10,"|",7,"wall"],[4,10,".",7,"floor of a room"],[5,10,".",7,"floor of a room"],[6,10,"f",15,"tame kitten"],[7,10,"@",15,"elven wizard called Agnes"],[8,10,".",7,"floor of a room"],[9,10,".",7,"floor of a room"],[10,10,"!",7,"a potion"],[11,10,"|",7,"wall"],[3,11,"-",7,"wall"],[4,11,"-",7,"wall"],[5,11,"-",7,"wall"],[6,11,"-",7,"wall"],[7,11,"-",7,"wall"],[8,11,"-",7,"wall"],[9,11,"-",7,"wall"],[10,11,"-",7,"wall"],[11,11,"-",7,"wall"]],"level":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1","long_desc":"level 1, the Dungeons of Doom","known":[]},"overview":["The Dungeons of Doom:","   Level 1: <- You are here.","      A fountain."],"game":{"origin":"new","name":"Agnes","birthday":1794700800,"uuid":"2d25d008-3eb1-45c6-ba90-49dba3ea0952","role":"Wizard","race":"elf","gender":"female","alignment":"chaotic","mode":"normal","id":"Agnes-1794700800","memoryRestored":false},"menu":{"seq":50,"win":5,"how":"one","prompt":"What do you want to name?","pages":1,"items":[{"text":"a monster","ch":"m","page":1,"selectable":true},{"text":"a particular object in inventory","ch":"i","page":1,"selectable":true},{"text":"the type of an object in inventory","ch":"o","page":1,"selectable":true},{"text":"the type of an object upon the floor","ch":"f","page":1,"selectable":true},{"text":"the type of an object on discoveries list","ch":"d","page":1,"selectable":true},{"text":"record an annotation for the current level","ch":"a","page":1,"selectable":true}]},"awaiting":{"seq":51,"kind":"menu","turn":5,"ux":7,"uy":10,"source":"feed"},"underfoot":{"x":7,"y":10,"glyph":3992,"ch":".","color":7,"desc":"floor of a room","look":"a doorway or the floor of a room or the dark part of a room or ice (floor of a room)"}},"quaff":{"fixture":"fountain-quaff-prompt.json","status":{"title":"Agnes the Evoker","str":"7","dex":"13","con":"12","int":"17","wis":"14","cha":"12","align":"Chaotic","encumbrance":"","gold":"0","power":"4","power_max":"9","xp_level":"1","ac":"9","time":"4","hunger":"","hp":"11","hp_max":"11","level_desc":"Dlvl:1","exp_points":"6"},"conditions":[],"hero":{"x":5,"y":7},"messages":[[1,"Hello Agnes, welcome to NetHack!  You are a chaotic female elven Wizard."],[1,"In what direction? "],[1,"The spell hits the goblin!"],[1,"You kill the goblin!"],[4,"Drink from the fountain? [yn] (n) "]],"inventory":[["a","a blessed +1 quarterstaff (weapon in hands)","weapons",")",false,true],["b","an uncursed +0 cloak of magic resistance (being worn)","armor","[",true,false],["c","a wand of locking (0:5)","wands","/",false,false],["d","an uncursed ring of sustain ability","rings","=",false,false],["e","an uncursed +1 ring of increase damage","rings","=",false,false],["f","a potion of holy water","potions","!",false,false],["g","an uncursed potion of booze","potions","!",false,false],["h","an uncursed potion of oil","potions","!",false,false],["i","an uncursed scroll of destroy armor","scrolls","?",false,false],["j","an uncursed scroll of magic mapping","scrolls","?",false,false],["k","an uncursed scroll of identify","scrolls","?",false,false],["l","a blessed spellbook of force bolt","spellbooks","+",false,false],["m","an uncursed spellbook of confuse monster","spellbooks","+",false,false],["n","a magic marker (0:22)","tools","(",false,false],["o","an uncursed bell","tools","(",false,false]],"cells":[[3,4,"-",7,"wall"],[4,4,"-",7,"wall"],[5,4,"-",7,"wall"],[6,4,"-",7,"wall"],[7,4,"-",7,"wall"],[8,4,"-",7,"wall"],[9,4,"-",7,"wall"],[10,4,"-",7,"wall"],[11,4,"-",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",7,"floor of a room"],[5,5,".",7,"floor of a room"],[6,5,".",7,"floor of a room"],[7,5,".",7,"floor of a room"],[8,5,".",7,"floor of a room"],[9,5,".",7,"floor of a room"],[10,5,".",7,"floor of a room"],[11,5,".",7,"doorway"],[3,6,"|",7,"wall"],[4,6,".",7,"floor of a room"],[5,6,".",7,"floor of a room"],[6,6,"f",15,"tame kitten"],[7,6,".",7,"floor of a room"],[8,6,".",7,"floor of a room"],[9,6,".",7,"floor of a room"],[10,6,".",7,"floor of a room"],[11,6,"|",7,"wall"],[3,7,"|",7,"wall"],[4,7,".",7,"floor of a room"],[5,7,"@",15,"elven wizard called Agnes"],[6,7,".",7,"floor of a room"],[7,7,".",7,"floor of a room"],[8,7,".",7,"floor of a room"],[9,7,".",7,"floor of a room"],[10,7,".",7,"floor of a room"],[11,7,"|",7,"wall"],[3,8,"|",7,"wall"],[4,8,".",7,"floor of a room"],[5,8,".",7,"floor of a room"],[6,8,".",7,"floor of a room"],[7,8,".",7,"floor of a room"],[8,8,".",7,"floor of a room"],[9,8,".",7,"floor of a room"],[10,8,".",7,"floor of a room"],[11,8,"|",7,"wall"],[3,9,"|",7,"wall"],[4,9,".",7,"floor of a room"],[5,9,"<",11,"branch staircase up"],[6,9,".",7,"floor of a room"],[7,9,".",7,"floor of a room"],[8,9,"%",7,"a goblin corpse"],[9,9,".",7,"floor of a room"],[10,9,".",7,"floor of a room"],[11,9,"+",3,"closed door"],[3,10,"|",7,"wall"],[4,10,".",7,"floor of a room"],[5,10,".",7,"floor of a room"],[6,10,".",7,"floor of a room"],[7,10,"?",15,"a scroll labeled ASHPD SODALG"],[8,10,".",7,"floor of a room"],[9,10,".",7,"floor of a room"],[10,10,"!",7,"a potion"],[11,10,"|",7,"wall"],[3,11,"-",7,"wall"],[4,11,"-",7,"wall"],[5,11,"-",7,"wall"],[6,11,"-",7,"wall"],[7,11,"-",7,"wall"],[8,11,"-",7,"wall"],[9,11,"-",7,"wall"],[10,11,"-",7,"wall"],[11,11,"-",7,"wall"]],"level":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1","long_desc":"level 1, the Dungeons of Doom","known":[]},"overview":["The Dungeons of Doom:","   Level 1: <- You are here.","      A fountain."],"game":{"origin":"new","name":"Agnes","birthday":1794700800,"uuid":"ab0024b6-b435-4626-956b-11e6b980cc1f","role":"Wizard","race":"elf","gender":"female","alignment":"chaotic","mode":"normal","id":"Agnes-1794700800","memoryRestored":false},"menu":null,"awaiting":{"seq":42,"kind":"key","turn":4,"ux":5,"uy":7,"source":"feed"},"underfoot":{"x":5,"y":7,"glyph":4014,"ch":"{","color":12,"desc":"fountain","look":"a sink or a fountain (fountain)"}},"more":{"fixture":"more-prompt.json","status":{"title":"Agnes the Evoker","str":"7","dex":"13","con":"12","int":"17","wis":"14","cha":"12","align":"Chaotic","encumbrance":"","gold":"0","power":"4","power_max":"9","xp_level":"1","ac":"9","time":"6","hunger":"","hp":"11","hp_max":"11","level_desc":"Dlvl:1","exp_points":"6"},"conditions":[],"hero":{"x":6,"y":8},"messages":[[1,"Hello Agnes, welcome to NetHack!  You are a chaotic female elven Wizard."],[1,"In what direction? "],[1,"The spell hits the goblin!"],[1,"You kill the goblin!"],[3,"# "],[3,"Are you sure you want to pray? [yn] (n) "],[3,"You begin praying to Anhur."],[6,"You finish your prayer."],[6,"The voice of Anhur rings out: "]],"inventory":[["a","a blessed +1 quarterstaff (weapon in hands)","weapons",")",false,true],["b","an uncursed +0 cloak of magic resistance (being worn)","armor","[",true,false],["c","a wand of locking (0:5)","wands","/",false,false],["d","an uncursed ring of sustain ability","rings","=",false,false],["e","an uncursed +1 ring of increase damage","rings","=",false,false],["f","a potion of holy water","potions","!",false,false],["g","an uncursed potion of booze","potions","!",false,false],["h","an uncursed potion of oil","potions","!",false,false],["i","an uncursed scroll of destroy armor","scrolls","?",false,false],["j","an uncursed scroll of magic mapping","scrolls","?",false,false],["k","an uncursed scroll of identify","scrolls","?",false,false],["l","a blessed spellbook of force bolt","spellbooks","+",false,false],["m","an uncursed spellbook of confuse monster","spellbooks","+",false,false],["n","a magic marker (0:22)","tools","(",false,false],["o","an uncursed bell","tools","(",false,false]],"cells":[[3,4,"-",7,"wall"],[4,4,"-",7,"wall"],[5,4,"-",7,"wall"],[6,4,"-",7,"wall"],[7,4,"-",7,"wall"],[8,4,"-",7,"wall"],[9,4,"-",7,"wall"],[10,4,"-",7,"wall"],[11,4,"-",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",7,"floor of a room"],[5,5,".",7,"floor of a room"],[6,5,".",7,"floor of a room"],[7,5,".",7,"floor of a room"],[8,5,".",7,"floor of a room"],[9,5,".",7,"floor of a room"],[10,5,".",7,"floor of a room"],[11,5,".",7,"doorway"],[3,6,"|",7,"wall"],[4,6,".",7,"floor of a room"],[5,6,".",7,"floor of a room"],[6,6,".",7,"floor of a room"],[7,6,".",7,"floor of a room"],[8,6,".",7,"floor of a room"],[9,6,".",7,"floor of a room"],[10,6,".",7,"floor of a room"],[11,6,"|",7,"wall"],[3,7,"|",7,"wall"],[4,7,".",7,"floor of a room"],[5,7,"{",12,"fountain"],[6,7,"f",15,"tame kitten"],[7,7,".",7,"floor of a room"],[8,7,".",7,"floor of a room"],[9,7,".",7,"floor of a room"],[10,7,".",7,"floor of a room"],[11,7,"|",7,"wall"],[3,8,"|",7,"wall"],[4,8,".",7,"floor of a room"],[5,8,".",7,"floor of a room"],[6,8,"@",15,"elven wizard called Agnes"],[7,8,".",7,"floor of a room"],[8,8,".",7,"floor of a room"],[9,8,".",7,"floor of a room"],[10,8,".",7,"floor of a room"],[11,8,"|",7,"wall"],[3,9,"|",7,"wall"],[4,9,".",7,"floor of a room"],[5,9,"<",11,"branch staircase up"],[6,9,".",7,"floor of a room"],[7,9,".",7,"floor of a room"],[8,9,"%",7,"a goblin corpse"],[9,9,".",7,"floor of a room"],[10,9,".",7,"floor of a room"],[11,9,"+",3,"closed door"],[3,10,"|",7,"wall"],[4,10,".",7,"floor of a room"],[5,10,".",7,"floor of a room"],[6,10,".",7,"floor of a room"],[7,10,"?",15,"a scroll labeled ASHPD SODALG"],[8,10,".",7,"floor of a room"],[9,10,".",7,"floor of a room"],[10,10,"!",7,"a potion"],[11,10,"|",7,"wall"],[3,11,"-",7,"wall"],[4,11,"-",7,"wall"],[5,11,"-",7,"wall"],[6,11,"-",7,"wall"],[7,11,"-",7,"wall"],[8,11,"-",7,"wall"],[9,11,"-",7,"wall"],[10,11,"-",7,"wall"],[11,11,"-",7,"wall"]],"level":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1","long_desc":"level 1, the Dungeons of Doom","known":[]},"overview":["The Dungeons of Doom:","   Level 1: <- You are here.","      A fountain."],"game":{"origin":"new","name":"Agnes","birthday":1794700800,"uuid":"da71d9ec-7785-4233-a081-98b5ae8d4bc8","role":"Wizard","race":"elf","gender":"female","alignment":"chaotic","mode":"normal","id":"Agnes-1794700800","memoryRestored":false},"menu":null,"awaiting":{"seq":41,"kind":"more","turn":6,"ux":6,"uy":8,"prompt":"You begin praying to Anhur.  You finish your prayer.","source":"screen"},"underfoot":{"x":6,"y":8,"glyph":3992,"ch":".","color":7,"desc":"floor of a room","look":"a doorway or the floor of a room or the dark part of a room or ice (floor of a room)"},"moreText":"You begin praying to Anhur.  You finish your prayer."},"deep":{"fixture":"deep-dlvl4.json","status":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"11","hunger":"","hp":"15","hp_max":"16","level_desc":"Dlvl:4","exp_points":"0"},"conditions":[],"hero":{"x":67,"y":6},"messages":[[1,"Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie."]],"inventory":[["a","a blessed +1 spear (weapon in right hand)","weapons",")",false,true],["b","a +0 dagger (alternate weapon; not wielded)","weapons",")",false,false],["c","an uncursed +3 small shield (being worn)","armor","[",true,false],["d","an uncursed food ration","food","%",false,false]],"cells":[[52,1,"#",7,"corridor"],[17,2,"-",7,"wall"],[18,2,"-",7,"wall"],[19,2,"-",7,"wall"],[20,2,"-",7,"wall"],[21,2,"-",7,"wall"],[22,2,"-",7,"wall"],[47,2,"-",7,"wall"],[48,2,"-",7,"wall"],[49,2,"-",7,"wall"],[50,2,"-",7,"wall"],[51,2,"-",7,"wall"],[52,2,"-",7,"wall"],[53,2,"-",7,"wall"],[66,2,"^",5,"teleportation trap"],[16,3,"#",7,"corridor"],[17,3,".",7,"doorway"],[18,3,".",0,"dark part of a room"],[19,3,".",0,"dark part of a room"],[20,3,".",0,"dark part of a room"],[21,3,".",0,"dark part of a room"],[22,3,"+",3,"closed door"],[23,3,"#",7,"corridor"],[24,3,"#",7,"corridor"],[25,3,"#",7,"corridor"],[26,3,"#",7,"corridor"],[27,3,"#",7,"corridor"],[28,3,"#",7,"corridor"],[29,3,"#",7,"corridor"],[30,3,"#",7,"corridor"],[31,3,"#",7,"corridor"],[32,3,"#",7,"corridor"],[33,3,"#",7,"corridor"],[34,3,"#",7,"corridor"],[35,3,"#",7,"corridor"],[47,3,"|",7,"wall"],[48,3,".",0,"dark part of a room"],[49,3,".",0,"dark part of a room"],[50,3,".",0,"dark part of a room"],[51,3,".",0,"dark part of a room"],[52,3,".",0,"dark part of a room"],[53,3,"|",7,"wall"],[62,3,"-",7,"wall"],[63,3,"-",7,"wall"],[64,3,"-",7,"wall"],[65,3,"-",7,"wall"],[66,3,"-",7,"wall"],[67,3,"-",7,"wall"],[68,3,"-",7,"wall"],[69,3,"-",7,"wall"],[70,3,"-",7,"wall"],[16,4,"#",7,"corridor"],[17,4,"|",7,"wall"],[18,4,".",0,"dark part of a room"],[19,4,".",0,"dark part of a room"],[20,4,".",0,"dark part of a room"],[21,4,".",0,"dark part of a room"],[22,4,"|",7,"wall"],[47,4,"|",7,"wall"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",7,"doorway"],[54,4,"#",7,"corridor"],[62,4,"|",7,"wall"],[63,4,".",7,"floor of a room"],[64,4,".",7,"floor of a room"],[65,4,".",7,"floor of a room"],[66,4,"`",12,"engraving"],[67,4,".",7,"floor of a room"],[68,4,".",7,"floor of a room"],[69,4,".",7,"floor of a room"],[70,4,"|",7,"wall"],[16,5,"#",7,"corridor"],[17,5,"|",7,"wall"],[18,5,".",0,"dark part of a room"],[19,5,".",0,"dark part of a room"],[20,5,".",0,"dark part of a room"],[21,5,".",0,"dark part of a room"],[22,5,".",7,"doorway"],[23,5,"#",7,"corridor"],[24,5,"#",7,"corridor"],[25,5,"#",7,"corridor"],[30,5,"-",7,"wall"],[31,5,"-",7,"wall"],[32,5,"-",7,"wall"],[33,5,"-",7,"wall"],[34,5,"-",7,"wall"],[35,5,"-",7,"wall"],[36,5,"-",7,"wall"],[37,5,"-",7,"wall"],[38,5,"#",7,"corridor"],[39,5,"#",7,"corridor"],[40,5,"#",7,"corridor"],[41,5,"#",7,"corridor"],[42,5,"#",7,"corridor"],[43,5,"#",7,"corridor"],[44,5,"#",7,"corridor"],[45,5,"#",7,"corridor"],[46,5,"#",7,"corridor"],[47,5,".",7,"doorway"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,"|",7,"wall"],[54,5,"#",7,"corridor"],[62,5,"|",7,"wall"],[63,5,".",7,"floor of a room"],[64,5,".",7,"floor of a room"],[65,5,".",7,"floor of a room"],[66,5,".",7,"floor of a room"],[67,5,".",7,"floor of a room"],[68,5,".",7,"floor of a room"],[69,5,".",7,"floor of a room"],[70,5,"|",7,"wall"],[15,6,"#",7,"corridor"],[16,6,"#",7,"corridor"],[17,6,"-",7,"wall"],[18,6,"-",7,"wall"],[19,6,"-",7,"wall"],[20,6,"-",7,"wall"],[21,6,"-",7,"wall"],[22,6,"-",7,"wall"],[25,6,"#",7,"corridor"],[26,6,"#",7,"corridor"],[27,6,"#",7,"corridor"],[28,6,"#",7,"corridor"],[29,6,"#",7,"corridor"],[30,6,".",7,"doorway"],[31,6,".",0,"dark part of a room"],[32,6,".",0,"dark part of a room"],[33,6,".",0,"dark part of a room"],[34,6,".",0,"dark part of a room"],[35,6,".",0,"dark part of a room"],[36,6,".",0,"dark part of a room"],[37,6,"|",7,"wall"],[38,6,"#",7,"corridor"],[47,6,"|",7,"wall"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",7,"doorway"],[54,6,"#",7,"corridor"],[55,6,"#",7,"corridor"],[56,6,"#",7,"corridor"],[57,6,"#",7,"corridor"],[58,6,"#",7,"corridor"],[62,6,"|",7,"wall"],[63,6,".",7,"floor of a room"],[64,6,".",7,"floor of a room"],[65,6,".",7,"floor of a room"],[66,6,".",7,"floor of a room"],[67,6,"@",15,"human valkyrie called Agnes"],[68,6,".",7,"floor of a room"],[69,6,".",7,"floor of a room"],[70,6,"|",7,"wall"],[14,7,"#",7,"corridor"],[15,7,"#",7,"corridor"],[18,7,"#",7,"corridor"],[19,7,"#",7,"corridor"],[30,7,"|",7,"wall"],[31,7,".",0,"dark part of a room"],[32,7,".",0,"dark part of a room"],[33,7,".",0,"dark part of a room"],[34,7,".",0,"dark part of a room"],[35,7,".",0,"dark part of a room"],[36,7,".",0,"dark part of a room"],[37,7,"|",7,"wall"],[38,7,"#",7,"corridor"],[47,7,"|",7,"wall"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,".",0,"dark part of a room"],[51,7,".",0,"dark part of a room"],[52,7,".",0,"dark part of a room"],[53,7,"|",7,"wall"],[54,7,"#",7,"corridor"],[58,7,"#",7,"corridor"],[59,7,"#",7,"corridor"],[60,7,"#",7,"corridor"],[61,7,"#",7,"corridor"],[62,7,"+",3,"closed door"],[63,7,".",7,"floor of a room"],[64,7,".",7,"floor of a room"],[65,7,".",7,"floor of a room"],[66,7,".",7,"floor of a room"],[67,7,".",7,"floor of a room"],[68,7,".",7,"floor of a room"],[69,7,".",7,"floor of a room"],[70,7,"|",7,"wall"],[6,8,"-",7,"wall"],[7,8,"-",7,"wall"],[8,8,"-",7,"wall"],[9,8,"-",7,"wall"],[10,8,"-",7,"wall"],[11,8,"-",7,"wall"],[12,8,"-",7,"wall"],[14,8,"#",7,"corridor"],[19,8,"#",7,"corridor"],[28,8,"#",7,"corridor"],[29,8,"#",7,"corridor"],[30,8,"|",7,"wall"],[31,8,".",0,"dark part of a room"],[32,8,".",0,"dark part of a room"],[33,8,".",0,"dark part of a room"],[34,8,".",0,"dark part of a room"],[35,8,".",0,"dark part of a room"],[36,8,".",0,"dark part of a room"],[37,8,".",7,"doorway"],[38,8,"#",7,"corridor"],[47,8,"|",7,"wall"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",0,"dark part of a room"],[53,8,"|",7,"wall"],[54,8,"#",7,"corridor"],[62,8,"|",7,"wall"],[63,8,".",7,"floor of a room"],[64,8,".",7,"floor of a room"],[65,8,".",7,"floor of a room"],[66,8,".",7,"floor of a room"],[67,8,".",7,"floor of a room"],[68,8,".",7,"floor of a room"],[69,8,".",7,"floor of a room"],[70,8,"|",7,"wall"],[6,9,"|",7,"wall"],[7,9,".",0,"dark part of a room"],[8,9,".",0,"dark part of a room"],[9,9,".",0,"dark part of a room"],[10,9,".",0,"dark part of a room"],[11,9,".",0,"dark part of a room"],[12,9,"|",7,"wall"],[14,9,"#",7,"corridor"],[19,9,"#",7,"corridor"],[20,9,"#",7,"corridor"],[21,9,"#",7,"corridor"],[28,9,"#",7,"corridor"],[29,9,"#",7,"corridor"],[30,9,"-",7,"wall"],[31,9,"-",7,"wall"],[32,9,"-",7,"wall"],[33,9,"-",7,"wall"],[34,9,"-",7,"wall"],[35,9,"-",7,"wall"],[36,9,"-",7,"wall"],[37,9,"-",7,"wall"],[38,9,"#",7,"corridor"],[47,9,"-",7,"wall"],[48,9,".",7,"doorway"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[53,9,"-",7,"wall"],[54,9,"#",7,"corridor"],[62,9,"-",7,"wall"],[63,9,"-",7,"wall"],[64,9,"-",7,"wall"],[65,9,".",7,"doorway"],[66,9,"-",7,"wall"],[67,9,"-",7,"wall"],[68,9,"-",7,"wall"],[69,9,"-",7,"wall"],[70,9,"-",7,"wall"],[6,10,"|",7,"wall"],[7,10,".",0,"dark part of a room"],[8,10,".",0,"dark part of a room"],[9,10,".",0,"dark part of a room"],[10,10,".",0,"dark part of a room"],[11,10,".",0,"dark part of a room"],[12,10,"|",7,"wall"],[14,10,"#",7,"corridor"],[21,10,"#",7,"corridor"],[29,10,"#",7,"corridor"],[30,10,"#",7,"corridor"],[31,10,"#",7,"corridor"],[32,10,"#",7,"corridor"],[33,10,"#",7,"corridor"],[34,10,"#",7,"corridor"],[35,10,"#",7,"corridor"],[36,10,"#",7,"corridor"],[37,10,"#",7,"corridor"],[38,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[45,10,"#",7,"corridor"],[46,10,"#",7,"corridor"],[47,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[50,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[65,10,"#",7,"corridor"],[6,11,"|",7,"wall"],[7,11,".",0,"dark part of a room"],[8,11,".",0,"dark part of a room"],[9,11,".",0,"dark part of a room"],[10,11,".",0,"dark part of a room"],[11,11,".",0,"dark part of a room"],[12,11,"|",7,"wall"],[14,11,"#",7,"corridor"],[21,11,"#",7,"corridor"],[22,11,"#",7,"corridor"],[23,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[38,11,"#",7,"corridor"],[43,11,"#",7,"corridor"],[44,11,"#",7,"corridor"],[54,11,"#",7,"corridor"],[65,11,"#",7,"corridor"],[6,12,"|",7,"wall"],[7,12,".",0,"dark part of a room"],[8,12,".",0,"dark part of a room"],[9,12,".",0,"dark part of a room"],[10,12,".",0,"dark part of a room"],[11,12,".",0,"dark part of a room"],[12,12,"|",7,"wall"],[13,12,"#",7,"corridor"],[14,12,"#",7,"corridor"],[23,12,"#",7,"corridor"],[29,12,"#",7,"corridor"],[38,12,"#",7,"corridor"],[40,12,"#",7,"corridor"],[41,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[54,12,"#",7,"corridor"],[59,12,"#",7,"corridor"],[60,12,"#",7,"corridor"],[61,12,"#",7,"corridor"],[62,12,"#",7,"corridor"],[63,12,"#",7,"corridor"],[64,12,"#",7,"corridor"],[65,12,"#",7,"corridor"],[6,13,"|",7,"wall"],[7,13,".",0,"dark part of a room"],[8,13,".",0,"dark part of a room"],[9,13,".",0,"dark part of a room"],[10,13,".",0,"dark part of a room"],[11,13,".",0,"dark part of a room"],[12,13,"+",3,"closed door"],[13,13,"#",12,"engraving"],[23,13,"#",7,"corridor"],[24,13,"#",7,"corridor"],[25,13,"#",7,"corridor"],[26,13,"#",7,"corridor"],[28,13,"#",7,"corridor"],[29,13,"#",7,"corridor"],[36,13,"#",7,"corridor"],[37,13,"#",7,"corridor"],[38,13,"#",7,"corridor"],[40,13,"#",7,"corridor"],[54,13,"#",7,"corridor"],[55,13,"#",7,"corridor"],[57,13,"-",7,"wall"],[58,13,"-",7,"wall"],[59,13,".",7,"doorway"],[60,13,"-",7,"wall"],[61,13,"-",7,"wall"],[62,13,"-",7,"wall"],[63,13,"-",7,"wall"],[64,13,"-",7,"wall"],[65,13,"-",7,"wall"],[6,14,"-",7,"wall"],[7,14,"-",7,"wall"],[8,14,"-",7,"wall"],[9,14,"-",7,"wall"],[10,14,"-",7,"wall"],[11,14,"-",7,"wall"],[12,14,"-",7,"wall"],[26,14,"#",7,"corridor"],[28,14,"#",7,"corridor"],[36,14,"#",7,"corridor"],[37,14,"-",7,"wall"],[38,14,"-",7,"wall"],[39,14,"-",7,"wall"],[40,14,"|",3,"open door"],[41,14,"-",7,"wall"],[42,14,"-",7,"wall"],[43,14,"-",7,"wall"],[44,14,"-",7,"wall"],[45,14,"-",7,"wall"],[46,14,"-",7,"wall"],[47,14,"-",7,"wall"],[48,14,"-",7,"wall"],[49,14,"-",7,"wall"],[50,14,"-",7,"wall"],[55,14,"#",7,"corridor"],[56,14,"#",7,"corridor"],[57,14,"|",7,"wall"],[58,14,".",0,"dark part of a room"],[59,14,".",0,"dark part of a room"],[60,14,".",0,"dark part of a room"],[61,14,".",0,"dark part of a room"],[62,14,".",0,"dark part of a room"],[63,14,".",0,"dark part of a room"],[64,14,".",0,"dark part of a room"],[65,14,"|",7,"wall"],[71,14,"-",7,"wall"],[72,14,"-",7,"wall"],[73,14,"-",7,"wall"],[74,14,"-",7,"wall"],[26,15,"#",7,"corridor"],[28,15,"#",7,"corridor"],[36,15,"#",7,"corridor"],[37,15,".",7,"doorway"],[38,15,".",0,"dark part of a room"],[39,15,".",0,"dark part of a room"],[40,15,".",0,"dark part of a room"],[41,15,".",0,"dark part of a room"],[42,15,".",0,"dark part of a room"],[43,15,".",0,"dark part of a room"],[44,15,".",0,"dark part of a room"],[45,15,".",0,"dark part of a room"],[46,15,".",0,"dark part of a room"],[47,15,".",0,"dark part of a room"],[48,15,".",0,"dark part of a room"],[49,15,".",0,"dark part of a room"],[50,15,"+",3,"closed door"],[51,15,"#",7,"corridor"],[52,15,"#",7,"corridor"],[53,15,"#",7,"corridor"],[54,15,"#",7,"corridor"],[55,15,"#",7,"corridor"],[56,15,"#",7,"corridor"],[57,15,"|",7,"wall"],[58,15,".",0,"dark part of a room"],[59,15,".",0,"dark part of a room"],[60,15,".",0,"dark part of a room"],[61,15,".",0,"dark part of a room"],[62,15,".",0,"dark part of a room"],[63,15,".",0,"dark part of a room"],[64,15,".",0,"dark part of a room"],[65,15,"|",7,"wall"],[71,15,"|",7,"wall"],[72,15,".",0,"dark part of a room"],[73,15,".",0,"dark part of a room"],[74,15,"|",7,"wall"],[19,16,"-",7,"wall"],[20,16,"-",7,"wall"],[21,16,"-",7,"wall"],[22,16,"-",7,"wall"],[23,16,"-",7,"wall"],[24,16,"-",7,"wall"],[25,16,"-",7,"wall"],[26,16,"+",3,"closed door"],[27,16,"-",7,"wall"],[28,16,"#",7,"corridor"],[37,16,"|",7,"wall"],[38,16,".",0,"dark part of a room"],[39,16,".",0,"dark part of a room"],[40,16,".",0,"dark part of a room"],[41,16,".",0,"dark part of a room"],[42,16,".",0,"dark part of a room"],[43,16,".",0,"dark part of a room"],[44,16,".",0,"dark part of a room"],[45,16,".",0,"dark part of a room"],[46,16,".",0,"dark part of a room"],[47,16,".",0,"dark part of a room"],[48,16,".",0,"dark part of a room"],[49,16,".",0,"dark part of a room"],[50,16,"|",7,"wall"],[56,16,"#",7,"corridor"],[57,16,"+",3,"closed door"],[58,16,".",0,"dark part of a room"],[59,16,".",0,"dark part of a room"],[60,16,".",0,"dark part of a room"],[61,16,".",0,"dark part of a room"],[62,16,".",0,"dark part of a room"],[63,16,".",0,"dark part of a room"],[64,16,".",0,"dark part of a room"],[65,16,"|",7,"wall"],[71,16,"|",7,"wall"],[72,16,".",0,"dark part of a room"],[73,16,".",0,"dark part of a room"],[74,16,"|",7,"wall"],[19,17,"|",7,"wall"],[20,17,".",0,"dark part of a room"],[21,17,".",0,"dark part of a room"],[22,17,".",0,"dark part of a room"],[23,17,".",0,"dark part of a room"],[24,17,".",0,"dark part of a room"],[25,17,".",0,"dark part of a room"],[26,17,".",0,"dark part of a room"],[27,17,".",7,"doorway"],[28,17,"#",7,"corridor"],[37,17,"|",7,"wall"],[38,17,".",0,"dark part of a room"],[39,17,".",0,"dark part of a room"],[40,17,".",0,"dark part of a room"],[41,17,".",0,"dark part of a room"],[42,17,".",0,"dark part of a room"],[43,17,".",0,"dark part of a room"],[44,17,".",0,"dark part of a room"],[45,17,".",0,"dark part of a room"],[46,17,".",0,"dark part of a room"],[47,17,".",0,"dark part of a room"],[48,17,".",0,"dark part of a room"],[49,17,".",0,"dark part of a room"],[50,17,"|",7,"wall"],[57,17,"-",7,"wall"],[58,17,"-",7,"wall"],[59,17,"-",7,"wall"],[60,17,"-",7,"wall"],[61,17,"-",7,"wall"],[62,17,"-",7,"wall"],[63,17,"-",7,"wall"],[64,17,"-",7,"wall"],[65,17,"-",7,"wall"],[71,17,"-",7,"wall"],[72,17,"-",7,"wall"],[73,17,"-",7,"wall"],[74,17,"-",7,"wall"],[19,18,"|",7,"wall"],[20,18,">",7,"staircase down"],[21,18,".",0,"dark part of a room"],[22,18,".",0,"dark part of a room"],[23,18,".",0,"dark part of a room"],[24,18,".",0,"dark part of a room"],[25,18,".",0,"dark part of a room"],[26,18,".",0,"dark part of a room"],[27,18,"|",7,"wall"],[37,18,"-",7,"wall"],[38,18,"-",7,"wall"],[39,18,"-",7,"wall"],[40,18,"-",7,"wall"],[41,18,"-",7,"wall"],[42,18,"-",7,"wall"],[43,18,"-",7,"wall"],[44,18,"-",7,"wall"],[45,18,"-",7,"wall"],[46,18,"-",7,"wall"],[47,18,"-",7,"wall"],[48,18,"-",7,"wall"],[49,18,"-",7,"wall"],[50,18,"-",7,"wall"],[64,18,"#",7,"corridor"],[19,19,"-",7,"wall"],[20,19,"-",7,"wall"],[21,19,"-",7,"wall"],[22,19,"-",7,"wall"],[23,19,"-",7,"wall"],[24,19,"-",7,"wall"],[25,19,"-",7,"wall"],[26,19,"-",7,"wall"],[27,19,"-",7,"wall"]],"level":{"dnum":0,"dlevel":4,"depth":4,"dungeon":"The Dungeons of Doom","desc":"Dlvl:4","long_desc":"level 4, the Dungeons of Doom","known":[]},"overview":["The Dungeons of Doom: levels 1 to 4","   Level 2:","      Stairs down to The Gnomish Mines.","   Level 3:","      A general store.","   Level 4: <- You are here.","      A scroll shop.","The Gnomish Mines:","   Level 3:"],"game":{"origin":"new","name":"Agnes","birthday":1794700800,"uuid":"84b4b51b-0c4e-48f6-ad52-cf67c4e0bb4d","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral","mode":"normal","id":"agnes-1794700800","memoryRestored":false},"menu":null,"awaiting":{"seq":112,"kind":"command","turn":11,"ux":67,"uy":6,"source":"feed"},"underfoot":{"x":67,"y":6,"glyph":3998,"ch":"<","color":7,"desc":"staircase up","look":"a staircase up or a ladder up or a branch staircase up or a branch ladder up (staircase up)"},"levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1","long_desc":"level 1, the Dungeons of Doom","known":[]},"cells":[[45,2,"-",7,"wall"],[46,2,"-",7,"wall"],[47,2,"-",7,"wall"],[48,2,"-",7,"wall"],[49,2,"-",7,"wall"],[50,2,"-",7,"wall"],[51,2,"-",7,"wall"],[52,2,"-",7,"wall"],[53,2,"-",7,"wall"],[54,2,"-",7,"wall"],[62,2,"-",7,"wall"],[63,2,"-",7,"wall"],[64,2,"-",7,"wall"],[65,2,"-",7,"wall"],[66,2,"-",7,"wall"],[67,2,"-",7,"wall"],[68,2,"-",7,"wall"],[69,2,"-",7,"wall"],[70,2,"-",7,"wall"],[71,2,"-",7,"wall"],[72,2,"-",7,"wall"],[45,3,"|",7,"wall"],[46,3,".",0,"dark part of a room"],[47,3,".",0,"dark part of a room"],[48,3,".",0,"dark part of a room"],[49,3,".",0,"dark part of a room"],[50,3,".",0,"dark part of a room"],[51,3,".",0,"dark part of a room"],[52,3,".",0,"dark part of a room"],[53,3,".",0,"dark part of a room"],[54,3,"|",7,"wall"],[61,3,"#",7,"corridor"],[62,3,".",7,"doorway"],[63,3,".",7,"floor of a room"],[64,3,".",7,"floor of a room"],[65,3,".",7,"floor of a room"],[66,3,".",7,"floor of a room"],[67,3,">",7,"staircase down"],[68,3,".",7,"floor of a room"],[69,3,".",7,"floor of a room"],[70,3,".",7,"floor of a room"],[71,3,".",7,"floor of a room"],[72,3,"|",7,"wall"],[35,4,"-",7,"wall"],[36,4,"-",7,"wall"],[37,4,"-",7,"wall"],[38,4,"-",7,"wall"],[39,4,"-",7,"wall"],[40,4,"-",7,"wall"],[45,4,"|",7,"wall"],[46,4,".",0,"dark part of a room"],[47,4,".",0,"dark part of a room"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",0,"dark part of a room"],[54,4,"|",7,"wall"],[61,4,"#",7,"corridor"],[62,4,"|",7,"wall"],[63,4,".",7,"floor of a room"],[64,4,".",7,"floor of a room"],[65,4,".",7,"floor of a room"],[66,4,".",7,"floor of a room"],[67,4,".",7,"floor of a room"],[68,4,".",7,"floor of a room"],[69,4,".",7,"floor of a room"],[70,4,".",7,"floor of a room"],[71,4,".",7,"floor of a room"],[72,4,"|",7,"wall"],[35,5,"|",7,"wall"],[36,5,".",0,"dark part of a room"],[37,5,".",0,"dark part of a room"],[38,5,".",0,"dark part of a room"],[39,5,".",0,"dark part of a room"],[40,5,"|",7,"wall"],[45,5,"|",7,"wall"],[46,5,".",0,"dark part of a room"],[47,5,".",0,"dark part of a room"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,".",0,"dark part of a room"],[54,5,"|",7,"wall"],[60,5,"#",7,"corridor"],[61,5,"#",7,"corridor"],[62,5,".",7,"doorway"],[63,5,".",7,"floor of a room"],[64,5,".",7,"floor of a room"],[65,5,".",7,"floor of a room"],[66,5,".",7,"floor of a room"],[67,5,".",7,"floor of a room"],[68,5,".",7,"floor of a room"],[69,5,".",7,"floor of a room"],[70,5,".",7,"floor of a room"],[71,5,".",7,"floor of a room"],[72,5,"|",7,"wall"],[35,6,"|",7,"wall"],[36,6,".",0,"dark part of a room"],[37,6,".",0,"dark part of a room"],[38,6,".",0,"dark part of a room"],[39,6,".",0,"dark part of a room"],[40,6,".",7,"doorway"],[41,6,"#",7,"corridor"],[45,6,"|",7,"wall"],[46,6,".",0,"dark part of a room"],[47,6,".",0,"dark part of a room"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",0,"dark part of a room"],[54,6,"|",7,"wall"],[59,6,"#",7,"corridor"],[60,6,"#",7,"corridor"],[61,6,"#",7,"corridor"],[62,6,"-",7,"wall"],[63,6,"-",7,"wall"],[64,6,"-",7,"wall"],[65,6,"-",7,"wall"],[66,6,"-",7,"wall"],[67,6,".",7,"doorway"],[68,6,"-",7,"wall"],[69,6,"-",7,"wall"],[70,6,"-",7,"wall"],[71,6,"-",7,"wall"],[72,6,"-",7,"wall"],[32,7,"#",7,"corridor"],[33,7,"#",7,"corridor"],[34,7,"#",7,"corridor"],[35,7,".",7,"doorway"],[36,7,".",0,"dark part of a room"],[37,7,".",0,"dark part of a room"],[38,7,".",0,"dark part of a room"],[39,7,".",0,"dark part of a room"],[40,7,"|",7,"wall"],[41,7,"#",7,"corridor"],[45,7,"|",7,"wall"],[46,7,".",0,"dark part of a room"],[47,7,".",0,"dark part of a room"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,"`",12,"engraving"],[51,7,".",0,"dark part of a room"],[52,7,".",0,"dark part of a room"],[53,7,".",0,"dark part of a room"],[54,7,".",7,"doorway"],[55,7,"#",7,"corridor"],[59,7,"#",7,"corridor"],[60,7,"#",7,"corridor"],[61,7,"#",7,"corridor"],[67,7,"#",7,"corridor"],[31,8,"#",7,"corridor"],[32,8,"#",7,"corridor"],[35,8,"-",7,"wall"],[36,8,"-",7,"wall"],[37,8,"-",7,"wall"],[38,8,"-",7,"wall"],[39,8,"-",7,"wall"],[40,8,"-",7,"wall"],[41,8,"#",7,"corridor"],[42,8,"#",7,"corridor"],[43,8,"#",7,"corridor"],[44,8,"#",7,"corridor"],[45,8,".",7,"doorway"],[46,8,".",0,"dark part of a room"],[47,8,".",0,"dark part of a room"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",0,"dark part of a room"],[53,8,".",0,"dark part of a room"],[54,8,"|",7,"wall"],[55,8,"#",7,"corridor"],[58,8,"#",7,"corridor"],[59,8,"#",7,"corridor"],[60,8,"#",7,"corridor"],[67,8,"#",7,"corridor"],[13,9,"-",7,"wall"],[14,9,"-",7,"wall"],[15,9,"-",7,"wall"],[16,9,"-",7,"wall"],[17,9,"-",7,"wall"],[18,9,"-",7,"wall"],[19,9,"-",7,"wall"],[20,9,"-",7,"wall"],[21,9,"-",7,"wall"],[22,9,"-",7,"wall"],[23,9,"-",7,"wall"],[24,9,"-",7,"wall"],[25,9,"-",7,"wall"],[31,9,"#",7,"corridor"],[40,9,"#",7,"corridor"],[41,9,"#",7,"corridor"],[45,9,"-",7,"wall"],[46,9,"-",7,"wall"],[47,9,"-",7,"wall"],[48,9,".",7,"doorway"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[53,9,"-",7,"wall"],[54,9,"-",7,"wall"],[55,9,"#",7,"corridor"],[58,9,"#",7,"corridor"],[60,9,"#",7,"corridor"],[66,9,"#",7,"corridor"],[67,9,"#",7,"corridor"],[13,10,"|",7,"wall"],[14,10,"<",11,"branch staircase up"],[15,10,".",0,"dark part of a room"],[16,10,".",0,"dark part of a room"],[17,10,".",0,"dark part of a room"],[18,10,".",0,"dark part of a room"],[19,10,".",0,"dark part of a room"],[20,10,".",0,"dark part of a room"],[21,10,".",0,"dark part of a room"],[22,10,".",0,"dark part of a room"],[23,10,".",0,"dark part of a room"],[24,10,".",0,"dark part of a room"],[25,10,"|",7,"wall"],[31,10,"#",7,"corridor"],[39,10,"#",7,"corridor"],[40,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[51,10,"#",7,"corridor"],[52,10,"#",7,"corridor"],[53,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[55,10,"#",7,"corridor"],[56,10,"#",7,"corridor"],[57,10,"#",7,"corridor"],[58,10,"#",7,"corridor"],[60,10,"#",7,"corridor"],[66,10,"#",7,"corridor"],[13,11,"|",7,"wall"],[14,11,".",0,"dark part of a room"],[15,11,".",0,"dark part of a room"],[16,11,".",0,"dark part of a room"],[17,11,".",0,"dark part of a room"],[18,11,".",0,"dark part of a room"],[19,11,".",0,"dark part of a room"],[20,11,".",0,"dark part of a room"],[21,11,".",0,"dark part of a room"],[22,11,".",0,"dark part of a room"],[23,11,".",0,"dark part of a room"],[24,11,".",0,"dark part of a room"],[25,11,".",7,"doorway"],[26,11,"#",7,"corridor"],[27,11,"#",7,"corridor"],[28,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[30,11,"#",7,"corridor"],[31,11,"#",7,"corridor"],[38,11,"#",7,"corridor"],[39,11,"#",7,"corridor"],[43,11,"#",7,"corridor"],[44,11,"#",7,"corridor"],[45,11,"#",7,"corridor"],[46,11,"#",7,"corridor"],[47,11,"#",7,"corridor"],[48,11,"#",7,"corridor"],[51,11,"#",7,"corridor"],[55,11,"#",7,"corridor"],[60,11,"#",7,"corridor"],[66,11,"#",7,"corridor"],[13,12,"|",7,"wall"],[14,12,".",0,"dark part of a room"],[15,12,".",0,"dark part of a room"],[16,12,".",0,"dark part of a room"],[17,12,".",0,"dark part of a room"],[18,12,".",0,"dark part of a room"],[19,12,".",0,"dark part of a room"],[20,12,".",0,"dark part of a room"],[21,12,".",0,"dark part of a room"],[22,12,".",0,"dark part of a room"],[23,12,".",0,"dark part of a room"],[24,12,".",0,"dark part of a room"],[25,12,"|",7,"wall"],[38,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[50,12,"#",7,"corridor"],[51,12,"#",7,"corridor"],[55,12,"#",7,"corridor"],[60,12,"#",7,"corridor"],[64,12,"-",7,"wall"],[65,12,"-",7,"wall"],[66,12,".",7,"doorway"],[67,12,"-",7,"wall"],[68,12,"-",7,"wall"],[69,12,"-",7,"wall"],[13,13,"-",7,"wall"],[14,13,"-",7,"wall"],[15,13,"-",7,"wall"],[16,13,"-",7,"wall"],[17,13,"-",7,"wall"],[18,13,"-",7,"wall"],[19,13,"-",7,"wall"],[20,13,"-",7,"wall"],[21,13,"-",7,"wall"],[22,13,"-",7,"wall"],[23,13,"-",7,"wall"],[24,13,"-",7,"wall"],[25,13,"-",7,"wall"],[38,13,"#",7,"corridor"],[39,13,"-",7,"wall"],[40,13,"-",7,"wall"],[41,13,"-",7,"wall"],[42,13,"+",3,"closed door"],[43,13,"-",7,"wall"],[44,13,"-",7,"wall"],[45,13,"-",7,"wall"],[46,13,"-",7,"wall"],[47,13,"-",7,"wall"],[48,13,"#",7,"corridor"],[49,13,"#",7,"corridor"],[50,13,"#",7,"corridor"],[55,13,"#",7,"corridor"],[60,13,"#",7,"corridor"],[64,13,"|",7,"wall"],[65,13,".",0,"dark part of a room"],[66,13,".",0,"dark part of a room"],[67,13,"^",12,"magic trap"],[68,13,".",0,"dark part of a room"],[69,13,"|",7,"wall"],[38,14,"#",7,"corridor"],[39,14,"|",7,"wall"],[40,14,".",0,"dark part of a room"],[41,14,".",0,"dark part of a room"],[42,14,".",0,"dark part of a room"],[43,14,".",0,"dark part of a room"],[44,14,".",0,"dark part of a room"],[45,14,".",0,"dark part of a room"],[46,14,".",0,"dark part of a room"],[47,14,".",7,"doorway"],[48,14,"#",7,"corridor"],[53,14,"#",7,"corridor"],[54,14,"#",7,"corridor"],[55,14,"#",7,"corridor"],[59,14,"#",7,"corridor"],[60,14,"#",7,"corridor"],[64,14,"|",7,"wall"],[65,14,".",0,"dark part of a room"],[66,14,".",0,"dark part of a room"],[67,14,".",0,"dark part of a room"],[68,14,".",0,"dark part of a room"],[69,14,"|",7,"wall"],[38,15,"#",7,"corridor"],[39,15,"+",3,"closed door"],[40,15,".",0,"dark part of a room"],[41,15,".",0,"dark part of a room"],[42,15,".",0,"dark part of a room"],[43,15,".",0,"dark part of a room"],[44,15,".",0,"dark part of a room"],[45,15,".",0,"dark part of a room"],[46,15,".",0,"dark part of a room"],[47,15,"|",7,"wall"],[53,15,"#",7,"corridor"],[54,15,"-",7,"wall"],[55,15,"-",7,"wall"],[56,15,"-",7,"wall"],[57,15,"-",7,"wall"],[58,15,"-",7,"wall"],[59,15,"#",7,"corridor"],[64,15,"|",7,"wall"],[65,15,".",0,"dark part of a room"],[66,15,".",0,"dark part of a room"],[67,15,".",0,"dark part of a room"],[68,15,".",0,"dark part of a room"],[69,15,"|",7,"wall"],[39,16,"|",7,"wall"],[40,16,".",0,"dark part of a room"],[41,16,".",0,"dark part of a room"],[42,16,".",0,"dark part of a room"],[43,16,".",0,"dark part of a room"],[44,16,".",0,"dark part of a room"],[45,16,".",0,"dark part of a room"],[46,16,".",0,"dark part of a room"],[47,16,"|",7,"wall"],[53,16,"#",7,"corridor"],[54,16,"|",7,"wall"],[55,16,".",0,"dark part of a room"],[56,16,".",0,"dark part of a room"],[57,16,".",0,"dark part of a room"],[58,16,".",7,"doorway"],[59,16,"#",7,"corridor"],[64,16,"-",7,"wall"],[65,16,"-",7,"wall"],[66,16,"-",7,"wall"],[67,16,"-",7,"wall"],[68,16,"-",7,"wall"],[69,16,"-",7,"wall"],[39,17,"-",7,"wall"],[40,17,"-",7,"wall"],[41,17,"-",7,"wall"],[42,17,"-",7,"wall"],[43,17,"-",7,"wall"],[44,17,"-",7,"wall"],[45,17,"-",7,"wall"],[46,17,"-",7,"wall"],[47,17,"-",7,"wall"],[53,17,"#",7,"corridor"],[54,17,"|",7,"wall"],[55,17,".",0,"dark part of a room"],[56,17,".",0,"dark part of a room"],[57,17,".",0,"dark part of a room"],[58,17,"|",7,"wall"],[43,18,"#",7,"corridor"],[53,18,"#",7,"corridor"],[54,18,".",7,"doorway"],[55,18,".",0,"dark part of a room"],[56,18,".",0,"dark part of a room"],[57,18,".",0,"dark part of a room"],[58,18,"|",7,"wall"],[54,19,"-",7,"wall"],[55,19,"-",7,"wall"],[56,19,"-",7,"wall"],[57,19,"-",7,"wall"],[58,19,"-",7,"wall"]],"lastSeenTurn":2},"0:2":{"info":{"dnum":0,"dlevel":2,"depth":2,"dungeon":"The Dungeons of Doom","desc":"Dlvl:2","long_desc":"level 2, the Dungeons of Doom","known":[]},"cells":[[29,1,"-",7,"wall"],[30,1,"-",7,"wall"],[31,1,"-",7,"wall"],[32,1,"-",7,"wall"],[33,1,"-",7,"wall"],[60,1,"-",7,"wall"],[61,1,"-",7,"wall"],[62,1,"-",7,"wall"],[63,1,"-",7,"wall"],[64,1,"-",7,"wall"],[65,1,"-",7,"wall"],[29,2,"|",7,"wall"],[30,2,".",0,"dark part of a room"],[31,2,">",11,"branch staircase down"],[32,2,".",0,"dark part of a room"],[33,2,"|",7,"wall"],[49,2,"#",7,"corridor"],[50,2,"#",7,"corridor"],[51,2,"#",7,"corridor"],[52,2,"#",7,"corridor"],[53,2,"#",7,"corridor"],[54,2,"#",7,"corridor"],[55,2,"#",7,"corridor"],[56,2,"#",7,"corridor"],[57,2,"#",7,"corridor"],[58,2,"#",7,"corridor"],[59,2,"#",7,"corridor"],[60,2,".",7,"doorway"],[61,2,".",0,"dark part of a room"],[62,2,".",0,"dark part of a room"],[63,2,".",0,"dark part of a room"],[64,2,".",0,"dark part of a room"],[65,2,"|",7,"wall"],[29,3,"|",7,"wall"],[30,3,".",0,"dark part of a room"],[31,3,".",0,"dark part of a room"],[32,3,".",0,"dark part of a room"],[33,3,".",7,"doorway"],[34,3,"#",7,"corridor"],[60,3,"|",7,"wall"],[61,3,".",0,"dark part of a room"],[62,3,".",0,"dark part of a room"],[63,3,".",0,"dark part of a room"],[64,3,".",0,"dark part of a room"],[65,3,"+",3,"closed door"],[66,3,"#",7,"corridor"],[21,4,"#",7,"corridor"],[22,4,"#",7,"corridor"],[23,4,"#",7,"corridor"],[24,4,"#",7,"corridor"],[25,4,"#",7,"corridor"],[26,4,"#",7,"corridor"],[27,4,"#",7,"corridor"],[28,4,"#",7,"corridor"],[29,4,".",7,"doorway"],[30,4,".",0,"dark part of a room"],[31,4,".",0,"dark part of a room"],[32,4,".",0,"dark part of a room"],[33,4,"|",7,"wall"],[34,4,"#",7,"corridor"],[56,4,"#",7,"corridor"],[57,4,"#",7,"corridor"],[58,4,"#",7,"corridor"],[59,4,"#",7,"corridor"],[60,4,".",7,"doorway"],[61,4,".",0,"dark part of a room"],[62,4,".",0,"dark part of a room"],[63,4,".",0,"dark part of a room"],[64,4,".",0,"dark part of a room"],[65,4,"|",7,"wall"],[66,4,"#",7,"corridor"],[21,5,"#",7,"corridor"],[29,5,"-",7,"wall"],[30,5,"+",3,"closed door"],[31,5,"-",7,"wall"],[32,5,"-",7,"wall"],[33,5,"-",7,"wall"],[34,5,"#",7,"corridor"],[35,5,"#",7,"corridor"],[36,5,"#",7,"corridor"],[54,5,"#",7,"corridor"],[55,5,"#",7,"corridor"],[56,5,"#",7,"corridor"],[60,5,"-",7,"wall"],[61,5,"-",7,"wall"],[62,5,"-",7,"wall"],[63,5,"-",7,"wall"],[64,5,"-",7,"wall"],[65,5,"-",7,"wall"],[66,5,"#",7,"corridor"],[21,6,"#",7,"corridor"],[30,6,"#",7,"corridor"],[36,6,"#",7,"corridor"],[54,6,"#",7,"corridor"],[64,6,"#",7,"corridor"],[66,6,"#",7,"corridor"],[21,7,"#",7,"corridor"],[30,7,"#",7,"corridor"],[36,7,"#",7,"corridor"],[46,7,"#",7,"corridor"],[51,7,"#",7,"corridor"],[54,7,"#",7,"corridor"],[66,7,"#",7,"corridor"],[9,8,"-",7,"wall"],[10,8,"-",7,"wall"],[11,8,"-",7,"wall"],[12,8,"-",7,"wall"],[13,8,"-",7,"wall"],[14,8,"-",7,"wall"],[15,8,"-",7,"wall"],[16,8,"-",7,"wall"],[17,8,"-",7,"wall"],[21,8,"#",7,"corridor"],[29,8,"#",7,"corridor"],[30,8,"#",7,"corridor"],[36,8,"#",7,"corridor"],[42,8,"-",7,"wall"],[43,8,"-",7,"wall"],[44,8,"-",7,"wall"],[45,8,"-",7,"wall"],[46,8,"-",7,"wall"],[47,8,"-",7,"wall"],[48,8,"-",7,"wall"],[49,8,"-",7,"wall"],[50,8,"-",7,"wall"],[51,8,"-",7,"wall"],[52,8,"-",7,"wall"],[54,8,"#",7,"corridor"],[66,8,"#",7,"corridor"],[9,9,"|",7,"wall"],[10,9,".",0,"dark part of a room"],[11,9,".",0,"dark part of a room"],[12,9,".",0,"dark part of a room"],[13,9,".",0,"dark part of a room"],[14,9,".",0,"dark part of a room"],[15,9,".",0,"dark part of a room"],[16,9,".",0,"dark part of a room"],[17,9,"|",7,"wall"],[18,9,"#",7,"corridor"],[19,9,"#",7,"corridor"],[20,9,"#",7,"corridor"],[21,9,"#",7,"corridor"],[29,9,"#",7,"corridor"],[36,9,"#",7,"corridor"],[37,9,"#",7,"corridor"],[38,9,"#",7,"corridor"],[42,9,"|",7,"wall"],[43,9,".",0,"dark part of a room"],[44,9,".",0,"dark part of a room"],[45,9,".",0,"dark part of a room"],[46,9,".",0,"dark part of a room"],[47,9,".",0,"dark part of a room"],[48,9,".",0,"dark part of a room"],[49,9,".",0,"dark part of a room"],[50,9,".",0,"dark part of a room"],[51,9,".",0,"dark part of a room"],[52,9,"|",7,"wall"],[54,9,"#",7,"corridor"],[66,9,"#",7,"corridor"],[67,9,"#",7,"corridor"],[9,10,"|",7,"wall"],[10,10,"<",7,"staircase up"],[11,10,".",0,"dark part of a room"],[12,10,".",0,"dark part of a room"],[13,10,".",0,"dark part of a room"],[14,10,".",0,"dark part of a room"],[15,10,".",0,"dark part of a room"],[16,10,".",0,"dark part of a room"],[17,10,"+",3,"closed door"],[18,10,"#",7,"corridor"],[29,10,"#",7,"corridor"],[38,10,"#",7,"corridor"],[39,10,"#",7,"corridor"],[42,10,"|",7,"wall"],[43,10,".",0,"dark part of a room"],[44,10,".",0,"dark part of a room"],[45,10,".",0,"dark part of a room"],[46,10,".",0,"dark part of a room"],[47,10,".",0,"dark part of a room"],[48,10,".",0,"dark part of a room"],[49,10,".",0,"dark part of a room"],[50,10,".",0,"dark part of a room"],[51,10,".",0,"dark part of a room"],[52,10,".",7,"doorway"],[53,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[67,10,"#",7,"corridor"],[68,10,"-",7,"wall"],[69,10,"-",7,"wall"],[70,10,"-",7,"wall"],[71,10,"-",7,"wall"],[72,10,"-",7,"wall"],[73,10,"-",7,"wall"],[74,10,"-",7,"wall"],[9,11,"|",7,"wall"],[10,11,".",0,"dark part of a room"],[11,11,".",0,"dark part of a room"],[12,11,".",0,"dark part of a room"],[13,11,".",0,"dark part of a room"],[14,11,".",0,"dark part of a room"],[15,11,".",0,"dark part of a room"],[16,11,".",0,"dark part of a room"],[17,11,"|",7,"wall"],[18,11,"#",7,"corridor"],[19,11,"#",7,"corridor"],[25,11,"#",7,"corridor"],[26,11,"#",7,"corridor"],[27,11,"#",7,"corridor"],[28,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[39,11,"#",7,"corridor"],[40,11,"#",7,"corridor"],[41,11,"#",7,"corridor"],[42,11,"+",3,"closed door"],[43,11,".",0,"dark part of a room"],[44,11,".",0,"dark part of a room"],[45,11,".",0,"dark part of a room"],[46,11,".",0,"dark part of a room"],[47,11,".",0,"dark part of a room"],[48,11,".",0,"dark part of a room"],[49,11,".",0,"dark part of a room"],[50,11,".",0,"dark part of a room"],[51,11,".",0,"dark part of a room"],[52,11,"|",7,"wall"],[67,11,"#",7,"corridor"],[68,11,".",7,"doorway"],[69,11,".",7,"floor of a room"],[70,11,".",7,"floor of a room"],[71,11,".",7,"floor of a room"],[72,11,".",7,"floor of a room"],[73,11,".",7,"floor of a room"],[74,11,"|",7,"wall"],[9,12,"-",7,"wall"],[10,12,"-",7,"wall"],[11,12,"-",7,"wall"],[12,12,"-",7,"wall"],[13,12,"-",7,"wall"],[14,12,"-",7,"wall"],[15,12,"-",7,"wall"],[16,12,"-",7,"wall"],[17,12,"-",7,"wall"],[19,12,"#",7,"corridor"],[20,12,"#",7,"corridor"],[24,12,"-",7,"wall"],[25,12,".",7,"doorway"],[26,12,"-",7,"wall"],[27,12,"-",7,"wall"],[28,12,"-",7,"wall"],[29,12,"-",7,"wall"],[30,12,"-",7,"wall"],[31,12,"-",7,"wall"],[32,12,"-",7,"wall"],[33,12,"-",7,"wall"],[34,12,"-",7,"wall"],[42,12,"|",7,"wall"],[43,12,".",0,"dark part of a room"],[44,12,".",0,"dark part of a room"],[45,12,".",0,"dark part of a room"],[46,12,".",0,"dark part of a room"],[47,12,".",0,"dark part of a room"],[48,12,"^",4,"rust trap"],[49,12,".",0,"dark part of a room"],[50,12,".",0,"dark part of a room"],[51,12,".",0,"dark part of a room"],[52,12,"|",7,"wall"],[68,12,"|",7,"wall"],[69,12,".",7,"floor of a room"],[70,12,".",7,"floor of a room"],[71,12,"$",11,"4 gold pieces"],[72,12,".",7,"floor of a room"],[73,12,".",7,"floor of a room"],[74,12,"|",7,"wall"],[20,13,"#",7,"corridor"],[21,13,"#",7,"corridor"],[24,13,"|",7,"wall"],[25,13,".",0,"dark part of a room"],[26,13,".",0,"dark part of a room"],[27,13,".",0,"dark part of a room"],[28,13,".",0,"dark part of a room"],[29,13,".",0,"dark part of a room"],[30,13,".",0,"dark part of a room"],[31,13,".",0,"dark part of a room"],[32,13,".",0,"dark part of a room"],[33,13,".",0,"dark part of a room"],[34,13,"|",7,"wall"],[42,13,"-",7,"wall"],[43,13,"-",7,"wall"],[44,13,"-",7,"wall"],[45,13,"-",7,"wall"],[46,13,"-",7,"wall"],[47,13,"-",7,"wall"],[48,13,"-",7,"wall"],[49,13,"-",7,"wall"],[50,13,"-",7,"wall"],[51,13,"-",7,"wall"],[52,13,"-",7,"wall"],[68,13,"|",7,"wall"],[69,13,">",7,"staircase down"],[70,13,".",7,"floor of a room"],[71,13,".",7,"floor of a room"],[72,13,".",7,"floor of a room"],[73,13,".",7,"floor of a room"],[74,13,"|",7,"wall"],[21,14,"#",7,"corridor"],[22,14,"#",7,"corridor"],[23,14,"#",7,"corridor"],[24,14,".",7,"doorway"],[25,14,".",0,"dark part of a room"],[26,14,".",0,"dark part of a room"],[27,14,".",0,"dark part of a room"],[28,14,".",0,"dark part of a room"],[29,14,".",0,"dark part of a room"],[30,14,".",0,"dark part of a room"],[31,14,".",0,"dark part of a room"],[32,14,".",0,"dark part of a room"],[33,14,".",0,"dark part of a room"],[34,14,"|",7,"wall"],[68,14,"-",7,"wall"],[69,14,"-",7,"wall"],[70,14,"-",7,"wall"],[71,14,"-",7,"wall"],[72,14,"-",7,"wall"],[73,14,"-",7,"wall"],[74,14,"-",7,"wall"],[24,15,"|",7,"wall"],[25,15,".",0,"dark part of a room"],[26,15,".",0,"dark part of a room"],[27,15,".",0,"dark part of a room"],[28,15,".",0,"dark part of a room"],[29,15,".",0,"dark part of a room"],[30,15,".",0,"dark part of a room"],[31,15,".",0,"dark part of a room"],[32,15,".",0,"dark part of a room"],[33,15,".",0,"dark part of a room"],[34,15,"|",7,"wall"],[24,16,"|",7,"wall"],[25,16,".",0,"dark part of a room"],[26,16,".",0,"dark part of a room"],[27,16,".",0,"dark part of a room"],[28,16,".",0,"dark part of a room"],[29,16,".",0,"dark part of a room"],[30,16,".",0,"dark part of a room"],[31,16,".",0,"dark part of a room"],[32,16,".",0,"dark part of a room"],[33,16,".",0,"dark part of a room"],[34,16,"|",7,"wall"],[24,17,"|",7,"wall"],[25,17,".",0,"dark part of a room"],[26,17,".",0,"dark part of a room"],[27,17,".",0,"dark part of a room"],[28,17,".",0,"dark part of a room"],[29,17,".",0,"dark part of a room"],[30,17,".",0,"dark part of a room"],[31,17,".",0,"dark part of a room"],[32,17,".",0,"dark part of a room"],[33,17,".",0,"dark part of a room"],[34,17,"|",7,"wall"],[24,18,"-",7,"wall"],[25,18,"-",7,"wall"],[26,18,"-",7,"wall"],[27,18,"-",7,"wall"],[28,18,"-",7,"wall"],[29,18,"-",7,"wall"],[30,18,"-",7,"wall"],[31,18,"-",7,"wall"],[32,18,"-",7,"wall"],[33,18,"-",7,"wall"],[34,18,"-",7,"wall"],[33,19,"#",7,"corridor"]],"lastSeenTurn":7},"2:1":{"info":{"dnum":2,"dlevel":1,"depth":3,"dungeon":"The Gnomish Mines","desc":"Dlvl:3","long_desc":"level 3, the Gnomish Mines","known":[]},"cells":[[26,9,"|",7,"wall"],[27,9,".",7,"floor of a room"],[28,9,".",7,"floor of a room"],[26,10,".",7,"floor of a room"],[27,10,"<",11,"branch staircase up"],[28,10,".",7,"floor of a room"],[26,11,".",7,"floor of a room"],[27,11,".",7,"floor of a room"],[28,11,".",7,"floor of a room"]],"lastSeenTurn":5},"0:3":{"info":{"dnum":0,"dlevel":3,"depth":3,"dungeon":"The Dungeons of Doom","desc":"Dlvl:3","long_desc":"level 3, the Dungeons of Doom","known":[]},"cells":[[68,2,"-",7,"wall"],[69,2,"-",7,"wall"],[70,2,"-",7,"wall"],[71,2,"-",7,"wall"],[72,2,"-",7,"wall"],[73,2,"-",7,"wall"],[74,2,"-",7,"wall"],[75,2,"-",7,"wall"],[76,2,"-",7,"wall"],[77,2,"-",7,"wall"],[78,2,"-",7,"wall"],[3,3,"-",7,"wall"],[4,3,"-",7,"wall"],[5,3,"-",7,"wall"],[6,3,"-",7,"wall"],[7,3,"-",7,"wall"],[8,3,"-",7,"wall"],[9,3,"-",7,"wall"],[10,3,"-",7,"wall"],[11,3,"-",7,"wall"],[12,3,"-",7,"wall"],[13,3,"-",7,"wall"],[14,3,"-",7,"wall"],[40,3,"-",7,"wall"],[41,3,"-",7,"wall"],[42,3,"-",7,"wall"],[43,3,"-",7,"wall"],[44,3,"-",7,"wall"],[45,3,"-",7,"wall"],[46,3,"-",7,"wall"],[47,3,"-",7,"wall"],[48,3,"-",7,"wall"],[49,3,"-",7,"wall"],[50,3,"-",7,"wall"],[51,3,"-",7,"wall"],[52,3,"-",7,"wall"],[53,3,"-",7,"wall"],[54,3,"-",7,"wall"],[55,3,"-",7,"wall"],[68,3,"|",7,"wall"],[69,3,".",7,"floor of a room"],[70,3,".",7,"floor of a room"],[71,3,".",7,"floor of a room"],[72,3,".",7,"floor of a room"],[73,3,".",7,"floor of a room"],[74,3,".",7,"floor of a room"],[75,3,".",7,"floor of a room"],[76,3,".",7,"floor of a room"],[77,3,".",7,"floor of a room"],[78,3,"|",7,"wall"],[3,4,"|",7,"wall"],[4,4,".",0,"dark part of a room"],[5,4,".",0,"dark part of a room"],[6,4,".",0,"dark part of a room"],[7,4,".",0,"dark part of a room"],[8,4,".",0,"dark part of a room"],[9,4,".",0,"dark part of a room"],[10,4,".",0,"dark part of a room"],[11,4,".",0,"dark part of a room"],[12,4,".",0,"dark part of a room"],[13,4,".",0,"dark part of a room"],[14,4,"|",7,"wall"],[40,4,"|",7,"wall"],[41,4,".",0,"dark part of a room"],[42,4,".",0,"dark part of a room"],[43,4,".",0,"dark part of a room"],[44,4,".",0,"dark part of a room"],[45,4,".",0,"dark part of a room"],[46,4,".",0,"dark part of a room"],[47,4,"`",12,"engraving"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",0,"dark part of a room"],[54,4,".",0,"dark part of a room"],[55,4,"|",7,"wall"],[62,4,"#",7,"corridor"],[63,4,"#",7,"corridor"],[64,4,"#",7,"corridor"],[65,4,"#",7,"corridor"],[66,4,"#",7,"corridor"],[67,4,"#",7,"corridor"],[68,4,"+",3,"closed door"],[69,4,".",7,"floor of a room"],[70,4,".",7,"floor of a room"],[71,4,".",7,"floor of a room"],[72,4,".",7,"floor of a room"],[73,4,".",7,"floor of a room"],[74,4,".",7,"floor of a room"],[75,4,".",7,"floor of a room"],[76,4,".",7,"floor of a room"],[77,4,".",7,"floor of a room"],[78,4,"|",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",0,"dark part of a room"],[5,5,".",0,"dark part of a room"],[6,5,".",0,"dark part of a room"],[7,5,".",0,"dark part of a room"],[8,5,".",0,"dark part of a room"],[9,5,".",0,"dark part of a room"],[10,5,".",0,"dark part of a room"],[11,5,".",0,"dark part of a room"],[12,5,".",0,"dark part of a room"],[13,5,".",0,"dark part of a room"],[14,5,"|",7,"wall"],[22,5,"-",7,"wall"],[23,5,"-",7,"wall"],[24,5,"-",7,"wall"],[25,5,"-",7,"wall"],[26,5,"-",7,"wall"],[40,5,"|",7,"wall"],[41,5,".",0,"dark part of a room"],[42,5,".",0,"dark part of a room"],[43,5,".",0,"dark part of a room"],[44,5,".",0,"dark part of a room"],[45,5,".",0,"dark part of a room"],[46,5,".",0,"dark part of a room"],[47,5,".",0,"dark part of a room"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,".",0,"dark part of a room"],[54,5,".",0,"dark part of a room"],[55,5,"|",7,"wall"],[68,5,"|",7,"wall"],[69,5,".",7,"floor of a room"],[70,5,".",7,"floor of a room"],[71,5,".",7,"floor of a room"],[72,5,".",7,"floor of a room"],[73,5,".",7,"floor of a room"],[74,5,".",7,"floor of a room"],[75,5,".",7,"floor of a room"],[76,5,">",7,"staircase down"],[77,5,".",7,"floor of a room"],[78,5,"|",7,"wall"],[3,6,"|",7,"wall"],[4,6,".",0,"dark part of a room"],[5,6,".",0,"dark part of a room"],[6,6,".",0,"dark part of a room"],[7,6,".",0,"dark part of a room"],[8,6,".",0,"dark part of a room"],[9,6,".",0,"dark part of a room"],[10,6,".",0,"dark part of a room"],[11,6,".",0,"dark part of a room"],[12,6,".",0,"dark part of a room"],[13,6,".",0,"dark part of a room"],[14,6,"+",3,"closed door"],[15,6,"#",7,"corridor"],[16,6,"#",7,"corridor"],[17,6,"#",7,"corridor"],[22,6,"|",7,"wall"],[23,6,".",0,"dark part of a room"],[24,6,".",0,"dark part of a room"],[25,6,".",0,"dark part of a room"],[26,6,"|",7,"wall"],[39,6,"#",7,"corridor"],[40,6,"-",3,"open door"],[41,6,".",0,"dark part of a room"],[42,6,".",0,"dark part of a room"],[43,6,".",0,"dark part of a room"],[44,6,".",0,"dark part of a room"],[45,6,".",0,"dark part of a room"],[46,6,".",0,"dark part of a room"],[47,6,".",0,"dark part of a room"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",0,"dark part of a room"],[54,6,".",0,"dark part of a room"],[55,6,".",7,"doorway"],[56,6,"#",7,"corridor"],[68,6,"|",7,"wall"],[69,6,".",7,"floor of a room"],[70,6,".",7,"floor of a room"],[71,6,".",7,"floor of a room"],[72,6,".",7,"floor of a room"],[73,6,".",7,"floor of a room"],[74,6,".",7,"floor of a room"],[75,6,".",7,"floor of a room"],[76,6,".",7,"floor of a room"],[77,6,"o",7,"goblin"],[78,6,"|",7,"wall"],[3,7,"-",7,"wall"],[4,7,"-",7,"wall"],[5,7,"-",7,"wall"],[6,7,"-",7,"wall"],[7,7,"-",7,"wall"],[8,7,"-",7,"wall"],[9,7,"-",7,"wall"],[10,7,"-",7,"wall"],[11,7,"-",7,"wall"],[12,7,"-",7,"wall"],[13,7,"-",7,"wall"],[14,7,"-",7,"wall"],[17,7,"#",7,"corridor"],[18,7,"#",7,"corridor"],[19,7,"#",7,"corridor"],[20,7,"#",7,"corridor"],[21,7,"#",7,"corridor"],[22,7,"|",7,"wall"],[23,7,".",0,"dark part of a room"],[24,7,".",0,"dark part of a room"],[25,7,".",0,"dark part of a room"],[26,7,".",7,"doorway"],[27,7,"#",7,"corridor"],[28,7,"#",7,"corridor"],[29,7,"#",7,"corridor"],[30,7,"#",7,"corridor"],[31,7,"#",7,"corridor"],[32,7,"#",7,"corridor"],[40,7,"-",7,"wall"],[41,7,"-",7,"wall"],[42,7,"-",7,"wall"],[43,7,"-",7,"wall"],[44,7,"-",7,"wall"],[45,7,"-",7,"wall"],[46,7,"-",7,"wall"],[47,7,"-",7,"wall"],[48,7,"-",7,"wall"],[49,7,"-",7,"wall"],[50,7,".",7,"doorway"],[51,7,"-",7,"wall"],[52,7,"-",7,"wall"],[53,7,".",7,"doorway"],[54,7,"-",7,"wall"],[55,7,"-",7,"wall"],[56,7,"#",7,"corridor"],[68,7,"-",7,"wall"],[69,7,"-",7,"wall"],[70,7,"-",7,"wall"],[71,7,"-",7,"wall"],[72,7,"-",7,"wall"],[73,7,"-",7,"wall"],[74,7,"-",7,"wall"],[75,7,"-",7,"wall"],[76,7,"-",7,"wall"],[77,7,"-",7,"wall"],[78,7,"-",7,"wall"],[21,8,"#",7,"corridor"],[22,8,"|",7,"wall"],[23,8,".",0,"dark part of a room"],[24,8,".",0,"dark part of a room"],[25,8,".",0,"dark part of a room"],[26,8,"|",7,"wall"],[32,8,"#",7,"corridor"],[44,8,"#",7,"corridor"],[45,8,"#",7,"corridor"],[46,8,"#",7,"corridor"],[47,8,"#",7,"corridor"],[48,8,"#",7,"corridor"],[49,8,"#",7,"corridor"],[50,8,"#",7,"corridor"],[53,8,"#",7,"corridor"],[54,8,"#",7,"corridor"],[55,8,"#",7,"corridor"],[56,8,"#",7,"corridor"],[57,8,"#",7,"corridor"],[58,8,"#",7,"corridor"],[66,8,"#",7,"corridor"],[67,8,"#",7,"corridor"],[68,8,"#",7,"corridor"],[69,8,"#",7,"corridor"],[22,9,"|",7,"wall"],[23,9,".",0,"dark part of a room"],[24,9,".",0,"dark part of a room"],[25,9,"<",7,"staircase up"],[26,9,"|",7,"wall"],[32,9,"#",7,"corridor"],[33,9,"#",7,"corridor"],[34,9,"#",7,"corridor"],[44,9,"#",7,"corridor"],[57,9,"#",7,"corridor"],[58,9,"#",7,"corridor"],[59,9,"#",7,"corridor"],[60,9,"#",7,"corridor"],[61,9,"#",7,"corridor"],[62,9,"#",7,"corridor"],[64,9,"#",7,"corridor"],[65,9,"#",7,"corridor"],[66,9,"#",7,"corridor"],[22,10,"|",7,"wall"],[23,10,".",0,"dark part of a room"],[24,10,".",0,"dark part of a room"],[25,10,".",0,"dark part of a room"],[26,10,"|",7,"wall"],[34,10,"#",7,"corridor"],[35,10,"#",7,"corridor"],[41,10,"#",7,"corridor"],[42,10,"#",7,"corridor"],[43,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[57,10,"#",7,"corridor"],[58,10,"#",7,"corridor"],[62,10,"#",7,"corridor"],[64,10,"#",7,"corridor"],[22,11,"-",7,"wall"],[23,11,"-",7,"wall"],[24,11,"-",7,"wall"],[25,11,"-",7,"wall"],[26,11,"-",7,"wall"],[35,11,"#",7,"corridor"],[36,11,"-",7,"wall"],[37,11,"-",7,"wall"],[38,11,"-",7,"wall"],[39,11,"-",7,"wall"],[40,11,"-",7,"wall"],[41,11,".",7,"doorway"],[42,11,"-",7,"wall"],[43,11,"-",7,"wall"],[44,11,"-",7,"wall"],[45,11,"-",7,"wall"],[58,11,"#",7,"corridor"],[62,11,"#",7,"corridor"],[63,11,"#",7,"corridor"],[64,11,"#",7,"corridor"],[65,11,"#",7,"corridor"],[66,11,"#",7,"corridor"],[67,11,"#",7,"corridor"],[68,11,"#",7,"corridor"],[69,11,"#",7,"corridor"],[35,12,"#",7,"corridor"],[36,12,"|",7,"wall"],[37,12,".",0,"dark part of a room"],[38,12,".",0,"dark part of a room"],[39,12,".",0,"dark part of a room"],[40,12,".",0,"dark part of a room"],[41,12,".",0,"dark part of a room"],[42,12,".",0,"dark part of a room"],[43,12,".",0,"dark part of a room"],[44,12,".",0,"dark part of a room"],[45,12,"|",7,"wall"],[58,12,"#",7,"corridor"],[61,12,"#",7,"corridor"],[62,12,"#",7,"corridor"],[69,12,"#",7,"corridor"],[7,13,"-",7,"wall"],[8,13,"-",7,"wall"],[9,13,"-",7,"wall"],[10,13,"-",7,"wall"],[35,13,"#",7,"corridor"],[36,13,"+",3,"closed door"],[37,13,".",0,"dark part of a room"],[38,13,".",0,"dark part of a room"],[39,13,".",0,"dark part of a room"],[40,13,".",0,"dark part of a room"],[41,13,".",0,"dark part of a room"],[42,13,".",0,"dark part of a room"],[43,13,".",0,"dark part of a room"],[44,13,".",0,"dark part of a room"],[45,13,"|",7,"wall"],[58,13,"#",7,"corridor"],[60,13,"-",7,"wall"],[61,13,".",7,"doorway"],[62,13,"-",7,"wall"],[63,13,"-",7,"wall"],[64,13,"-",7,"wall"],[65,13,"-",7,"wall"],[66,13,"-",7,"wall"],[67,13,"-",7,"wall"],[68,13,"-",7,"wall"],[69,13,".",7,"doorway"],[70,13,"-",7,"wall"],[7,14,"|",7,"wall"],[8,14,".",0,"dark part of a room"],[9,14,".",0,"dark part of a room"],[10,14,"|",7,"wall"],[36,14,"|",7,"wall"],[37,14,".",0,"dark part of a room"],[38,14,".",0,"dark part of a room"],[39,14,".",0,"dark part of a room"],[40,14,".",0,"dark part of a room"],[41,14,".",0,"dark part of a room"],[42,14,".",0,"dark part of a room"],[43,14,".",0,"dark part of a room"],[44,14,".",0,"dark part of a room"],[45,14,"+",3,"closed door"],[46,14,"#",7,"corridor"],[47,14,"#",7,"corridor"],[48,14,"#",7,"corridor"],[49,14,"#",7,"corridor"],[50,14,"#",7,"corridor"],[58,14,"#",7,"corridor"],[60,14,"|",7,"wall"],[61,14,".",0,"dark part of a room"],[62,14,".",0,"dark part of a room"],[63,14,".",0,"dark part of a room"],[64,14,".",0,"dark part of a room"],[65,14,".",0,"dark part of a room"],[66,14,".",0,"dark part of a room"],[67,14,".",0,"dark part of a room"],[68,14,".",0,"dark part of a room"],[69,14,".",0,"dark part of a room"],[70,14,"|",7,"wall"],[7,15,"|",7,"wall"],[8,15,".",0,"dark part of a room"],[9,15,".",0,"dark part of a room"],[10,15,"|",7,"wall"],[36,15,"-",7,"wall"],[37,15,"#",6,"iron bars"],[38,15,"-",7,"wall"],[39,15,"-",7,"wall"],[40,15,"-",7,"wall"],[41,15,"-",7,"wall"],[42,15,"-",7,"wall"],[43,15,"-",7,"wall"],[44,15,"-",7,"wall"],[45,15,"-",7,"wall"],[50,15,"#",7,"corridor"],[51,15,"#",7,"corridor"],[52,15,"#",7,"corridor"],[53,15,"#",7,"corridor"],[54,15,"#",7,"corridor"],[55,15,"#",7,"corridor"],[56,15,"#",7,"corridor"],[57,15,"#",7,"corridor"],[58,15,"#",7,"corridor"],[59,15,"#",7,"corridor"],[60,15,".",7,"doorway"],[61,15,".",0,"dark part of a room"],[62,15,".",0,"dark part of a room"],[63,15,".",0,"dark part of a room"],[64,15,".",0,"dark part of a room"],[65,15,".",0,"dark part of a room"],[66,15,".",0,"dark part of a room"],[67,15,".",0,"dark part of a room"],[68,15,".",0,"dark part of a room"],[69,15,".",0,"dark part of a room"],[70,15,"|",7,"wall"],[7,16,"-",7,"wall"],[8,16,"-",7,"wall"],[9,16,"-",7,"wall"],[10,16,"-",7,"wall"],[37,16,"#",7,"corridor"],[44,16,"#",7,"corridor"],[60,16,"|",7,"wall"],[61,16,".",0,"dark part of a room"],[62,16,".",0,"dark part of a room"],[63,16,".",0,"dark part of a room"],[64,16,".",0,"dark part of a room"],[65,16,".",0,"dark part of a room"],[66,16,".",0,"dark part of a room"],[67,16,".",0,"dark part of a room"],[68,16,".",0,"dark part of a room"],[69,16,".",0,"dark part of a room"],[70,16,"|",7,"wall"],[60,17,"|",7,"wall"],[61,17,".",0,"dark part of a room"],[62,17,".",0,"dark part of a room"],[63,17,".",0,"dark part of a room"],[64,17,".",0,"dark part of a room"],[65,17,".",0,"dark part of a room"],[66,17,".",0,"dark part of a room"],[67,17,".",0,"dark part of a room"],[68,17,".",0,"dark part of a room"],[69,17,".",0,"dark part of a room"],[70,17,"|",7,"wall"],[60,18,"|",7,"wall"],[61,18,".",0,"dark part of a room"],[62,18,".",0,"dark part of a room"],[63,18,".",0,"dark part of a room"],[64,18,".",0,"dark part of a room"],[65,18,".",0,"dark part of a room"],[66,18,".",0,"dark part of a room"],[67,18,".",0,"dark part of a room"],[68,18,".",0,"dark part of a room"],[69,18,".",0,"dark part of a room"],[70,18,"|",7,"wall"],[60,19,"-",7,"wall"],[61,19,"-",7,"wall"],[62,19,"-",7,"wall"],[63,19,"-",7,"wall"],[64,19,"-",7,"wall"],[65,19,"-",7,"wall"],[66,19,"-",7,"wall"],[67,19,"-",7,"wall"],[68,19,"-",7,"wall"],[69,19,"-",7,"wall"],[70,19,"-",7,"wall"],[62,20,"#",7,"corridor"],[65,20,"#",7,"corridor"]],"lastSeenTurn":9},"0:4":{"info":{"dnum":0,"dlevel":4,"depth":4,"dungeon":"The Dungeons of Doom","desc":"Dlvl:4","long_desc":"level 4, the Dungeons of Doom","known":[]},"cells":[[52,1,"#",7,"corridor"],[17,2,"-",7,"wall"],[18,2,"-",7,"wall"],[19,2,"-",7,"wall"],[20,2,"-",7,"wall"],[21,2,"-",7,"wall"],[22,2,"-",7,"wall"],[47,2,"-",7,"wall"],[48,2,"-",7,"wall"],[49,2,"-",7,"wall"],[50,2,"-",7,"wall"],[51,2,"-",7,"wall"],[52,2,"-",7,"wall"],[53,2,"-",7,"wall"],[66,2,"^",5,"teleportation trap"],[16,3,"#",7,"corridor"],[17,3,".",7,"doorway"],[18,3,".",0,"dark part of a room"],[19,3,".",0,"dark part of a room"],[20,3,".",0,"dark part of a room"],[21,3,".",0,"dark part of a room"],[22,3,"+",3,"closed door"],[23,3,"#",7,"corridor"],[24,3,"#",7,"corridor"],[25,3,"#",7,"corridor"],[26,3,"#",7,"corridor"],[27,3,"#",7,"corridor"],[28,3,"#",7,"corridor"],[29,3,"#",7,"corridor"],[30,3,"#",7,"corridor"],[31,3,"#",7,"corridor"],[32,3,"#",7,"corridor"],[33,3,"#",7,"corridor"],[34,3,"#",7,"corridor"],[35,3,"#",7,"corridor"],[47,3,"|",7,"wall"],[48,3,".",0,"dark part of a room"],[49,3,".",0,"dark part of a room"],[50,3,".",0,"dark part of a room"],[51,3,".",0,"dark part of a room"],[52,3,".",0,"dark part of a room"],[53,3,"|",7,"wall"],[62,3,"-",7,"wall"],[63,3,"-",7,"wall"],[64,3,"-",7,"wall"],[65,3,"-",7,"wall"],[66,3,"-",7,"wall"],[67,3,"-",7,"wall"],[68,3,"-",7,"wall"],[69,3,"-",7,"wall"],[70,3,"-",7,"wall"],[16,4,"#",7,"corridor"],[17,4,"|",7,"wall"],[18,4,".",0,"dark part of a room"],[19,4,".",0,"dark part of a room"],[20,4,".",0,"dark part of a room"],[21,4,".",0,"dark part of a room"],[22,4,"|",7,"wall"],[47,4,"|",7,"wall"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",7,"doorway"],[54,4,"#",7,"corridor"],[62,4,"|",7,"wall"],[63,4,".",7,"floor of a room"],[64,4,".",7,"floor of a room"],[65,4,".",7,"floor of a room"],[66,4,"`",12,"engraving"],[67,4,".",7,"floor of a room"],[68,4,".",7,"floor of a room"],[69,4,".",7,"floor of a room"],[70,4,"|",7,"wall"],[16,5,"#",7,"corridor"],[17,5,"|",7,"wall"],[18,5,".",0,"dark part of a room"],[19,5,".",0,"dark part of a room"],[20,5,".",0,"dark part of a room"],[21,5,".",0,"dark part of a room"],[22,5,".",7,"doorway"],[23,5,"#",7,"corridor"],[24,5,"#",7,"corridor"],[25,5,"#",7,"corridor"],[30,5,"-",7,"wall"],[31,5,"-",7,"wall"],[32,5,"-",7,"wall"],[33,5,"-",7,"wall"],[34,5,"-",7,"wall"],[35,5,"-",7,"wall"],[36,5,"-",7,"wall"],[37,5,"-",7,"wall"],[38,5,"#",7,"corridor"],[39,5,"#",7,"corridor"],[40,5,"#",7,"corridor"],[41,5,"#",7,"corridor"],[42,5,"#",7,"corridor"],[43,5,"#",7,"corridor"],[44,5,"#",7,"corridor"],[45,5,"#",7,"corridor"],[46,5,"#",7,"corridor"],[47,5,".",7,"doorway"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,"|",7,"wall"],[54,5,"#",7,"corridor"],[62,5,"|",7,"wall"],[63,5,".",7,"floor of a room"],[64,5,".",7,"floor of a room"],[65,5,".",7,"floor of a room"],[66,5,".",7,"floor of a room"],[67,5,".",7,"floor of a room"],[68,5,".",7,"floor of a room"],[69,5,".",7,"floor of a room"],[70,5,"|",7,"wall"],[15,6,"#",7,"corridor"],[16,6,"#",7,"corridor"],[17,6,"-",7,"wall"],[18,6,"-",7,"wall"],[19,6,"-",7,"wall"],[20,6,"-",7,"wall"],[21,6,"-",7,"wall"],[22,6,"-",7,"wall"],[25,6,"#",7,"corridor"],[26,6,"#",7,"corridor"],[27,6,"#",7,"corridor"],[28,6,"#",7,"corridor"],[29,6,"#",7,"corridor"],[30,6,".",7,"doorway"],[31,6,".",0,"dark part of a room"],[32,6,".",0,"dark part of a room"],[33,6,".",0,"dark part of a room"],[34,6,".",0,"dark part of a room"],[35,6,".",0,"dark part of a room"],[36,6,".",0,"dark part of a room"],[37,6,"|",7,"wall"],[38,6,"#",7,"corridor"],[47,6,"|",7,"wall"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",7,"doorway"],[54,6,"#",7,"corridor"],[55,6,"#",7,"corridor"],[56,6,"#",7,"corridor"],[57,6,"#",7,"corridor"],[58,6,"#",7,"corridor"],[62,6,"|",7,"wall"],[63,6,".",7,"floor of a room"],[64,6,".",7,"floor of a room"],[65,6,".",7,"floor of a room"],[66,6,".",7,"floor of a room"],[67,6,"@",15,"human valkyrie called Agnes"],[68,6,".",7,"floor of a room"],[69,6,".",7,"floor of a room"],[70,6,"|",7,"wall"],[14,7,"#",7,"corridor"],[15,7,"#",7,"corridor"],[18,7,"#",7,"corridor"],[19,7,"#",7,"corridor"],[30,7,"|",7,"wall"],[31,7,".",0,"dark part of a room"],[32,7,".",0,"dark part of a room"],[33,7,".",0,"dark part of a room"],[34,7,".",0,"dark part of a room"],[35,7,".",0,"dark part of a room"],[36,7,".",0,"dark part of a room"],[37,7,"|",7,"wall"],[38,7,"#",7,"corridor"],[47,7,"|",7,"wall"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,".",0,"dark part of a room"],[51,7,".",0,"dark part of a room"],[52,7,".",0,"dark part of a room"],[53,7,"|",7,"wall"],[54,7,"#",7,"corridor"],[58,7,"#",7,"corridor"],[59,7,"#",7,"corridor"],[60,7,"#",7,"corridor"],[61,7,"#",7,"corridor"],[62,7,"+",3,"closed door"],[63,7,".",7,"floor of a room"],[64,7,".",7,"floor of a room"],[65,7,".",7,"floor of a room"],[66,7,".",7,"floor of a room"],[67,7,".",7,"floor of a room"],[68,7,".",7,"floor of a room"],[69,7,".",7,"floor of a room"],[70,7,"|",7,"wall"],[6,8,"-",7,"wall"],[7,8,"-",7,"wall"],[8,8,"-",7,"wall"],[9,8,"-",7,"wall"],[10,8,"-",7,"wall"],[11,8,"-",7,"wall"],[12,8,"-",7,"wall"],[14,8,"#",7,"corridor"],[19,8,"#",7,"corridor"],[28,8,"#",7,"corridor"],[29,8,"#",7,"corridor"],[30,8,"|",7,"wall"],[31,8,".",0,"dark part of a room"],[32,8,".",0,"dark part of a room"],[33,8,".",0,"dark part of a room"],[34,8,".",0,"dark part of a room"],[35,8,".",0,"dark part of a room"],[36,8,".",0,"dark part of a room"],[37,8,".",7,"doorway"],[38,8,"#",7,"corridor"],[47,8,"|",7,"wall"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",0,"dark part of a room"],[53,8,"|",7,"wall"],[54,8,"#",7,"corridor"],[62,8,"|",7,"wall"],[63,8,".",7,"floor of a room"],[64,8,".",7,"floor of a room"],[65,8,".",7,"floor of a room"],[66,8,".",7,"floor of a room"],[67,8,".",7,"floor of a room"],[68,8,".",7,"floor of a room"],[69,8,".",7,"floor of a room"],[70,8,"|",7,"wall"],[6,9,"|",7,"wall"],[7,9,".",0,"dark part of a room"],[8,9,".",0,"dark part of a room"],[9,9,".",0,"dark part of a room"],[10,9,".",0,"dark part of a room"],[11,9,".",0,"dark part of a room"],[12,9,"|",7,"wall"],[14,9,"#",7,"corridor"],[19,9,"#",7,"corridor"],[20,9,"#",7,"corridor"],[21,9,"#",7,"corridor"],[28,9,"#",7,"corridor"],[29,9,"#",7,"corridor"],[30,9,"-",7,"wall"],[31,9,"-",7,"wall"],[32,9,"-",7,"wall"],[33,9,"-",7,"wall"],[34,9,"-",7,"wall"],[35,9,"-",7,"wall"],[36,9,"-",7,"wall"],[37,9,"-",7,"wall"],[38,9,"#",7,"corridor"],[47,9,"-",7,"wall"],[48,9,".",7,"doorway"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[53,9,"-",7,"wall"],[54,9,"#",7,"corridor"],[62,9,"-",7,"wall"],[63,9,"-",7,"wall"],[64,9,"-",7,"wall"],[65,9,".",7,"doorway"],[66,9,"-",7,"wall"],[67,9,"-",7,"wall"],[68,9,"-",7,"wall"],[69,9,"-",7,"wall"],[70,9,"-",7,"wall"],[6,10,"|",7,"wall"],[7,10,".",0,"dark part of a room"],[8,10,".",0,"dark part of a room"],[9,10,".",0,"dark part of a room"],[10,10,".",0,"dark part of a room"],[11,10,".",0,"dark part of a room"],[12,10,"|",7,"wall"],[14,10,"#",7,"corridor"],[21,10,"#",7,"corridor"],[29,10,"#",7,"corridor"],[30,10,"#",7,"corridor"],[31,10,"#",7,"corridor"],[32,10,"#",7,"corridor"],[33,10,"#",7,"corridor"],[34,10,"#",7,"corridor"],[35,10,"#",7,"corridor"],[36,10,"#",7,"corridor"],[37,10,"#",7,"corridor"],[38,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[45,10,"#",7,"corridor"],[46,10,"#",7,"corridor"],[47,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[50,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[65,10,"#",7,"corridor"],[6,11,"|",7,"wall"],[7,11,".",0,"dark part of a room"],[8,11,".",0,"dark part of a room"],[9,11,".",0,"dark part of a room"],[10,11,".",0,"dark part of a room"],[11,11,".",0,"dark part of a room"],[12,11,"|",7,"wall"],[14,11,"#",7,"corridor"],[21,11,"#",7,"corridor"],[22,11,"#",7,"corridor"],[23,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[38,11,"#",7,"corridor"],[43,11,"#",7,"corridor"],[44,11,"#",7,"corridor"],[54,11,"#",7,"corridor"],[65,11,"#",7,"corridor"],[6,12,"|",7,"wall"],[7,12,".",0,"dark part of a room"],[8,12,".",0,"dark part of a room"],[9,12,".",0,"dark part of a room"],[10,12,".",0,"dark part of a room"],[11,12,".",0,"dark part of a room"],[12,12,"|",7,"wall"],[13,12,"#",7,"corridor"],[14,12,"#",7,"corridor"],[23,12,"#",7,"corridor"],[29,12,"#",7,"corridor"],[38,12,"#",7,"corridor"],[40,12,"#",7,"corridor"],[41,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[54,12,"#",7,"corridor"],[59,12,"#",7,"corridor"],[60,12,"#",7,"corridor"],[61,12,"#",7,"corridor"],[62,12,"#",7,"corridor"],[63,12,"#",7,"corridor"],[64,12,"#",7,"corridor"],[65,12,"#",7,"corridor"],[6,13,"|",7,"wall"],[7,13,".",0,"dark part of a room"],[8,13,".",0,"dark part of a room"],[9,13,".",0,"dark part of a room"],[10,13,".",0,"dark part of a room"],[11,13,".",0,"dark part of a room"],[12,13,"+",3,"closed door"],[13,13,"#",12,"engraving"],[23,13,"#",7,"corridor"],[24,13,"#",7,"corridor"],[25,13,"#",7,"corridor"],[26,13,"#",7,"corridor"],[28,13,"#",7,"corridor"],[29,13,"#",7,"corridor"],[36,13,"#",7,"corridor"],[37,13,"#",7,"corridor"],[38,13,"#",7,"corridor"],[40,13,"#",7,"corridor"],[54,13,"#",7,"corridor"],[55,13,"#",7,"corridor"],[57,13,"-",7,"wall"],[58,13,"-",7,"wall"],[59,13,".",7,"doorway"],[60,13,"-",7,"wall"],[61,13,"-",7,"wall"],[62,13,"-",7,"wall"],[63,13,"-",7,"wall"],[64,13,"-",7,"wall"],[65,13,"-",7,"wall"],[6,14,"-",7,"wall"],[7,14,"-",7,"wall"],[8,14,"-",7,"wall"],[9,14,"-",7,"wall"],[10,14,"-",7,"wall"],[11,14,"-",7,"wall"],[12,14,"-",7,"wall"],[26,14,"#",7,"corridor"],[28,14,"#",7,"corridor"],[36,14,"#",7,"corridor"],[37,14,"-",7,"wall"],[38,14,"-",7,"wall"],[39,14,"-",7,"wall"],[40,14,"|",3,"open door"],[41,14,"-",7,"wall"],[42,14,"-",7,"wall"],[43,14,"-",7,"wall"],[44,14,"-",7,"wall"],[45,14,"-",7,"wall"],[46,14,"-",7,"wall"],[47,14,"-",7,"wall"],[48,14,"-",7,"wall"],[49,14,"-",7,"wall"],[50,14,"-",7,"wall"],[55,14,"#",7,"corridor"],[56,14,"#",7,"corridor"],[57,14,"|",7,"wall"],[58,14,".",0,"dark part of a room"],[59,14,".",0,"dark part of a room"],[60,14,".",0,"dark part of a room"],[61,14,".",0,"dark part of a room"],[62,14,".",0,"dark part of a room"],[63,14,".",0,"dark part of a room"],[64,14,".",0,"dark part of a room"],[65,14,"|",7,"wall"],[71,14,"-",7,"wall"],[72,14,"-",7,"wall"],[73,14,"-",7,"wall"],[74,14,"-",7,"wall"],[26,15,"#",7,"corridor"],[28,15,"#",7,"corridor"],[36,15,"#",7,"corridor"],[37,15,".",7,"doorway"],[38,15,".",0,"dark part of a room"],[39,15,".",0,"dark part of a room"],[40,15,".",0,"dark part of a room"],[41,15,".",0,"dark part of a room"],[42,15,".",0,"dark part of a room"],[43,15,".",0,"dark part of a room"],[44,15,".",0,"dark part of a room"],[45,15,".",0,"dark part of a room"],[46,15,".",0,"dark part of a room"],[47,15,".",0,"dark part of a room"],[48,15,".",0,"dark part of a room"],[49,15,".",0,"dark part of a room"],[50,15,"+",3,"closed door"],[51,15,"#",7,"corridor"],[52,15,"#",7,"corridor"],[53,15,"#",7,"corridor"],[54,15,"#",7,"corridor"],[55,15,"#",7,"corridor"],[56,15,"#",7,"corridor"],[57,15,"|",7,"wall"],[58,15,".",0,"dark part of a room"],[59,15,".",0,"dark part of a room"],[60,15,".",0,"dark part of a room"],[61,15,".",0,"dark part of a room"],[62,15,".",0,"dark part of a room"],[63,15,".",0,"dark part of a room"],[64,15,".",0,"dark part of a room"],[65,15,"|",7,"wall"],[71,15,"|",7,"wall"],[72,15,".",0,"dark part of a room"],[73,15,".",0,"dark part of a room"],[74,15,"|",7,"wall"],[19,16,"-",7,"wall"],[20,16,"-",7,"wall"],[21,16,"-",7,"wall"],[22,16,"-",7,"wall"],[23,16,"-",7,"wall"],[24,16,"-",7,"wall"],[25,16,"-",7,"wall"],[26,16,"+",3,"closed door"],[27,16,"-",7,"wall"],[28,16,"#",7,"corridor"],[37,16,"|",7,"wall"],[38,16,".",0,"dark part of a room"],[39,16,".",0,"dark part of a room"],[40,16,".",0,"dark part of a room"],[41,16,".",0,"dark part of a room"],[42,16,".",0,"dark part of a room"],[43,16,".",0,"dark part of a room"],[44,16,".",0,"dark part of a room"],[45,16,".",0,"dark part of a room"],[46,16,".",0,"dark part of a room"],[47,16,".",0,"dark part of a room"],[48,16,".",0,"dark part of a room"],[49,16,".",0,"dark part of a room"],[50,16,"|",7,"wall"],[56,16,"#",7,"corridor"],[57,16,"+",3,"closed door"],[58,16,".",0,"dark part of a room"],[59,16,".",0,"dark part of a room"],[60,16,".",0,"dark part of a room"],[61,16,".",0,"dark part of a room"],[62,16,".",0,"dark part of a room"],[63,16,".",0,"dark part of a room"],[64,16,".",0,"dark part of a room"],[65,16,"|",7,"wall"],[71,16,"|",7,"wall"],[72,16,".",0,"dark part of a room"],[73,16,".",0,"dark part of a room"],[74,16,"|",7,"wall"],[19,17,"|",7,"wall"],[20,17,".",0,"dark part of a room"],[21,17,".",0,"dark part of a room"],[22,17,".",0,"dark part of a room"],[23,17,".",0,"dark part of a room"],[24,17,".",0,"dark part of a room"],[25,17,".",0,"dark part of a room"],[26,17,".",0,"dark part of a room"],[27,17,".",7,"doorway"],[28,17,"#",7,"corridor"],[37,17,"|",7,"wall"],[38,17,".",0,"dark part of a room"],[39,17,".",0,"dark part of a room"],[40,17,".",0,"dark part of a room"],[41,17,".",0,"dark part of a room"],[42,17,".",0,"dark part of a room"],[43,17,".",0,"dark part of a room"],[44,17,".",0,"dark part of a room"],[45,17,".",0,"dark part of a room"],[46,17,".",0,"dark part of a room"],[47,17,".",0,"dark part of a room"],[48,17,".",0,"dark part of a room"],[49,17,".",0,"dark part of a room"],[50,17,"|",7,"wall"],[57,17,"-",7,"wall"],[58,17,"-",7,"wall"],[59,17,"-",7,"wall"],[60,17,"-",7,"wall"],[61,17,"-",7,"wall"],[62,17,"-",7,"wall"],[63,17,"-",7,"wall"],[64,17,"-",7,"wall"],[65,17,"-",7,"wall"],[71,17,"-",7,"wall"],[72,17,"-",7,"wall"],[73,17,"-",7,"wall"],[74,17,"-",7,"wall"],[19,18,"|",7,"wall"],[20,18,">",7,"staircase down"],[21,18,".",0,"dark part of a room"],[22,18,".",0,"dark part of a room"],[23,18,".",0,"dark part of a room"],[24,18,".",0,"dark part of a room"],[25,18,".",0,"dark part of a room"],[26,18,".",0,"dark part of a room"],[27,18,"|",7,"wall"],[37,18,"-",7,"wall"],[38,18,"-",7,"wall"],[39,18,"-",7,"wall"],[40,18,"-",7,"wall"],[41,18,"-",7,"wall"],[42,18,"-",7,"wall"],[43,18,"-",7,"wall"],[44,18,"-",7,"wall"],[45,18,"-",7,"wall"],[46,18,"-",7,"wall"],[47,18,"-",7,"wall"],[48,18,"-",7,"wall"],[49,18,"-",7,"wall"],[50,18,"-",7,"wall"],[64,18,"#",7,"corridor"],[19,19,"-",7,"wall"],[20,19,"-",7,"wall"],[21,19,"-",7,"wall"],[22,19,"-",7,"wall"],[23,19,"-",7,"wall"],[24,19,"-",7,"wall"],[25,19,"-",7,"wall"],[26,19,"-",7,"wall"],[27,19,"-",7,"wall"]],"lastSeenTurn":10}}}};
+
+</script>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const NIB='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 22 6.5 12.5 9 4h6l2.5 8.5z"/><path d="M12 22v-7.5"/><circle cx="12" cy="12.6" r="1.6"/><path d="M9 4h6"/></svg>';
+const NIBCAP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="7.5" y="2.5" width="9" height="19" rx="3"/><path d="M16.5 6h1.5v8"/></svg>';
+
+/* ---------------- scene + state definitions ---------------- */
+const S=window.FJ;
+function rel(h,x,y){
+  const dx=x-h.x,dy=y-h.y; if(!dx&&!dy) return 'under you';
+  const p=[]; if(dy) p.push(Math.abs(dy)+(dy<0?' north':' south')); if(dx) p.push(Math.abs(dx)+(dx<0?' west':' east'));
+  return p.join(', ');
+}
+const STATES={
+ play:{label:'Play',scene:'shop',voice:'idle',
+   tag:{x:75,y:16},
+   ann:[{type:'circle',x:74,y:13,n:1,faded:true}],
+   notes:[
+     ['t','T1'],
+     ['ink','Morning, Agnes. Kitten’s right behind you — keep her close in shops, she’s a decent thief.',true],
+     ['t','T3'],
+     ['you','who’s the @ by the door?','spoken'],
+     ['ink','That’s Hebiwerie, the shopkeeper <span class="fn">1</span> — peaceful. Two north, one west of you, standing in the doorway.'],
+     ['ref','<b>checked</b> &nbsp;tile <code>(74,13)</code> · “peaceful Hebiwerie”'],
+     ['you','and the potion I’m on?','typed'],
+     ['ink','A fizzy potion, 333 zorkmids. You’ve got no gold, so — look, don’t touch.'],
+     ['fold','<b>Folded note · mild spoiler</b>That price narrows down what it is. Want me to unfold it? Say “unfold” or press <kbd>F8</kbd>.'],
+   ]},
+ speak:{label:'Companion speaking',scene:'shop',voice:'speaking',
+   ann:[{type:'route',unknown:['73,10','72,9','71,8','70,7']},{type:'circle',x:58,y:11,big:true},{type:'label',x:50.5,y:17.05,text:'① fountain · about 20 steps',size:1.1},{type:'label',x:57.5,y:2.7,text:'② not mapped yet',size:.95,pencil:true},{type:'leader',x1:66.5,y1:3.1,x2:70.6,y2:7.2,pencil:true,bend:-6}],
+   notes:[
+     ['t','T3'],
+     ['you','who’s the @ by the door?','spoken',true],
+     ['ink','That’s Hebiwerie, the shopkeeper — peaceful. Two north, one west of you.',true],
+     ['you','and the potion I’m on?','typed',true],
+     ['ink','A fizzy potion, 333 zorkmids. No gold on you, so look, don’t touch.',true],
+     ['you','okay. where’s the nearest fountain?','spoken'],
+     ['ref','<b>looked up</b> &nbsp;your map of Dlvl 3 · route search, 20 steps'],
+     ['live','Closest one’s in the little room west of the shop <span class="fn">1</span> — about twenty steps. Out the door north, then the corridor bends down-left. One stretch <span class="fn">2</span> you haven’t mapped yet.'],
+   ]},
+ menu:{label:'Menu open',scene:'menu',voice:'idle',
+   card:true,
+   notes:[
+     ['t','T1'],
+     ['you','what’s the o?','spoken',true],
+     ['ink','A goblin, three east of you. Force bolt it — Z, a, then l.',true],
+     ['t','T4'],
+     ['you','what did I just pick up?','spoken'],
+     ['ink','p — a scroll labeled ASHPD SODALG. Unidentified.'],
+     ['t','T5'],
+     ['you','how do I name it so I remember?','spoken'],
+     ['ink','Pick <b>o</b> in that menu, then <b>p</b>. Naming the <i>type</i> means every ASHPD SODALG you find later shows your name too.'],
+     ['ref','<b>source</b> &nbsp;Guidebook 5.0 · <code>#call</code> / <code>docallcmd()</code>'],
+   ]},
+ yn:{label:'Yes/no prompt',scene:'quaff',voice:'listening',
+   slip:{kind:'yn',q:'Drink from the fountain?',opts:[['y','yes'],['n','no',true]]},
+   notes:[
+     ['t','T1'],
+     ['ink','Welcome back, Agnes. Kitten’s north of you; there’s a goblin three squares east.',true],
+     ['t','T3'],
+     ['you','what’s the curly thing up-left?','spoken'],
+     ['ink','A fountain — one north, one west. Kitten’s just past it.'],
+     ['t','T4'],
+     ['ink','Heads up: the game is asking whether to drink. <b>n</b> is the default — Enter or Esc says no.'],
+     ['you','<span class="live">is it safe to drink from it, or</span>','spoken'],
+   ]},
+ more:{label:'--More--',scene:'more',voice:'thinking',
+   slip:{kind:'more'},
+   notes:[
+     ['t','T1'],
+     ['you','is the goblin dead?','spoken',true],
+     ['ink','Yes — your force bolt got it. The corpse is three squares east of the stairs.',true],
+     ['t','T3'],
+     ['ink','Careful — on turn 3, praying almost always annoys your god. Still want to? <b>n</b> to back out.',true],
+     ['you','yes, I want to see what happens','spoken',true],
+     ['t','T6'],
+     ['you','uh oh. is Anhur angry?','spoken'],
+     ['ref busy','<b>reading</b> &nbsp;NetHackWiki · Prayer'],
+     ['thinking'],
+   ]},
+ atlas:{label:'Level pages',scene:'deep',voice:'idle',view:'0:2',
+   ann:[{type:'circle',x:31,y:2,big:true},{type:'circle',x:10,y:10,n:0},{type:'label',x:35,y:2.15,text:'① down to the Mines',size:1.1},{type:'label',x:8.6,y:14.3,text:'you came in here',size:.9,pencil:true},{type:'leader',x1:12.6,y1:13.4,x2:10.7,y2:11.2,pencil:true,bend:-4}],
+   notes:[
+     ['t','T11'],
+     ['you','where were the Mines stairs again?','spoken'],
+     ['ink','Dlvl 2, top middle <span class="fn">1</span> — about twenty right and eight up from the up stairs. I’ve turned back to that page for you.'],
+     ['ref','<b>looked up</b> &nbsp;dungeon overview · level memory, Dlvl 2'],
+   ]},
+};
+const PAGENOTES={
+ shop:[['@','c15','Hebiwerie’s general store','you’re inside'],['{','c12','3 fountains','west half of the level'],['^','c6','dart trap, rolling boulder trap','middle room'],['^','c12','anti-magic field','north-middle room'],['<','c7','up stairs top-left','down stairs next door']],
+ menu:[['{','c12','fountain','north-west corner'],['<','c11','up stairs — exits the dungeon'],['+','c3','closed door, east wall'],['%','c7','goblin corpse','your kill, T1']],
+ quaff:[['{','c12','fountain — you’re standing on it'],['<','c11','up stairs — exits the dungeon'],['+','c3','closed door, east wall'],['?','c15','scroll on the floor','three south, two east']],
+ more:[['{','c12','fountain','one north, one west'],['<','c11','up stairs — exits the dungeon'],['+','c3','closed door, east wall'],['?','c15','scroll on the floor','two south, one east']],
+};
+const ORDER=['play','speak','menu','yn','more','atlas'];
+
+/* ---------------- sizing ---------------- */
+function fit(){
+  const W=innerWidth,H=innerHeight;
+  const mw=W>=1800?440:W>=1400?372:330;
+  document.documentElement.style.setProperty('--margin-w',mw+'px');
+  const availW=W-36-mw-56-22-6;
+  const availH=H-44-362;
+  let fs=Math.min(availW/48, availH/26.25, 26);
+  fs=Math.max(14,Math.floor(fs*4)/4);
+  document.documentElement.style.setProperty('--fs',fs+'px');
+  return fs;
+}
+
+/* ---------------- renderers ---------------- */
+let cur='play', cellsByPos={}, heroPos=null;
+function classesFor(c,isHero){
+  const [x,y,ch,col,desc]=c;
+  if(isHero) return 'hero';
+  if(ch==='.' && /floor|dark part|doorway/.test(desc)) return 'flr'+(col===0?' dark':'');
+  if(ch==='#' && desc==='corridor') return 'cor';
+  if(/wall/.test(desc)) return 'c'+col;
+  return 'c'+col+' obj';
+}
+function renderMap(cells,hero){
+  cellsByPos={}; heroPos=hero;
+  const rows=Array.from({length:21},()=>Array(80).fill(null));
+  for(const c of cells){ if(c[1]<21&&c[0]<80){rows[c[1]][c[0]]=c; cellsByPos[c[0]+','+c[1]]=c;} }
+  $('#pre').innerHTML=rows.map((r,y)=>r.map((c,x)=>{
+    if(!c) return '<span> </span>';
+    const isHero=hero&&hero.x===x&&hero.y===y;
+    return `<span class="${classesFor(c,isHero)}">${esc(c[2])}</span>`;
+  }).join('')).join('\n');
+  // rulers
+  let rx='';for(let x=0;x<80;x+=10) rx+=`<span style="left:calc(var(--cw)*${x})">${x}</span>`;
+  $('#rx').innerHTML=rx;
+  let ry='';for(let y=0;y<21;y+=5) ry+=`<span style="top:calc(var(--ch)*${y})">${y}</span>`;
+  $('#ry').innerHTML=ry;
+}
+function mast(sc,st){
+  const f=sc.status, g=sc.game;
+  const hp=+f.hp,hpm=+f.hp_max,pw=+f.power,pwm=+f.power_max;
+  const lv=sc.level;
+  const conds=(sc.conditions||[]).map(c=>`<span class="stamp">${esc(c)}</span>`).join('');
+  const dname=lv.dungeon.replace('The ','');
+  const overview=(sc.overview||[]).filter(l=>/^\s{6}/.test(l)).map(l=>l.trim());
+  const flavour=st.view?'':(overview.length?overview[overview.length-1].replace(/\.$/,''):'');
+  $('#mast').innerHTML=`
+   <div class="who"><h1>${esc(f.title)}</h1><p>${cap(g.race==='elf'?'elven':g.race)} ${g.role} · ${cap(g.alignment)} · ${cap(g.gender)}</p></div>
+   <div class="vitals">
+     <div class="gauge ${hp*3<hpm?'low':''}"><div class="lab">Hit points <b>${hp}<small>/${hpm}</small></b></div><div class="bar"><i style="width:${100*hp/hpm}%"></i></div></div>
+     <div class="gauge pw"><div class="lab">Power <b>${pw}<small>/${pwm}</small></b></div><div class="bar"><i style="width:${100*pw/pwm}%"></i></div></div>
+     <div class="attrs">${['St','Dx','Co','In','Wi','Ch'].map((k,i)=>`<div>${k}<b>${f[['str','dex','con','int','wis','cha'][i]]}</b></div>`).join('')}</div>
+     <div class="attrs minor"><div>AC<b>${f.ac}</b></div><div>Lvl<b>${f.xp_level}<small style="font-size:11px;color:var(--pencil)">/${f.exp_points}</small></b></div><div>Gold<b>$${f.gold}</b></div></div>
+   </div>
+   <div class="where"><div class="dl">${f.level_desc.replace(':',' ')} <em>· ${esc(dname)}</em></div>
+     <div class="meta">${flavour?esc(flavour)+' · ':''}Turn <b>${f.time}</b>${conds?`<span class="conds">${conds}</span>`:''}<span class="keys-to" title="Where your keystrokes go">⌨ keys → game</span></div></div>`;
+}
+const cap=s=>s?s[0].toUpperCase()+s.slice(1):s;
+function rail(sc,st){
+  const r=$('#rail');
+  if(st.slip&&st.slip.kind==='yn'){
+    r.innerHTML=`<span class="k">Asks</span><div class="slip"><span class="tag">Question</span><span class="q">${esc(st.slip.q)}</span>
+     <span class="opts">${st.slip.opts.map(([k,l,d])=>`<span class="opt ${d?'def':''}"><kbd class="cap">${k}</kbd>${l}</span>`).join('')}</span></div>`;
+  } else if(st.slip&&st.slip.kind==='more'){
+    r.innerHTML=`<span class="k">Now</span><div class="slip"><span class="q" style="font-weight:500">${esc(sc.moreText)}</span>
+      <span class="more"><kbd class="cap">⏎</kbd>more</span></div>`;
+  } else if(st.card){
+    r.innerHTML=`<span class="k">Now</span><div class="msg" style="color:var(--print-2)"><i>Menu open — choose a letter, or</i> <kbd class="cap" style="font-size:11px;height:20px">Esc</kbd></div>`;
+  } else {
+    const m=sc.messages[sc.messages.length-1];
+    r.innerHTML=`<span class="k">Latest</span><div class="msg"><span class="t">T${m[0]}</span>${esc(m[1])}</div>`;
+  }
+}
+function journal(sc,st){
+  let ms=sc.messages.slice().reverse().filter(m=>m[1].trim()!=='#');
+  let html='';
+  if(st.slip&&st.slip.kind==='more'){
+    html+=`<li><span class="t">T${sc.status.time}</span><span>${esc(sc.moreText)}</span><span class="more">--More--</span></li>`;
+    ms=ms.filter(m=>!/begin praying|finish your prayer|rings out/.test(m[1]));
+  }
+  html+=ms.map((m,i)=>`<li class="${(html||i)?'old':''}"><span class="t">T${m[0]}</span><span>${esc(m[1].trim())}</span></li>`).join('');
+  $('#journal').innerHTML=html;
+  $('#jmeta').textContent='newest first · Ctrl-P shows the full log';
+}
+const CLASSORD=['weapons','armor','food','potions','scrolls','spellbooks','rings','wands','amulets','tools'];
+const CLASSNAME={weapons:'Weapons',armor:'Armor',food:'Comestibles',potions:'Potions',scrolls:'Scrolls',spellbooks:'Spellbooks',rings:'Rings',wands:'Wands',amulets:'Amulets',tools:'Tools'};
+const CLASSCOL={weapons:'c7',armor:'c3',food:'c3',potions:'c5',scrolls:'c7',spellbooks:'c4',rings:'c11',wands:'c6',amulets:'c6',tools:'c3'};
+function pack(sc){
+  const inv=sc.inventory, by={};
+  for(const it of inv){(by[it[2]]=by[it[2]]||[]).push(it)}
+  const fmt=t=>{
+    let s=esc(t).replace(/^(a|an|the) /,''), tag='';
+    const m=s.match(/\s*\((weapon in (?:right )?hands?|being worn|alternate weapon; not wielded|weapon in hand)\)/);
+    if(m){s=s.replace(m[0],''); tag=m[1].replace('alternate weapon; not wielded','alternate').replace(/weapon in (right )?hands?/,'in hand').replace('being worn','worn');}
+    s=s.replace(/called (.+)$/,(a,b)=>`called <q>${b}</q>`).replace(/^(blessed|uncursed|cursed) /,'<s>$1</s> ');
+    return s+(tag?`<u>${tag}</u>`:'');
+  };
+  $('#pack').className='pack'+(inv.length>6?' three':'');
+  $('#pack').title='';$('#pack').innerHTML=CLASSORD.filter(c=>by[c]).map(c=>`<div class="cls"><b><i class="${CLASSCOL[c]}">${esc(by[c][0][3])}</i>${CLASSNAME[c]}</b>${by[c].map(it=>`<div class="it" title="${esc(it[1])}"><kbd>${it[0]}</kbd><span>${fmt(it[1])}</span></div>`).join('')}</div>`).join('');
+  $('#pmeta').textContent=`${inv.length} items · i for full inventory`;
+}
+function margin(sc,st){
+  const m=$('#margin');
+  const vlab={idle:['Pen capped','hold F2 to talk'],listening:['Listening','writing down what you say'],thinking:['Thinking','consulting references'],speaking:['Speaking','writing as it talks']}[st.voice];
+  let contents='';
+  if(st.view){
+    const lv=sc.levels;
+    const ov=sc.overview;
+    const pg=(k,sub,cls)=>{const L=lv[k];return `<div class="pg ${cls||''} ${k===st.view?'on':''}">${thumb(L.cells, k==='0:4'?sc.hero:null)}<b>${L.info.desc.replace(':',' ')}${k==='0:4'?' <small>NOW</small>':''}</b><span>${sub}</span></div>`};
+    contents=`<div class="contents">
+      <div class="mh"><h2>Contents</h2><span>F6 / ⇧F6 to flip</span></div>
+      <div class="br">The Dungeons of Doom</div>
+      ${pg('0:1','arrival · seen T2')}
+      ${pg('0:2','stairs to the Mines · seen T7')}
+      ${pg('2:1','Gnomish Mines · stairs only','mines')}
+      ${pg('0:3','a general store · seen T9')}
+      ${pg('0:4','a scroll shop · you are here')}
+    </div>`;
+  } else if(PAGENOTES[st.scene]){
+    contents=`<div class="pnotes"><div class="mh"><h2>On this page</h2><span>kept by your companion</span></div><ul>${PAGENOTES[st.scene].map(([g,c,t,s])=>`<li><i class="${c}">${esc(g)}</i><span>${t}${s?`<small>${s}</small>`:''}</span></li>`).join('')}</ul></div>`;
+  }
+  const notes=st.notes.map(n=>{
+    const [k,a,b,c]=n;
+    if(k==='t') return `<div class="n-t">${a}</div>`;
+    if(k==='you') return `<div class="n-you ${b||''}" style="${c?'opacity:.55':''}">${a}</div>`;
+    if(k==='ink') return `<div class="n-ink ${b?'old':''}">${a}</div>`;
+    if(k==='live') return `<div class="n-ink" id="live">${a}</div>`;
+    if(k.startsWith('ref')) return `<div class="${k}">${a}</div>`;
+    if(k==='fold') return `<div class="fold">${a}</div>`;
+    if(k==='thinking') return `<div class="thinking"><i></i><i></i><i></i></div>`;
+  }).join('');
+  m.innerHTML=`${contents}
+    <div class="mh"><h2>Margin notes</h2><span>your companion</span></div>
+    <div class="notes">${notes}</div>
+    <div class="pen" data-v="${st.voice}">
+      <div class="nib">${st.voice==='idle'?NIBCAP:NIB}</div>
+      <div class="st"><b>${vlab[0]}</b><span>${vlab[1]}</span></div>
+      <svg class="trace" id="trace" viewBox="0 0 280 26" preserveAspectRatio="none"></svg>
+      <div class="write"><span>Write a note to your companion…</span><kbd>F4</kbd></div>
+      <div class="keys"><span><kbd>F2</kbd> hold to talk</span><span><kbd>F3</kbd> mic on/off</span><span><kbd>F9</kbd> hush</span><span><kbd>F7</kbd> sources</span></div>
+    </div>`;
+  if(st.voice==='speaking') splitLive();
+  traceLoop(st.voice);
+}
+function splitLive(){
+  const el=$('#live'); if(!el) return;
+  const parts=el.innerHTML.split(/(<span class="fn">\d<\/span>|\s+)/).filter(p=>p!=='');
+  let i=0;
+  el.innerHTML=parts.map(p=>{
+    if(/^\s+$/.test(p)) return p;
+    const d=(i++*0.07).toFixed(2);
+    const wet=i>parts.length/2-6?' wet':'';
+    return `<span class="w${wet}" style="animation-delay:${d}s">${p}</span>`;
+  }).join('');
+}
+let traceRAF=null;
+function traceLoop(v){
+  cancelAnimationFrame(traceRAF);
+  const svg=$('#trace'); if(!svg) return;
+  const col=v==='speaking'?'#22407c':v==='listening'?'#3a342c':'#b5ab9a';
+  let t=0;
+  const step=()=>{
+    t+=1;
+    let d='M0 13';
+    for(let x=0;x<=280;x+=3){
+      let a=0;
+      if(v==='speaking'||v==='listening'){
+        const env=Math.max(0,Math.sin((x+t*2)/38)*.8+Math.sin((x+t*3.1)/17)*.4);
+        a=Math.sin(x*.9+t*.4)*env*9*(v==='listening'?.8:1)+Math.sin(x*.37-t*.2)*env*2.5;
+      } else if(v==='thinking'){
+        a=Math.sin(x/9+t/12)*1.2;
+      }
+      const fade=x>250?(280-x)/30:1;
+      d+=` L${x} ${(13+a*fade).toFixed(1)}`;
+    }
+    svg.innerHTML=`<line x1="0" y1="13" x2="280" y2="13" stroke="rgba(60,45,25,.12)" stroke-width="1"/><path d="${d}" fill="none" stroke="${col}" stroke-width="${v==='idle'?1:1.4}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+    if(v!=='idle') traceRAF=requestAnimationFrame(step);
+  };
+  step();
+}
+function thumb(cells,hero){
+  let r='';
+  for(const c of cells){
+    const [x,y,ch,col,desc]=c;
+    let f='#b8ae9c';
+    if(/wall/.test(desc)) f='#5d564c';
+    else if(ch==='#') f='#c9bfae';
+    else if(/door/.test(desc)) f='#7a4419';
+    else if(ch==='<'||ch==='>') f='#a3241b';
+    else if(ch==='{') f='#2f63d6';
+    r+=`<rect x="${x*2}" y="${y*2}" width="2" height="2" fill="${f}"/>`;
+  }
+  if(hero) r+=`<circle cx="${hero.x*2+1}" cy="${hero.y*2+1}" r="3" fill="rgba(255,206,40,.8)"/>`;
+  return `<svg viewBox="0 0 160 42" preserveAspectRatio="xMidYMid meet">${r}</svg>`;
+}
+
+/* ---------------- ink annotations on the map ---------------- */
+function cellPx(){const fs=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs'));return [fs*.6,fs*1.25,fs]}
+function seeded(n){let s=n*9301+49297;return()=>((s=(s*9301+49297)%233280)/233280)}
+function handCircle(cx,cy,rx,ry,seed){
+  const R=seeded(seed); const a0=-2.2+R()*.5, sweep=Math.PI*2+0.55; const pts=[];
+  for(let i=0;i<=40;i++){
+    const a=a0+sweep*i/40, wob=1+(R()-.5)*.05+(i/40)*.10;
+    pts.push([cx+Math.cos(a)*rx*wob, cy+Math.sin(a)*ry*wob]);
+  }
+  return 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L');
+}
+function smoothPath(pts){
+  if(pts.length<2) return '';
+  let d=`M${pts[0][0]} ${pts[0][1]}`;
+  for(let i=1;i<pts.length-1;i++){
+    const mx=(pts[i][0]+pts[i+1][0])/2,my=(pts[i][1]+pts[i+1][1])/2;
+    d+=` Q${pts[i][0]} ${pts[i][1]} ${mx} ${my}`;
+  }
+  const l=pts[pts.length-1]; d+=` L${l[0]} ${l[1]}`; return d;
+}
+function annotate(st,sc){
+  const [cw,ch,fs]=cellPx(); const W=cw*80,H=ch*21;
+  const ov=$('#ov'); ov.setAttribute('width',W); ov.setAttribute('height',H); ov.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const C=(x,y)=>[(x+.5)*cw,(y+.5)*ch];
+  let out=`<defs><filter id="rough"><feTurbulence baseFrequency=".9" numOctaves="1" seed="3"/><feDisplacementMap in="SourceGraphic" scale="1.3"/></filter>
+    <marker id="arr" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 L8 5 L1 9" fill="none" stroke="#22407c" stroke-width="1.6" stroke-linecap="round"/></marker>
+    <marker id="arrp" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L8 5 L1 9" fill="none" stroke="#6d665b" stroke-width="1.6" stroke-linecap="round"/></marker></defs>`;
+  let under='';
+  for(const a of (st.ann||[])){
+    if(a.type==='circle'){
+      const [cx,cy]=C(a.x,a.y); const rx=cw*(a.big?1.55:1.25), ry=ch*(a.big?.95:.8);
+      const op=a.faded?.45:.92;
+      out+=`<path class="${a.faded?'':'draw'}" style="--len:${Math.round(2*Math.PI*Math.max(rx,ry)*1.25)}" d="${handCircle(cx,cy,rx,ry,a.x*7+a.y)}" fill="none" stroke="#22407c" stroke-opacity="${op}" stroke-width="${a.big?2.3:1.9}" stroke-linecap="round" filter="url(#rough)"/>`;
+      if(a.n) out+=`<text class="hw ${a.faded?'':'fadein'}" x="${cx+rx*.92}" y="${cy-ry*1.05}" font-size="${fs*.95}" font-weight="700" style="opacity:${a.faded?.5:1}">${a.n}</text>`;
+    }
+    if(a.type==='route'&&sc.route){
+      // drawn on the under-layer so printed glyphs stay on top of the ink
+      const r=sc.route.slice(1,-2); const unknown=new Set(a.unknown||[]);
+      const segs=[]; let cs=null;
+      r.forEach((p,i)=>{
+        const u=unknown.has(p[0]+','+p[1]);
+        if(!cs||cs.u!==u){ const prev=cs?cs.p[cs.p.length-1]:null; cs={u,p:prev?[prev]:[]}; segs.push(cs); }
+        cs.p.push(p);
+      });
+      // known segments that border an unknown one should reach into it
+      segs.forEach((sg,i)=>{ if(!sg.u&&segs[i+1]) sg.p.push(segs[i+1].p[1]||segs[i+1].p[0]); });
+      segs.forEach((sg,i)=>{
+        const d=smoothPath(sg.p.map(p=>C(p[0],p[1])));
+        under+= sg.u
+          ? `<path class="fadein d2" d="${d}" fill="none" stroke="#6d665b" stroke-width="2" stroke-dasharray="0.1 6" stroke-linecap="round"/>`
+          : `<path class="draw d2" style="--len:900" d="${d}" fill="none" stroke="#3d5f9e" stroke-width="${cw*.42}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".22"/>
+             <path class="draw d2" style="--len:900" d="${d}" fill="none" stroke="#22407c" stroke-width="1.6" stroke-linecap="round" stroke-opacity=".75" ${i===segs.length-1?'marker-end="url(#arr)"':''}/>`;
+      });
+    }
+    if(a.type==='label'){
+      const x=a.x*cw, y=a.y*ch;
+      out+=`<text class="hw fadein ${a.pencil?'':'d2'}" x="${x}" y="${y}" font-size="${fs*1.18*(a.size||1)}" font-weight="600" ${a.pencil?'style="fill:#6d665b"':''}>${esc(a.text)}</text>`;
+    }
+    if(a.type==='leader'){
+      const [x1,y1]=[a.x1*cw,a.y1*ch],[x2,y2]=[a.x2*cw,a.y2*ch];
+      const mx=(x1+x2)/2+(a.bend||10), my=(y1+y2)/2-(a.bend||10);
+      out+=`<path class="fadein ${a.pencil?'':'d2'}" d="M${x1} ${y1} Q${mx} ${my} ${x2} ${y2}" fill="none" stroke="${a.pencil?'#6d665b':'#22407c'}" stroke-width="1.3" stroke-linecap="round" marker-end="url(#arr${a.pencil?'p':''})"/>`;
+    }
+  }
+  ov.innerHTML=out;
+  const ovu=$('#ovu'); ovu.setAttribute('width',W); ovu.setAttribute('height',H); ovu.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  ovu.innerHTML=out.slice(0,out.indexOf('</defs>')+7)+under;
+}
+
+/* ---------------- menu card ---------------- */
+function card(sc,st){
+  document.querySelectorAll('.icard').forEach(e=>e.remove());
+  if(!st.card) return;
+  const m=sc.menu; const [cw,ch,fs]=cellPx();
+  const el=document.createElement('div'); el.className='icard';
+  el.style.left=(22+cw*33)+'px'; el.style.top=(14+ch*1.6)+'px';
+  el.innerHTML=`<h3>${esc(m.prompt)}<small>pick one</small></h3><ul>${m.items.map(i=>`<li class="${i.ch==='o'?'pick':''}"><kbd class="cap">${i.ch}</kbd>${esc(i.text)}</li>`).join('')}</ul>
+   <div class="foot"><span><kbd>a–z</kbd> choose</span><span><kbd>Esc</kbd> cancel</span><span><kbd>&gt;</kbd> <kbd>&lt;</kbd> page</span><span style="margin-left:auto">page 1 of ${m.pages}</span></div>
+   <svg style="position:absolute;left:-74px;top:122px;overflow:visible" width="80" height="40"><path class="draw" style="--len:140" d="M2 34 C 20 12, 44 4, 80 6" fill="none" stroke="#22407c" stroke-width="2" stroke-linecap="round" marker-end="url(#arr2)"/><defs><marker id="arr2" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 L8 5 L1 9" fill="none" stroke="#22407c" stroke-width="1.6" stroke-linecap="round"/></marker></defs></svg>
+   <div class="note fadein" style="left:-168px;top:160px;transform:rotate(-4deg)">this one, then <b>p</b></div>`;
+  $('#mapframe').appendChild(el);
+}
+
+/* ---------------- hover specimen tag ---------------- */
+function showTag(x,y,pinned){
+  hideTag();
+  const c=cellsByPos[x+','+y]; if(!c) return;
+  const [cw,ch]=cellPx();
+  const g=$('#grid');
+  const ring=document.createElement('div'); ring.className='cellring';
+  Object.assign(ring.style,{left:(x*cw-2)+'px',top:(y*ch-1)+'px',width:(cw+4)+'px',height:(ch+2)+'px'});
+  const t=document.createElement('div'); t.className='tagx';
+  const flip=x>60;
+  t.style.left=((x+1)*cw)+'px'; t.style.top=((y+.5)*ch)+'px';
+  if(flip){t.style.left='auto';t.style.right=((80-x)*cw)+'px';t.style.transform='translate(-10px,-50%)';t.style.flexDirection='row-reverse'}
+  t.innerHTML=`<span class="tie"></span><div class="card"><div class="nm">${esc(cap(c[4]))}</div><div class="rel">${esc(c[2])} · ${rel(heroPos,x,y)}</div></div>`;
+  g.appendChild(ring); g.appendChild(t);
+}
+function hideTag(){document.querySelectorAll('.tagx,.cellring').forEach(e=>e.remove())}
+$('#grid').addEventListener('mousemove',e=>{
+  const [cw,ch]=cellPx(); const r=$('#grid').getBoundingClientRect();
+  const x=Math.floor((e.clientX-r.left)/cw), y=Math.floor((e.clientY-r.top)/ch);
+  if(cellsByPos[x+','+y]) showTag(x,y); else hideTag();
+});
+$('#grid').addEventListener('mouseleave',()=>{hideTag(); const st=STATES[cur]; if(st.tag) showTag(st.tag.x,st.tag.y,true)});
+
+/* ---------------- tabs ---------------- */
+function tabs(sc,st){
+  let html='';
+  if(sc.levels){
+    const order=[['0:1','Dlvl 1'],['0:2','Dlvl 2'],['2:1','Mines 3','mines'],['0:3','Dlvl 3'],['0:4','Dlvl 4']];
+    html=order.map(([k,l,c])=>`<span class="tab ${c||''} ${k===(st.view||'0:4')?'on':''} ${k==='0:4'?'now':''}">${l}</span>`).join('');
+  } else {
+    const n=parseInt(sc.status.level_desc.split(':')[1]);
+    for(let i=1;i<=n;i++) html+=`<span class="tab ${i===n?'on now':''}">Dlvl ${i}</span>`;
+  }
+  html+=`<span class="hint">level pages · <kbd>F6</kbd> flip back</span>`;
+  $('#tabs').innerHTML=html;
+}
+
+/* ---------------- state switch ---------------- */
+function show(name){
+  cur=name; const st=STATES[name]; const sc=S[st.scene];
+  fit();
+  tabs(sc,st);
+  mast(sc,st); rail(sc,st);
+  const page=$('#page');
+  page.classList.toggle('remembered',!!st.view);
+  document.querySelectorAll('.banner').forEach(e=>e.remove());
+  if(st.view){
+    const L=sc.levels[st.view];
+    renderMap(L.cells,null);
+    $('#rail').innerHTML=`<span class="k">Page</span><div class="msg"><b style="font-weight:600">Dlvl 2</b> <i style="color:var(--print-2)">· remembered, last seen T${L.lastSeenTurn} · Stairs down to the Gnomish Mines</i></div>
+      <div class="banner"><span>Looking back. Any game key returns to <b style="font-style:normal">Dlvl 4</b></span><kbd>Esc</kbd></div>`;
+  } else renderMap(sc.cells,sc.hero);
+  journal(sc,st); pack(sc); margin(sc,st);
+  annotate(st,sc); card(sc,st);
+  hideTag(); if(st.tag) showTag(st.tag.x,st.tag.y,true);
+  document.querySelectorAll('.demo button').forEach(b=>b.classList.toggle('on',b.dataset.s===name));
+  history.replaceState(null,'','#'+name+(document.body.classList.contains('clean')?'&clean':''));
+}
+const demo=$('#demo');
+ORDER.forEach((k,i)=>{const b=document.createElement('button');b.dataset.s=k;b.textContent=(i+1)+' '+STATES[k].label;b.onclick=()=>show(k);demo.appendChild(b)});
+addEventListener('keydown',e=>{
+  // mockup only: digits switch states. (In the real client, digits belong to the game.)
+  const i=parseInt(e.key); if(i>=1&&i<=ORDER.length&&!e.ctrlKey&&!e.metaKey) show(ORDER[i-1]);
+});
+let rt; addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>show(cur),80)});
+const h=location.hash.slice(1).split('&');
+if(h.includes('clean')) document.body.classList.add('clean');
+document.fonts.ready.then(()=>show(STATES[h[0]]?h[0]:'play'));
+</script>
+</body>
+</html>

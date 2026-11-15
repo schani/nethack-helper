@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetHack 5 · Mission Control (design proposal 2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --chrome:#E7E6E1; --panel:#FBFBF9; --paper:#FCFBF7; --well:#F2F1EC;
+  --line:#CFCCC4; --line2:#E2E0D9; --line3:#EDEBE5;
+  --ink:#16161A; --ink2:#46433D; --ink3:#7A766D; --ink4:#A8A49A; --ink5:#C9C5BC;
+  --caution:#A86400; --caution-hi:#E89B1E; --caution-bg:#FFF1D2; --caution-line:#EBC27A;
+  --warn:#C42420; --warn-bg:#FDE6E2; --warn-line:#F0A39B;
+  --pet:#2C7A31; --pet-bg:#E1F0DF;
+  --peace:#3B5A9A; --peace-bg:#E3E9F5;
+  --comms:#2A3BB8; --comms-bg:#EBEDFB; --comms-line:#B9C0EE;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --sans:'Inter',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --cw:9.25px; --rh:18.5px; --mfs:15.4px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--chrome);color:var(--ink);font-family:var(--sans);font-size:12px;
+  -webkit-font-smoothing:antialiased;font-feature-settings:'tnum' 1,'cv11' 1}
+button{font:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+#app{height:100vh;min-height:760px;display:grid;grid-template-rows:46px 1fr 26px}
+
+/* ───────── header ───────── */
+#top{display:grid;grid-template-columns:auto 1fr auto auto auto;align-items:stretch;background:var(--panel);border-bottom:1px solid var(--line)}
+#top>div{display:flex;align-items:center;padding:0 14px;border-right:1px solid var(--line2)}
+#top>div:last-child{border-right:0}
+.brand{width:26px;height:26px;background:var(--ink);color:#fff;display:grid;place-items:center;font:800 11px/1 var(--mono);letter-spacing:-.04em;margin-right:12px}
+.who .name{font-weight:700;font-size:14px;letter-spacing:-.01em}
+.who .sub{color:var(--ink3);font-size:11px;margin-top:1px}
+.readouts{gap:0;padding:0!important}
+.ro{display:flex;flex-direction:column;justify-content:center;padding:0 16px;height:100%;border-right:1px solid var(--line3)}
+.ro label,.lbl{font:600 9.5px/1 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--ink3)}
+.ro span{font:600 17px/1.1 var(--mono);letter-spacing:-.02em;margin-top:3px}
+.ro span small{font:500 11px var(--sans);color:var(--ink3);letter-spacing:0;margin-left:6px}
+.lamps{gap:6px}
+.lamp{font:700 10px/1 var(--sans);letter-spacing:.1em;padding:7px 9px;border:1px solid var(--line);color:var(--ink5);background:var(--well);min-width:86px;text-align:center}
+.lamp b{display:block;font:600 9.5px/1 var(--mono);letter-spacing:0;margin-top:3px;color:inherit;opacity:.9}
+body[data-alert=caution] .lamp.c{background:var(--caution-bg);border-color:var(--caution-line);color:var(--caution)}
+body[data-alert=warning] .lamp.w{background:var(--warn);border-color:var(--warn);color:#fff;animation:pulse1 1.1s ease-out 2}
+@keyframes pulse1{0%{box-shadow:0 0 0 0 rgba(196,36,32,.55)}100%{box-shadow:0 0 0 10px rgba(196,36,32,0)}}
+.focus{gap:8px}
+.focus .pill{font:700 10px/1 var(--mono);padding:6px 8px;background:var(--ink);color:#fff;letter-spacing:.04em}
+.focus .pill.menu{background:#fff;color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.focus .pill.comms{background:var(--comms)}
+.feed{gap:7px;color:var(--ink3);font:500 10.5px var(--mono)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--pet);display:inline-block}
+
+/* ───────── layout ───────── */
+main{display:grid;grid-template-columns:clamp(244px,19.2vw,330px) minmax(0,1fr) clamp(332px,25.6vw,480px);gap:8px;padding:8px;min-height:0}
+.col{display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);display:flex;flex-direction:column;min-height:0;min-width:0;position:relative}
+.ph{height:25px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line2)}
+.ph .ix{font:500 9.5px var(--mono);color:var(--ink4)}
+.ph .t{font:700 10px/1 var(--sans);letter-spacing:.11em;text-transform:uppercase;color:var(--ink2)}
+.ph .meta{margin-left:auto;font:500 10.5px var(--mono);color:var(--ink3);white-space:nowrap}
+.ph .fk{font:600 9px/1 var(--mono);color:var(--ink3);border:1px solid var(--line);padding:2px 3px;border-radius:2px;background:#fff}
+.pb{padding:9px 10px;min-height:0}
+.scroll{overflow:auto;scrollbar-width:thin;scrollbar-color:var(--ink5) transparent}
+
+/* ───────── vitals ───────── */
+.gauge{margin-bottom:9px}
+.gauge:last-child{margin-bottom:0}
+.g-row{display:flex;align-items:baseline;gap:6px}
+.g-row .lbl{width:22px}
+.g-val{font:700 22px/1 var(--mono);letter-spacing:-.04em}
+.g-max{font:500 12px var(--mono);color:var(--ink3)}
+.g-pct{margin-left:auto;font:600 10.5px var(--mono);color:var(--ink3)}
+.g-state{font:700 9.5px/1 var(--sans);letter-spacing:.08em;padding:3px 5px;border:1px solid var(--line);color:var(--ink3)}
+.bar{position:relative;height:8px;background:var(--well);border:1px solid var(--line);margin-top:5px}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--ink)}
+.bar .tk{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--ink4)}
+.bar-sm{height:6px}
+.ticks{position:relative;height:11px;font:500 8px/11px var(--mono);color:var(--ink4);letter-spacing:-.02em}
+.ticks span{position:absolute;transform:translateX(-50%)}
+.spark{display:block;width:100%;height:36px;margin-top:4px}
+.trend{display:flex;justify-content:space-between;font:500 9.5px var(--mono);color:var(--ink4);margin-top:1px}
+.trend b{font-weight:600;color:var(--ink3)}
+.hp.caution .g-val,.hp.caution .g-state{color:var(--caution)} .hp.caution .bar i{background:var(--caution-hi)}
+.hp.caution .g-state{border-color:var(--caution-line);background:var(--caution-bg)}
+.hp.warning{background:var(--warn-bg);margin:-9px -10px 9px;padding:9px 10px;border-bottom:1px solid var(--warn-line)}
+.hp.warning .g-val{color:var(--warn)} .hp.warning .bar i{background:var(--warn)} .hp.warning .bar{border-color:var(--warn-line);background:#fff}
+.hp.warning .g-state{background:var(--warn);border-color:var(--warn);color:#fff}
+.hp.warning .trend b{color:var(--warn)}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* scales + annunciator */
+.scale{display:grid;gap:2px}
+.crow{display:grid;grid-template-columns:44px 1fr;align-items:center;gap:6px;margin-bottom:6px}
+.scale span{font:600 8px/1 var(--sans);letter-spacing:.03em;text-align:center;padding:5px 0;background:var(--well);color:var(--ink4);border:1px solid var(--line3);text-transform:uppercase;white-space:nowrap;overflow:hidden}
+.scale span.on{background:#fff;color:var(--ink);border-color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+.scale span.on.cau{background:var(--caution-bg);color:var(--caution);border-color:var(--caution);box-shadow:inset 0 -2px 0 var(--caution)}
+.scale span.on.wrn{background:var(--warn);color:#fff;border-color:var(--warn);box-shadow:none}
+.ann{display:grid;grid-template-columns:repeat(5,1fr);gap:2px;margin-top:4px}
+.ann span{font:700 8.5px/1 var(--mono);text-align:center;padding:5px 0;border:1px solid var(--line3);color:var(--ink5);background:var(--panel);letter-spacing:.02em}
+.ann span.on.crit{background:var(--warn);border-color:var(--warn);color:#fff}
+.ann span.on.cau{background:var(--caution-bg);border-color:var(--caution);color:var(--caution)}
+.ann span.on.inf{background:var(--peace-bg);border-color:var(--peace);color:var(--peace)}
+.sub-h{display:flex;justify-content:space-between;align-items:baseline}
+.sub-h em{font:500 10px var(--mono);font-style:normal;color:var(--ink3)}
+.attrs{display:grid;grid-template-columns:repeat(6,1fr);border-top:1px solid var(--line2);border-left:1px solid var(--line2)}
+.attrs div{border-right:1px solid var(--line2);border-bottom:1px solid var(--line2);padding:4px 0 5px;text-align:center}
+.attrs div label{display:block;font:600 8.5px/1 var(--sans);letter-spacing:.08em;color:var(--ink3)}
+.attrs div b{display:block;font:600 14px/1.2 var(--mono);margin-top:2px}
+.attrs div.w2{grid-column:span 2}
+
+/* dungeon ladder */
+.ladder{display:flex;flex-direction:column;gap:5px}
+.dg-h{font:700 9px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:4px 0 1px;display:flex;align-items:center;gap:6px}
+.dg-h:after{content:'';flex:1;height:1px;background:var(--line2)}
+.lv{display:grid;grid-template-columns:24px auto 1fr;gap:7px;align-items:center;cursor:pointer;padding:2px;border:1px solid transparent}
+.lv:hover{border-color:var(--line)}
+.lv.cur{border-color:var(--ink);background:#fff}
+.lv.viewing{border-color:var(--comms);background:var(--comms-bg)}
+.lv .d{font:700 13px/1 var(--mono);text-align:right}
+.lv .d small{display:block;font:500 8.5px var(--mono);color:var(--ink4);margin-top:2px}
+.lv canvas{display:block;border:1px solid var(--line2);background:var(--paper)}
+.lv .ann2{font:500 10px/1.3 var(--sans);color:var(--ink2);min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.lv .ann2 .tag{display:inline-block;font:600 8.5px/1 var(--mono);padding:2px 3px;border:1px solid var(--line);color:var(--ink2);background:#fff;white-space:nowrap}
+.lv .ann2 .you{background:var(--ink);color:#fff;border-color:var(--ink)}
+.lv.branch{margin-left:14px;position:relative}
+.lv.branch:before{content:'';position:absolute;left:-10px;top:-8px;bottom:50%;border-left:1px solid var(--ink4);border-bottom:1px solid var(--ink4);width:8px}
+
+/* ───────── map ───────── */
+#mapPanel{flex:none}
+body[data-alert=warning] #mapPanel{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn)}
+.alertstrip{display:none;height:24px;align-items:center;gap:10px;padding:0 10px;font:600 11px var(--sans);flex:none}
+body[data-alert=warning] .alertstrip.w{display:flex;background:var(--warn);color:#fff}
+.alertstrip .sym{font:800 11px var(--mono)}
+.alertstrip .sep{opacity:.5}
+.alertstrip.info{display:flex;background:var(--well);color:var(--ink2);border-bottom:1px solid var(--line2)}
+.topline{height:28px;flex:none;display:flex;align-items:center;gap:10px;padding:0 10px 0 0;border-bottom:1px solid var(--line2);font:500 13px var(--mono);background:#fff;position:relative}
+.topline .tl-t{width:44px;flex:none;text-align:right;font:500 10px var(--mono);color:var(--ink4);padding-right:8px;border-right:1px solid var(--line2);height:100%;display:flex;align-items:center;justify-content:flex-end}
+.topline .tl-m{color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topline.ask{background:var(--ink);color:#fff}
+.topline.ask .tl-t{color:#9b98a0;border-color:#333}
+.topline.ask .tl-m{color:#fff;font-weight:700}
+.topline.more{box-shadow:inset 3px 0 0 var(--ink)}
+.topline.more .tl-m{color:var(--ink);font-weight:600}
+.kc{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:19px;padding:0 5px;font:700 11px/1 var(--mono);border:1px solid var(--ink3);border-bottom-width:2px;border-radius:3px;background:#fff;color:var(--ink)}
+.topline.ask .kc{background:#26262b;color:#fff;border-color:#55545c}
+.topline.ask .kc.def{background:#fff;color:var(--ink);border-color:#fff}
+.opt{display:inline-flex;align-items:center;gap:5px;font:500 11px var(--sans);color:#c9c7cf;margin-left:4px}
+.advice{margin-left:auto;display:inline-flex;gap:6px;align-items:center;font:600 10px var(--sans);letter-spacing:.06em;color:#c3c8ff;border:1px solid #4b52a8;padding:3px 7px;white-space:nowrap}
+.morekey{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font:700 10px var(--sans);letter-spacing:.1em;color:var(--ink)}
+.morekey .kc{animation:blink 1.2s steps(2) infinite;background:var(--ink);color:#fff;border-color:var(--ink)}
+@keyframes blink{50%{background:#fff;color:var(--ink)}}
+.mapwrap{position:relative;padding:4px 10px 6px 0;background:var(--paper);overflow:hidden}
+.ruler-x{display:flex;margin-left:44px;height:14px;font:500 8.5px/14px var(--mono);color:var(--ink4)}
+.ruler-x span{width:var(--cw);flex:none;position:relative;text-align:left;overflow:visible;white-space:nowrap}
+.ruler-x span.t5:after{content:'';position:absolute;left:calc(var(--cw)/2);bottom:0;height:3px;border-left:1px solid var(--ink5)}
+.ruler-x span.t10:after{height:5px;border-color:var(--ink4)}
+.ruler-x span.hx{color:var(--comms);font-weight:700}
+.ruler-x span.hx:after{content:'▾';border:0;left:calc(var(--cw)/2 - 3.5px);bottom:-3px;height:auto;font-size:8px;color:var(--comms)}
+.maprows{position:relative}
+.mrow{display:flex;height:var(--rh);align-items:center}
+.mrow .ry{width:44px;flex:none;text-align:right;padding-right:10px;font:500 8.5px var(--mono);color:var(--ink5)}
+.mrow .ry.r5{color:var(--ink4)}
+.mrow .ry.hy{color:var(--comms);font-weight:700}
+.mrow .c{width:var(--cw);height:var(--rh);flex:none;text-align:center;font:400 var(--mfs)/var(--rh) var(--mono);white-space:pre;position:relative;cursor:crosshair}
+.c.b{font-weight:700}
+.c.mh{background:#FBE1DD} .c.mt{background:#DCEFD9} .c.mp{background:#E1E8F5}
+.c.adj{box-shadow:inset 0 0 0 1.5px var(--warn);background:#F9CFC8}
+.c.hero{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.c.hov{box-shadow:inset 0 0 0 1.5px var(--comms)!important;background:var(--comms-bg)!important}
+.c.pin{box-shadow:inset 0 0 0 2px var(--comms)!important;background:var(--comms-bg)!important}
+.xh{position:absolute;pointer-events:none;background:rgba(42,59,184,.045)}
+.dim .mrow .c{opacity:.32}
+.dim .mrow .c.keep{opacity:1}
+.memtag{position:absolute;right:12px;top:6px;font:700 10px var(--sans);letter-spacing:.1em;color:var(--comms);background:var(--comms-bg);border:1px solid var(--comms-line);padding:4px 7px}
+.mfoot{height:26px;flex:none;display:flex;align-items:center;border-top:1px solid var(--line2);font:500 11px var(--mono);color:var(--ink2);background:#fff}
+.mfoot>div{padding:0 10px;height:100%;display:flex;align-items:center;gap:8px;border-right:1px solid var(--line3);white-space:nowrap;overflow:hidden}
+.mfoot .insp{flex:1;min-width:0}
+.mfoot .insp .g{font-weight:700;font-size:13px;width:12px;text-align:center}
+.mfoot .insp .rel{color:var(--comms);font-weight:600}
+.mfoot .under{flex:0 1 auto;max-width:46%;border-right:0!important}
+.ph .lgd{display:flex;gap:10px;margin-left:14px;font:500 10px var(--sans);color:var(--ink3)}
+.sw{display:inline-block;width:10px;height:10px;vertical-align:-1px;margin-right:4px;border:1px solid rgba(0,0,0,.12)}
+
+/* overlays: menu + text window */
+.ovl{position:absolute;background:#fff;border:1.5px solid var(--ink);box-shadow:0 10px 30px rgba(20,20,30,.16),0 1px 0 rgba(0,0,0,.05);display:flex;flex-direction:column;z-index:5}
+.ovl .oh{display:flex;align-items:center;gap:8px;padding:0 12px;height:28px;background:var(--ink);color:#fff}
+.ovl .oh .t{font:700 10px var(--sans);letter-spacing:.11em;text-transform:uppercase}
+.ovl .oh .meta{margin-left:auto;font:500 10.5px var(--mono);color:#b9b7bf}
+.ovl .q{padding:10px 14px 8px;font:700 14px var(--sans);border-bottom:1px solid var(--line2)}
+.ovl .items{padding:4px 0}
+.ovl .it{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:8px;padding:0 14px;height:27px;font:500 13px var(--sans)}
+.ovl .it:hover,.ovl .it.sel{background:var(--comms-bg)}
+.ovl .it .tag{font:600 9px var(--mono);color:var(--comms);letter-spacing:.04em}
+.ovl .of{display:flex;gap:14px;align-items:center;padding:8px 14px;border-top:1px solid var(--line2);font:500 10.5px var(--sans);color:var(--ink3);background:var(--well)}
+.ovl .of span{display:inline-flex;gap:5px;align-items:center}
+.ovl .of .kc{height:17px;min-width:17px;font-size:10px}
+.tw{font:400 12px/17px var(--mono);padding:8px 16px;columns:2;column-gap:28px;column-rule:1px solid var(--line2);flex:1;overflow:hidden;column-fill:auto}
+.tw div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;break-inside:avoid}
+.tw .h{font:700 10px/17px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--ink2);border-bottom:1px solid var(--line2);margin-bottom:2px}
+.tw .pre{color:var(--ink4)}
+.tw .lead{color:var(--ink3);font-family:var(--sans);font-size:11.5px;column-span:all;margin-bottom:6px}
+
+/* ───────── messages + contacts ───────── */
+.lower{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(0,1fr);gap:8px;flex:1;min-height:0}
+.msgs{font:500 12px/1.35 var(--sans)}
+.msg{display:grid;grid-template-columns:40px 3px 1fr;gap:8px;padding:2.5px 10px 2.5px 0;align-items:baseline}
+.msg .tn{font:500 10px var(--mono);color:var(--ink4);text-align:right}
+.msg .k{align-self:stretch;background:transparent}
+.msg.dmg .k{background:var(--warn)} .msg.pet .k{background:var(--pet)} .msg.q .k{background:var(--ink5)}
+.msg.old{color:var(--ink3)}
+.msg.now{font-weight:600}
+.msg .x{font:600 10px var(--mono);color:var(--ink3);margin-left:4px}
+.msg.q .tx{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+.msg.sep{border-top:1px solid var(--line3)}
+.tbl{width:100%;border-collapse:collapse;font:500 11.5px var(--sans)}
+.tbl td,.tbl th{padding:3px 6px;border-bottom:1px solid var(--line3);white-space:nowrap;text-align:left}
+.tbl th{font:700 8.5px var(--sans);letter-spacing:.09em;color:var(--ink3);text-transform:uppercase;background:var(--well);padding-top:4px;padding-bottom:4px}
+.tbl td.g{font:700 13px var(--mono);text-align:center;width:22px}
+.tbl td.n{font-family:var(--mono);font-size:11px;text-align:right;color:var(--ink2)}
+.tbl td.nm{white-space:normal}
+.tbl tr.sect td{font:700 9px var(--sans);letter-spacing:.1em;color:var(--ink3);text-transform:uppercase;padding-top:7px;border-bottom:1px solid var(--line2);background:var(--panel)}
+.disp{font:700 8.5px/1 var(--mono);padding:2px 4px;letter-spacing:.04em;border:1px solid}
+.disp.h{color:var(--warn);border-color:var(--warn-line);background:#fff}
+.disp.t{color:var(--pet);border-color:#A7CDA5;background:#fff}
+.disp.p{color:var(--peace);border-color:#AFC0E2;background:#fff}
+tr.adjrow td{background:var(--warn-bg)}
+tr.adjrow .disp.h{background:var(--warn);color:#fff;border-color:var(--warn)}
+.empty{padding:14px 10px;color:var(--ink3);font:500 11px var(--sans)}
+
+/* ───────── comms ───────── */
+#comms{flex:1.12 1 0;min-height:300px}
+.chstate{font:700 9.5px/1 var(--mono);letter-spacing:.06em;padding:4px 6px;border:1px solid var(--line);color:var(--ink3);display:inline-flex;gap:5px;align-items:center}
+.chstate .led{width:6px;height:6px;border-radius:50%;background:var(--ink5)}
+.chstate.listening{color:var(--comms);border-color:var(--comms-line)} .chstate.listening .led{background:var(--comms)}
+.chstate.speaking{background:var(--comms);border-color:var(--comms);color:#fff} .chstate.speaking .led{background:#fff;animation:blink2 .8s infinite}
+@keyframes blink2{50%{opacity:.25}}
+.vox{display:grid;grid-template-columns:34px 1fr auto;gap:4px 8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line2);background:#fff}
+.vox .lbl{font-size:8.5px}
+.wave{display:flex;align-items:center;gap:2px;height:22px}
+.wave i{flex:1;background:var(--line);height:var(--h);min-height:2px;border-radius:1px}
+.wave.mic.on i{background:var(--ink4)}
+.wave.ast.live i{background:var(--comms);animation:wv .9s ease-in-out infinite alternate;animation-delay:var(--d)}
+@keyframes wv{0%{transform:scaleY(.25)}100%{transform:scaleY(1)}}
+.vox .st{font:600 9.5px var(--mono);color:var(--ink3);text-align:right;white-space:nowrap}
+.vox .st.on{color:var(--comms)}
+.caption{padding:10px 12px;border-bottom:1px solid var(--comms-line);background:var(--comms-bg);font:500 14px/1.42 var(--sans);color:#9196BC}
+.caption .said{color:var(--ink)}
+.caption .cur{color:var(--ink);background:linear-gradient(transparent 62%,#C9CFF7 62%)}
+.caption .ch{display:flex;gap:6px;align-items:center;margin-bottom:5px}
+.trig{font:700 8.5px/1 var(--mono);letter-spacing:.05em;padding:3px 5px;background:var(--warn);color:#fff}
+.trig.n{background:var(--comms)}
+.tr{padding:4px 0}
+.te{display:grid;grid-template-columns:38px 30px 1fr;gap:6px;padding:4px 10px 4px 0;font:500 12px/1.42 var(--sans);align-items:baseline}
+.te .tn{font:500 10px var(--mono);color:var(--ink4);text-align:right}
+.te .wh{font:700 9px var(--mono);letter-spacing:.04em;color:var(--ink3)}
+.te.ast .wh{color:var(--comms)}
+.te.you .tx{color:var(--ink2)}
+.te.you .tx:before{content:'“';color:var(--ink4)} .te.you .tx:after{content:'”';color:var(--ink4)}
+.te.sys .tx{font:500 10.5px var(--mono);color:var(--ink3)}
+.te .via{font:500 9px var(--mono);color:var(--ink4);margin-left:5px}
+.te.ast.livebox .tx{color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;min-width:0}
+.te>div{min-width:0}
+.chip{font:500 9.5px/1 var(--mono);padding:3px 5px;border:1px solid var(--line);color:var(--ink3);background:#fff;white-space:nowrap;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.chip b{font-weight:700;color:var(--ink2)}
+.chip.open{border-color:var(--comms);color:var(--comms)}
+.card{margin-top:5px;border:1px solid var(--comms-line);border-left:3px solid var(--comms);background:#fff;padding:6px 8px;font:500 11px/1.4 var(--sans)}
+.card .h{display:flex;justify-content:space-between;font:600 9.5px var(--mono);color:var(--comms);margin-bottom:3px}
+.card .h span{color:var(--ink4);font-weight:500}
+.card ul{margin:0;padding-left:14px;color:var(--ink2)}
+.gate{margin-top:5px;border:1px dashed var(--caution);background:var(--caution-bg);padding:5px 8px;display:flex;gap:8px;align-items:center;font:600 10.5px var(--sans);color:var(--caution)}
+.gate .kc{height:17px;font-size:9.5px;border-color:var(--caution)}
+.gate.done{opacity:.75}
+.ask{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--line2);background:#fff;flex:none}
+.ask .in{flex:1;height:28px;border:1px solid var(--line);display:flex;align-items:center;padding:0 8px;color:var(--ink4);font:500 12px var(--sans);background:var(--panel)}
+.ask .in.typing{border-color:var(--comms);color:var(--ink);box-shadow:0 0 0 2px var(--comms-bg)}
+.ask .ptt{display:flex;align-items:center;gap:5px;font:600 10px var(--sans);color:var(--ink3);white-space:nowrap}
+
+/* ───────── inventory ───────── */
+#inv{flex:1 1 0;min-height:250px}
+.tabs{display:flex;height:25px;border-bottom:1px solid var(--line2);flex:none}
+.tabs button{all:unset;cursor:pointer;padding:0 10px;font:700 10px/25px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);border-right:1px solid var(--line3)}
+.tabs button b{font:600 10px var(--mono);color:var(--ink4);margin-left:5px;letter-spacing:0}
+.tabs button.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink);background:#fff}
+.tabs .meta{margin-left:auto;display:flex;align-items:center;padding-right:10px;gap:6px;font:500 10px var(--mono);color:var(--ink3)}
+.equip{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;padding:7px 8px;border-bottom:1px solid var(--line2);background:#fff}
+.equip div{border:1px solid var(--line3);padding:3px 4px 4px;min-width:0}
+.equip div label{display:block;font:700 7.5px/1 var(--sans);letter-spacing:.08em;color:var(--ink4);text-transform:uppercase}
+.equip div b{display:block;font:600 11px/1.25 var(--mono);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.equip div.on{border-color:var(--ink4);background:var(--panel)}
+.equip div.off b{color:var(--ink5);font-weight:500}
+.itbl td{padding:3px 6px;height:22px}
+.itbl td.l{font:700 11.5px var(--mono);width:22px;text-align:center;color:var(--ink)}
+.itbl td.buc{font:600 9.5px var(--mono);width:16px;text-align:center;color:var(--ink3)}
+.itbl td.buc.B{color:var(--pet)} .itbl td.buc.C{color:var(--warn)}
+.itbl td.en{font:500 11px var(--mono);width:22px;text-align:right;color:var(--ink2)}
+.itbl .nm .cn{font-style:italic;color:var(--ink3)}
+.itbl .nm .chg{font:500 10px var(--mono);color:var(--ink3);margin-left:4px}
+.st{font:700 8.5px/1 var(--mono);padding:2px 4px;letter-spacing:.04em;border:1px solid var(--line);color:var(--ink3);margin-left:3px;background:#fff}
+.st.w{background:var(--ink);color:#fff;border-color:var(--ink)}
+.st.u{color:var(--caution);border-color:var(--caution-line);background:repeating-linear-gradient(135deg,#fff 0 3px,var(--caution-bg) 3px 6px)}
+.itbl tr.unid td.nm{color:var(--ink2)}
+
+/* footer softkeys */
+footer{display:flex;align-items:stretch;background:var(--ink);color:#d9d7de;font:500 10.5px var(--sans)}
+.sk{display:flex;align-items:center;gap:6px;padding:0 10px;border-right:1px solid #2c2c33;white-space:nowrap}
+.sk kbd{font:700 9.5px/1 var(--mono);color:#fff;background:#2a2a31;border:1px solid #4a4a54;padding:3px 4px;border-radius:2px}
+.demo{margin-left:auto;display:flex;align-items:center;gap:2px;padding:0 6px;background:#2a2a31}
+.demo span{font:700 9px var(--sans);letter-spacing:.12em;color:#8f8d96;margin-right:6px}
+.demo button{all:unset;cursor:pointer;font:600 10px var(--sans);padding:4px 7px;color:#bdbbc4;border:1px solid transparent}
+.demo button.on{color:var(--ink);background:#fff}
+.demo button:hover:not(.on){border-color:#55545c}
+@media (max-width:1360px){
+  main{grid-template-columns:232px minmax(0,1fr) 318px}
+  .feed{display:none!important}
+  .lamp{min-width:72px;padding:7px 6px}
+  .ro{padding:0 11px}
+  .sk{padding:0 7px}
+  .demo button span{display:none}
+  .who .sub{display:none}
+  .lv canvas{width:118px!important;height:36px!important}
+  .scale span{font-size:7px}
+}
+body[data-alert=caution] #condPanel{border-color:var(--caution);box-shadow:inset 0 3px 0 var(--caution-hi)}
+</style>
+</head>
+<body data-alert="nominal">
+<div id="app">
+  <header id="top">
+    <div class="who"><div class="brand">NH5</div><div><div class="name" id="hName"></div><div class="sub" id="hSub"></div></div></div>
+    <div class="readouts" id="hRo"></div>
+    <div class="lamps"><div class="lamp c">CAUTION<b id="lampC">—</b></div><div class="lamp w">WARNING<b id="lampW">—</b></div></div>
+    <div class="focus"><span class="lbl">Keys →</span><span class="pill" id="focusPill">GAME</span></div>
+    <div class="feed"><span class="dot"></span><span id="feedTxt"></span></div>
+  </header>
+
+  <main>
+    <section class="col" id="colL">
+      <div class="panel"><div class="ph"><span class="ix">01</span><span class="t">Vitals</span><span class="meta" id="vitMeta"></span></div>
+        <div class="pb" id="vitals"></div></div>
+      <div class="panel" id="condPanel"><div class="ph"><span class="ix">02</span><span class="t">Condition</span><span class="meta" id="condMeta"></span></div>
+        <div class="pb" id="cond"></div></div>
+      <div class="panel" style="flex:1"><div class="ph"><span class="ix">03</span><span class="t">Dungeon</span><span class="meta"><span class="fk">F6</span> browse</span></div>
+        <div class="pb scroll" id="ladder" style="flex:1"></div></div>
+    </section>
+
+    <section class="col" id="colC">
+      <div class="panel" id="mapPanel">
+        <div class="ph"><span class="ix">04</span><span class="t">Map</span><span class="lgd"><span><i class="sw" style="background:#FBE1DD"></i>hostile</span><span><i class="sw" style="background:#DCEFD9"></i>tame</span><span><i class="sw" style="background:#E1E8F5"></i>peaceful</span><span><i class="sw" style="background:var(--comms-bg);border-color:var(--comms)"></i>cursor</span></span><span class="meta" id="mapMeta"></span></div>
+        <div class="alertstrip w" id="warnStrip"></div>
+        <div class="alertstrip info" id="infoStrip" style="display:none"></div>
+        <div class="topline" id="topline"></div>
+        <div class="mapwrap" id="mapwrap">
+          <div class="ruler-x" id="rulerX"></div>
+          <div class="maprows" id="maprows"></div>
+        </div>
+        <div class="mfoot"><div class="insp" id="insp"></div><div id="under" class="under"></div></div>
+      </div>
+      <div class="lower">
+        <div class="panel"><div class="ph"><span class="ix">05</span><span class="t">Message log</span><span class="meta" id="msgMeta"></span></div>
+          <div class="scroll msgs" id="msgs" style="flex:1"></div></div>
+        <div class="panel"><div class="ph"><span class="ix">06</span><span class="t">Contacts</span><span class="meta" id="conMeta"></span></div>
+          <div class="scroll" id="contacts" style="flex:1"></div></div>
+      </div>
+    </section>
+
+    <section class="col" id="colR">
+      <div class="panel" id="comms">
+        <div class="ph"><span class="ix">07</span><span class="t">Comms · Assistant</span><span class="meta" id="chState"></span></div>
+        <div class="vox" id="vox"></div>
+        <div id="caption"></div>
+        <div class="scroll tr" id="transcript" style="flex:1"></div>
+        <div class="ask"><div class="in" id="askIn"><span class="fk" style="font:600 9px var(--mono);border:1px solid var(--line);padding:2px 3px;margin-right:7px;color:var(--ink3);background:#fff">F4</span>Type to the assistant…</div>
+          <div class="ptt"><span class="kc" style="height:17px;font-size:9.5px">F2</span>hold to talk</div></div>
+      </div>
+      <div class="panel" id="inv">
+        <div class="tabs" id="tabs"></div>
+        <div id="invBody" class="scroll" style="flex:1;display:flex;flex-direction:column"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="sk"><kbd>F1</kbd>Help</div>
+    <div class="sk"><kbd>F2</kbd>Talk (hold)</div>
+    <div class="sk"><kbd>F3</kbd>Mic</div>
+    <div class="sk"><kbd>F4</kbd>Type</div>
+    <div class="sk"><kbd>F5</kbd>Inv · Disc</div>
+    <div class="sk"><kbd>F6</kbd>Levels</div>
+    <div class="sk"><kbd>F7</kbd>Lookups</div>
+    <div class="sk"><kbd>F8</kbd>Spoiler OK</div>
+    <div class="sk"><kbd>Esc</kbd>Focus game</div>
+    <div class="demo" id="demo"><span>MOCKUP</span></div>
+  </footer>
+</div>
+
+<script>
+const DATA = {"deep-dlvl4":{"game":{"name":"Agnes","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral"},"turn":11,"hero":{"x":67,"y":6},"status":{"fields":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"11","hunger":"","hp":"15","hp_max":"16","level_desc":"Dlvl:4","exp_points":"0"},"conditions":[]},"awaiting":{"seq":112,"kind":"command","turn":11,"ux":67,"uy":6,"source":"feed"},"cur":"0:4","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":2,"cells":[[45,2,"-",7,"wall"],[46,2,"-",7,"wall"],[47,2,"-",7,"wall"],[48,2,"-",7,"wall"],[49,2,"-",7,"wall"],[50,2,"-",7,"wall"],[51,2,"-",7,"wall"],[52,2,"-",7,"wall"],[53,2,"-",7,"wall"],[54,2,"-",7,"wall"],[62,2,"-",7,"wall"],[63,2,"-",7,"wall"],[64,2,"-",7,"wall"],[65,2,"-",7,"wall"],[66,2,"-",7,"wall"],[67,2,"-",7,"wall"],[68,2,"-",7,"wall"],[69,2,"-",7,"wall"],[70,2,"-",7,"wall"],[71,2,"-",7,"wall"],[72,2,"-",7,"wall"],[45,3,"|",7,"wall"],[46,3,".",0,"dark part of a room"],[47,3,".",0,"dark part of a room"],[48,3,".",0,"dark part of a room"],[49,3,".",0,"dark part of a room"],[50,3,".",0,"dark part of a room"],[51,3,".",0,"dark part of a room"],[52,3,".",0,"dark part of a room"],[53,3,".",0,"dark part of a room"],[54,3,"|",7,"wall"],[61,3,"#",7,"corridor"],[62,3,".",7,"doorway"],[63,3,".",7,"floor of a room"],[64,3,".",7,"floor of a room"],[65,3,".",7,"floor of a room"],[66,3,".",7,"floor of a room"],[67,3,">",7,"staircase down"],[68,3,".",7,"floor of a room"],[69,3,".",7,"floor of a room"],[70,3,".",7,"floor of a room"],[71,3,".",7,"floor of a room"],[72,3,"|",7,"wall"],[35,4,"-",7,"wall"],[36,4,"-",7,"wall"],[37,4,"-",7,"wall"],[38,4,"-",7,"wall"],[39,4,"-",7,"wall"],[40,4,"-",7,"wall"],[45,4,"|",7,"wall"],[46,4,".",0,"dark part of a room"],[47,4,".",0,"dark part of a room"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",0,"dark part of a room"],[54,4,"|",7,"wall"],[61,4,"#",7,"corridor"],[62,4,"|",7,"wall"],[63,4,".",7,"floor of a room"],[64,4,".",7,"floor of a room"],[65,4,".",7,"floor of a room"],[66,4,".",7,"floor of a room"],[67,4,".",7,"floor of a room"],[68,4,".",7,"floor of a room"],[69,4,".",7,"floor of a room"],[70,4,".",7,"floor of a room"],[71,4,".",7,"floor of a room"],[72,4,"|",7,"wall"],[35,5,"|",7,"wall"],[36,5,".",0,"dark part of a room"],[37,5,".",0,"dark part of a room"],[38,5,".",0,"dark part of a room"],[39,5,".",0,"dark part of a room"],[40,5,"|",7,"wall"],[45,5,"|",7,"wall"],[46,5,".",0,"dark part of a room"],[47,5,".",0,"dark part of a room"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,".",0,"dark part of a room"],[54,5,"|",7,"wall"],[60,5,"#",7,"corridor"],[61,5,"#",7,"corridor"],[62,5,".",7,"doorway"],[63,5,".",7,"floor of a room"],[64,5,".",7,"floor of a room"],[65,5,".",7,"floor of a room"],[66,5,".",7,"floor of a room"],[67,5,".",7,"floor of a room"],[68,5,".",7,"floor of a room"],[69,5,".",7,"floor of a room"],[70,5,".",7,"floor of a room"],[71,5,".",7,"floor of a room"],[72,5,"|",7,"wall"],[35,6,"|",7,"wall"],[36,6,".",0,"dark part of a room"],[37,6,".",0,"dark part of a room"],[38,6,".",0,"dark part of a room"],[39,6,".",0,"dark part of a room"],[40,6,".",7,"doorway"],[41,6,"#",7,"corridor"],[45,6,"|",7,"wall"],[46,6,".",0,"dark part of a room"],[47,6,".",0,"dark part of a room"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",0,"dark part of a room"],[54,6,"|",7,"wall"],[59,6,"#",7,"corridor"],[60,6,"#",7,"corridor"],[61,6,"#",7,"corridor"],[62,6,"-",7,"wall"],[63,6,"-",7,"wall"],[64,6,"-",7,"wall"],[65,6,"-",7,"wall"],[66,6,"-",7,"wall"],[67,6,".",7,"doorway"],[68,6,"-",7,"wall"],[69,6,"-",7,"wall"],[70,6,"-",7,"wall"],[71,6,"-",7,"wall"],[72,6,"-",7,"wall"],[32,7,"#",7,"corridor"],[33,7,"#",7,"corridor"],[34,7,"#",7,"corridor"],[35,7,".",7,"doorway"],[36,7,".",0,"dark part of a room"],[37,7,".",0,"dark part of a room"],[38,7,".",0,"dark part of a room"],[39,7,".",0,"dark part of a room"],[40,7,"|",7,"wall"],[41,7,"#",7,"corridor"],[45,7,"|",7,"wall"],[46,7,".",0,"dark part of a room"],[47,7,".",0,"dark part of a room"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,"`",12,"engraving"],[51,7,".",0,"dark part of a room"],[52,7,".",0,"dark part of a room"],[53,7,".",0,"dark part of a room"],[54,7,".",7,"doorway"],[55,7,"#",7,"corridor"],[59,7,"#",7,"corridor"],[60,7,"#",7,"corridor"],[61,7,"#",7,"corridor"],[67,7,"#",7,"corridor"],[31,8,"#",7,"corridor"],[32,8,"#",7,"corridor"],[35,8,"-",7,"wall"],[36,8,"-",7,"wall"],[37,8,"-",7,"wall"],[38,8,"-",7,"wall"],[39,8,"-",7,"wall"],[40,8,"-",7,"wall"],[41,8,"#",7,"corridor"],[42,8,"#",7,"corridor"],[43,8,"#",7,"corridor"],[44,8,"#",7,"corridor"],[45,8,".",7,"doorway"],[46,8,".",0,"dark part of a room"],[47,8,".",0,"dark part of a room"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",0,"dark part of a room"],[53,8,".",0,"dark part of a room"],[54,8,"|",7,"wall"],[55,8,"#",7,"corridor"],[58,8,"#",7,"corridor"],[59,8,"#",7,"corridor"],[60,8,"#",7,"corridor"],[67,8,"#",7,"corridor"],[13,9,"-",7,"wall"],[14,9,"-",7,"wall"],[15,9,"-",7,"wall"],[16,9,"-",7,"wall"],[17,9,"-",7,"wall"],[18,9,"-",7,"wall"],[19,9,"-",7,"wall"],[20,9,"-",7,"wall"],[21,9,"-",7,"wall"],[22,9,"-",7,"wall"],[23,9,"-",7,"wall"],[24,9,"-",7,"wall"],[25,9,"-",7,"wall"],[31,9,"#",7,"corridor"],[40,9,"#",7,"corridor"],[41,9,"#",7,"corridor"],[45,9,"-",7,"wall"],[46,9,"-",7,"wall"],[47,9,"-",7,"wall"],[48,9,".",7,"doorway"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[53,9,"-",7,"wall"],[54,9,"-",7,"wall"],[55,9,"#",7,"corridor"],[58,9,"#",7,"corridor"],[60,9,"#",7,"corridor"],[66,9,"#",7,"corridor"],[67,9,"#",7,"corridor"],[13,10,"|",7,"wall"],[14,10,"<",11,"branch staircase up"],[15,10,".",0,"dark part of a room"],[16,10,".",0,"dark part of a room"],[17,10,".",0,"dark part of a room"],[18,10,".",0,"dark part of a room"],[19,10,".",0,"dark part of a room"],[20,10,".",0,"dark part of a room"],[21,10,".",0,"dark part of a room"],[22,10,".",0,"dark part of a room"],[23,10,".",0,"dark part of a room"],[24,10,".",0,"dark part of a room"],[25,10,"|",7,"wall"],[31,10,"#",7,"corridor"],[39,10,"#",7,"corridor"],[40,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[51,10,"#",7,"corridor"],[52,10,"#",7,"corridor"],[53,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[55,10,"#",7,"corridor"],[56,10,"#",7,"corridor"],[57,10,"#",7,"corridor"],[58,10,"#",7,"corridor"],[60,10,"#",7,"corridor"],[66,10,"#",7,"corridor"],[13,11,"|",7,"wall"],[14,11,".",0,"dark part of a room"],[15,11,".",0,"dark part of a room"],[16,11,".",0,"dark part of a room"],[17,11,".",0,"dark part of a room"],[18,11,".",0,"dark part of a room"],[19,11,".",0,"dark part of a room"],[20,11,".",0,"dark part of a room"],[21,11,".",0,"dark part of a room"],[22,11,".",0,"dark part of a room"],[23,11,".",0,"dark part of a room"],[24,11,".",0,"dark part of a room"],[25,11,".",7,"doorway"],[26,11,"#",7,"corridor"],[27,11,"#",7,"corridor"],[28,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[30,11,"#",7,"corridor"],[31,11,"#",7,"corridor"],[38,11,"#",7,"corridor"],[39,11,"#",7,"corridor"],[43,11,"#",7,"corridor"],[44,11,"#",7,"corridor"],[45,11,"#",7,"corridor"],[46,11,"#",7,"corridor"],[47,11,"#",7,"corridor"],[48,11,"#",7,"corridor"],[51,11,"#",7,"corridor"],[55,11,"#",7,"corridor"],[60,11,"#",7,"corridor"],[66,11,"#",7,"corridor"],[13,12,"|",7,"wall"],[14,12,".",0,"dark part of a room"],[15,12,".",0,"dark part of a room"],[16,12,".",0,"dark part of a room"],[17,12,".",0,"dark part of a room"],[18,12,".",0,"dark part of a room"],[19,12,".",0,"dark part of a room"],[20,12,".",0,"dark part of a room"],[21,12,".",0,"dark part of a room"],[22,12,".",0,"dark part of a room"],[23,12,".",0,"dark part of a room"],[24,12,".",0,"dark part of a room"],[25,12,"|",7,"wall"],[38,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[50,12,"#",7,"corridor"],[51,12,"#",7,"corridor"],[55,12,"#",7,"corridor"],[60,12,"#",7,"corridor"],[64,12,"-",7,"wall"],[65,12,"-",7,"wall"],[66,12,".",7,"doorway"],[67,12,"-",7,"wall"],[68,12,"-",7,"wall"],[69,12,"-",7,"wall"],[13,13,"-",7,"wall"],[14,13,"-",7,"wall"],[15,13,"-",7,"wall"],[16,13,"-",7,"wall"],[17,13,"-",7,"wall"],[18,13,"-",7,"wall"],[19,13,"-",7,"wall"],[20,13,"-",7,"wall"],[21,13,"-",7,"wall"],[22,13,"-",7,"wall"],[23,13,"-",7,"wall"],[24,13,"-",7,"wall"],[25,13,"-",7,"wall"],[38,13,"#",7,"corridor"],[39,13,"-",7,"wall"],[40,13,"-",7,"wall"],[41,13,"-",7,"wall"],[42,13,"+",3,"closed door"],[43,13,"-",7,"wall"],[44,13,"-",7,"wall"],[45,13,"-",7,"wall"],[46,13,"-",7,"wall"],[47,13,"-",7,"wall"],[48,13,"#",7,"corridor"],[49,13,"#",7,"corridor"],[50,13,"#",7,"corridor"],[55,13,"#",7,"corridor"],[60,13,"#",7,"corridor"],[64,13,"|",7,"wall"],[65,13,".",0,"dark part of a room"],[66,13,".",0,"dark part of a room"],[67,13,"^",12,"magic trap"],[68,13,".",0,"dark part of a room"],[69,13,"|",7,"wall"],[38,14,"#",7,"corridor"],[39,14,"|",7,"wall"],[40,14,".",0,"dark part of a room"],[41,14,".",0,"dark part of a room"],[42,14,".",0,"dark part of a room"],[43,14,".",0,"dark part of a room"],[44,14,".",0,"dark part of a room"],[45,14,".",0,"dark part of a room"],[46,14,".",0,"dark part of a room"],[47,14,".",7,"doorway"],[48,14,"#",7,"corridor"],[53,14,"#",7,"corridor"],[54,14,"#",7,"corridor"],[55,14,"#",7,"corridor"],[59,14,"#",7,"corridor"],[60,14,"#",7,"corridor"],[64,14,"|",7,"wall"],[65,14,".",0,"dark part of a room"],[66,14,".",0,"dark part of a room"],[67,14,".",0,"dark part of a room"],[68,14,".",0,"dark part of a room"],[69,14,"|",7,"wall"],[38,15,"#",7,"corridor"],[39,15,"+",3,"closed door"],[40,15,".",0,"dark part of a room"],[41,15,".",0,"dark part of a room"],[42,15,".",0,"dark part of a room"],[43,15,".",0,"dark part of a room"],[44,15,".",0,"dark part of a room"],[45,15,".",0,"dark part of a room"],[46,15,".",0,"dark part of a room"],[47,15,"|",7,"wall"],[53,15,"#",7,"corridor"],[54,15,"-",7,"wall"],[55,15,"-",7,"wall"],[56,15,"-",7,"wall"],[57,15,"-",7,"wall"],[58,15,"-",7,"wall"],[59,15,"#",7,"corridor"],[64,15,"|",7,"wall"],[65,15,".",0,"dark part of a room"],[66,15,".",0,"dark part of a room"],[67,15,".",0,"dark part of a room"],[68,15,".",0,"dark part of a room"],[69,15,"|",7,"wall"],[39,16,"|",7,"wall"],[40,16,".",0,"dark part of a room"],[41,16,".",0,"dark part of a room"],[42,16,".",0,"dark part of a room"],[43,16,".",0,"dark part of a room"],[44,16,".",0,"dark part of a room"],[45,16,".",0,"dark part of a room"],[46,16,".",0,"dark part of a room"],[47,16,"|",7,"wall"],[53,16,"#",7,"corridor"],[54,16,"|",7,"wall"],[55,16,".",0,"dark part of a room"],[56,16,".",0,"dark part of a room"],[57,16,".",0,"dark part of a room"],[58,16,".",7,"doorway"],[59,16,"#",7,"corridor"],[64,16,"-",7,"wall"],[65,16,"-",7,"wall"],[66,16,"-",7,"wall"],[67,16,"-",7,"wall"],[68,16,"-",7,"wall"],[69,16,"-",7,"wall"],[39,17,"-",7,"wall"],[40,17,"-",7,"wall"],[41,17,"-",7,"wall"],[42,17,"-",7,"wall"],[43,17,"-",7,"wall"],[44,17,"-",7,"wall"],[45,17,"-",7,"wall"],[46,17,"-",7,"wall"],[47,17,"-",7,"wall"],[53,17,"#",7,"corridor"],[54,17,"|",7,"wall"],[55,17,".",0,"dark part of a room"],[56,17,".",0,"dark part of a room"],[57,17,".",0,"dark part of a room"],[58,17,"|",7,"wall"],[43,18,"#",7,"corridor"],[53,18,"#",7,"corridor"],[54,18,".",7,"doorway"],[55,18,".",0,"dark part of a room"],[56,18,".",0,"dark part of a room"],[57,18,".",0,"dark part of a room"],[58,18,"|",7,"wall"],[54,19,"-",7,"wall"],[55,19,"-",7,"wall"],[56,19,"-",7,"wall"],[57,19,"-",7,"wall"],[58,19,"-",7,"wall"]]},"0:2":{"info":{"dnum":0,"dlevel":2,"depth":2,"dungeon":"The Dungeons of Doom","desc":"Dlvl:2"},"seen":7,"cells":[[29,1,"-",7,"wall"],[30,1,"-",7,"wall"],[31,1,"-",7,"wall"],[32,1,"-",7,"wall"],[33,1,"-",7,"wall"],[60,1,"-",7,"wall"],[61,1,"-",7,"wall"],[62,1,"-",7,"wall"],[63,1,"-",7,"wall"],[64,1,"-",7,"wall"],[65,1,"-",7,"wall"],[29,2,"|",7,"wall"],[30,2,".",0,"dark part of a room"],[31,2,">",11,"branch staircase down"],[32,2,".",0,"dark part of a room"],[33,2,"|",7,"wall"],[49,2,"#",7,"corridor"],[50,2,"#",7,"corridor"],[51,2,"#",7,"corridor"],[52,2,"#",7,"corridor"],[53,2,"#",7,"corridor"],[54,2,"#",7,"corridor"],[55,2,"#",7,"corridor"],[56,2,"#",7,"corridor"],[57,2,"#",7,"corridor"],[58,2,"#",7,"corridor"],[59,2,"#",7,"corridor"],[60,2,".",7,"doorway"],[61,2,".",0,"dark part of a room"],[62,2,".",0,"dark part of a room"],[63,2,".",0,"dark part of a room"],[64,2,".",0,"dark part of a room"],[65,2,"|",7,"wall"],[29,3,"|",7,"wall"],[30,3,".",0,"dark part of a room"],[31,3,".",0,"dark part of a room"],[32,3,".",0,"dark part of a room"],[33,3,".",7,"doorway"],[34,3,"#",7,"corridor"],[60,3,"|",7,"wall"],[61,3,".",0,"dark part of a room"],[62,3,".",0,"dark part of a room"],[63,3,".",0,"dark part of a room"],[64,3,".",0,"dark part of a room"],[65,3,"+",3,"closed door"],[66,3,"#",7,"corridor"],[21,4,"#",7,"corridor"],[22,4,"#",7,"corridor"],[23,4,"#",7,"corridor"],[24,4,"#",7,"corridor"],[25,4,"#",7,"corridor"],[26,4,"#",7,"corridor"],[27,4,"#",7,"corridor"],[28,4,"#",7,"corridor"],[29,4,".",7,"doorway"],[30,4,".",0,"dark part of a room"],[31,4,".",0,"dark part of a room"],[32,4,".",0,"dark part of a room"],[33,4,"|",7,"wall"],[34,4,"#",7,"corridor"],[56,4,"#",7,"corridor"],[57,4,"#",7,"corridor"],[58,4,"#",7,"corridor"],[59,4,"#",7,"corridor"],[60,4,".",7,"doorway"],[61,4,".",0,"dark part of a room"],[62,4,".",0,"dark part of a room"],[63,4,".",0,"dark part of a room"],[64,4,".",0,"dark part of a room"],[65,4,"|",7,"wall"],[66,4,"#",7,"corridor"],[21,5,"#",7,"corridor"],[29,5,"-",7,"wall"],[30,5,"+",3,"closed door"],[31,5,"-",7,"wall"],[32,5,"-",7,"wall"],[33,5,"-",7,"wall"],[34,5,"#",7,"corridor"],[35,5,"#",7,"corridor"],[36,5,"#",7,"corridor"],[54,5,"#",7,"corridor"],[55,5,"#",7,"corridor"],[56,5,"#",7,"corridor"],[60,5,"-",7,"wall"],[61,5,"-",7,"wall"],[62,5,"-",7,"wall"],[63,5,"-",7,"wall"],[64,5,"-",7,"wall"],[65,5,"-",7,"wall"],[66,5,"#",7,"corridor"],[21,6,"#",7,"corridor"],[30,6,"#",7,"corridor"],[36,6,"#",7,"corridor"],[54,6,"#",7,"corridor"],[64,6,"#",7,"corridor"],[66,6,"#",7,"corridor"],[21,7,"#",7,"corridor"],[30,7,"#",7,"corridor"],[36,7,"#",7,"corridor"],[46,7,"#",7,"corridor"],[51,7,"#",7,"corridor"],[54,7,"#",7,"corridor"],[66,7,"#",7,"corridor"],[9,8,"-",7,"wall"],[10,8,"-",7,"wall"],[11,8,"-",7,"wall"],[12,8,"-",7,"wall"],[13,8,"-",7,"wall"],[14,8,"-",7,"wall"],[15,8,"-",7,"wall"],[16,8,"-",7,"wall"],[17,8,"-",7,"wall"],[21,8,"#",7,"corridor"],[29,8,"#",7,"corridor"],[30,8,"#",7,"corridor"],[36,8,"#",7,"corridor"],[42,8,"-",7,"wall"],[43,8,"-",7,"wall"],[44,8,"-",7,"wall"],[45,8,"-",7,"wall"],[46,8,"-",7,"wall"],[47,8,"-",7,"wall"],[48,8,"-",7,"wall"],[49,8,"-",7,"wall"],[50,8,"-",7,"wall"],[51,8,"-",7,"wall"],[52,8,"-",7,"wall"],[54,8,"#",7,"corridor"],[66,8,"#",7,"corridor"],[9,9,"|",7,"wall"],[10,9,".",0,"dark part of a room"],[11,9,".",0,"dark part of a room"],[12,9,".",0,"dark part of a room"],[13,9,".",0,"dark part of a room"],[14,9,".",0,"dark part of a room"],[15,9,".",0,"dark part of a room"],[16,9,".",0,"dark part of a room"],[17,9,"|",7,"wall"],[18,9,"#",7,"corridor"],[19,9,"#",7,"corridor"],[20,9,"#",7,"corridor"],[21,9,"#",7,"corridor"],[29,9,"#",7,"corridor"],[36,9,"#",7,"corridor"],[37,9,"#",7,"corridor"],[38,9,"#",7,"corridor"],[42,9,"|",7,"wall"],[43,9,".",0,"dark part of a room"],[44,9,".",0,"dark part of a room"],[45,9,".",0,"dark part of a room"],[46,9,".",0,"dark part of a room"],[47,9,".",0,"dark part of a room"],[48,9,".",0,"dark part of a room"],[49,9,".",0,"dark part of a room"],[50,9,".",0,"dark part of a room"],[51,9,".",0,"dark part of a room"],[52,9,"|",7,"wall"],[54,9,"#",7,"corridor"],[66,9,"#",7,"corridor"],[67,9,"#",7,"corridor"],[9,10,"|",7,"wall"],[10,10,"<",7,"staircase up"],[11,10,".",0,"dark part of a room"],[12,10,".",0,"dark part of a room"],[13,10,".",0,"dark part of a room"],[14,10,".",0,"dark part of a room"],[15,10,".",0,"dark part of a room"],[16,10,".",0,"dark part of a room"],[17,10,"+",3,"closed door"],[18,10,"#",7,"corridor"],[29,10,"#",7,"corridor"],[38,10,"#",7,"corridor"],[39,10,"#",7,"corridor"],[42,10,"|",7,"wall"],[43,10,".",0,"dark part of a room"],[44,10,".",0,"dark part of a room"],[45,10,".",0,"dark part of a room"],[46,10,".",0,"dark part of a room"],[47,10,".",0,"dark part of a room"],[48,10,".",0,"dark part of a room"],[49,10,".",0,"dark part of a room"],[50,10,".",0,"dark part of a room"],[51,10,".",0,"dark part of a room"],[52,10,".",7,"doorway"],[53,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[67,10,"#",7,"corridor"],[68,10,"-",7,"wall"],[69,10,"-",7,"wall"],[70,10,"-",7,"wall"],[71,10,"-",7,"wall"],[72,10,"-",7,"wall"],[73,10,"-",7,"wall"],[74,10,"-",7,"wall"],[9,11,"|",7,"wall"],[10,11,".",0,"dark part of a room"],[11,11,".",0,"dark part of a room"],[12,11,".",0,"dark part of a room"],[13,11,".",0,"dark part of a room"],[14,11,".",0,"dark part of a room"],[15,11,".",0,"dark part of a room"],[16,11,".",0,"dark part of a room"],[17,11,"|",7,"wall"],[18,11,"#",7,"corridor"],[19,11,"#",7,"corridor"],[25,11,"#",7,"corridor"],[26,11,"#",7,"corridor"],[27,11,"#",7,"corridor"],[28,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[39,11,"#",7,"corridor"],[40,11,"#",7,"corridor"],[41,11,"#",7,"corridor"],[42,11,"+",3,"closed door"],[43,11,".",0,"dark part of a room"],[44,11,".",0,"dark part of a room"],[45,11,".",0,"dark part of a room"],[46,11,".",0,"dark part of a room"],[47,11,".",0,"dark part of a room"],[48,11,".",0,"dark part of a room"],[49,11,".",0,"dark part of a room"],[50,11,".",0,"dark part of a room"],[51,11,".",0,"dark part of a room"],[52,11,"|",7,"wall"],[67,11,"#",7,"corridor"],[68,11,".",7,"doorway"],[69,11,".",7,"floor of a room"],[70,11,".",7,"floor of a room"],[71,11,".",7,"floor of a room"],[72,11,".",7,"floor of a room"],[73,11,".",7,"floor of a room"],[74,11,"|",7,"wall"],[9,12,"-",7,"wall"],[10,12,"-",7,"wall"],[11,12,"-",7,"wall"],[12,12,"-",7,"wall"],[13,12,"-",7,"wall"],[14,12,"-",7,"wall"],[15,12,"-",7,"wall"],[16,12,"-",7,"wall"],[17,12,"-",7,"wall"],[19,12,"#",7,"corridor"],[20,12,"#",7,"corridor"],[24,12,"-",7,"wall"],[25,12,".",7,"doorway"],[26,12,"-",7,"wall"],[27,12,"-",7,"wall"],[28,12,"-",7,"wall"],[29,12,"-",7,"wall"],[30,12,"-",7,"wall"],[31,12,"-",7,"wall"],[32,12,"-",7,"wall"],[33,12,"-",7,"wall"],[34,12,"-",7,"wall"],[42,12,"|",7,"wall"],[43,12,".",0,"dark part of a room"],[44,12,".",0,"dark part of a room"],[45,12,".",0,"dark part of a room"],[46,12,".",0,"dark part of a room"],[47,12,".",0,"dark part of a room"],[48,12,"^",4,"rust trap"],[49,12,".",0,"dark part of a room"],[50,12,".",0,"dark part of a room"],[51,12,".",0,"dark part of a room"],[52,12,"|",7,"wall"],[68,12,"|",7,"wall"],[69,12,".",7,"floor of a room"],[70,12,".",7,"floor of a room"],[71,12,"$",11,"4 gold pieces"],[72,12,".",7,"floor of a room"],[73,12,".",7,"floor of a room"],[74,12,"|",7,"wall"],[20,13,"#",7,"corridor"],[21,13,"#",7,"corridor"],[24,13,"|",7,"wall"],[25,13,".",0,"dark part of a room"],[26,13,".",0,"dark part of a room"],[27,13,".",0,"dark part of a room"],[28,13,".",0,"dark part of a room"],[29,13,".",0,"dark part of a room"],[30,13,".",0,"dark part of a room"],[31,13,".",0,"dark part of a room"],[32,13,".",0,"dark part of a room"],[33,13,".",0,"dark part of a room"],[34,13,"|",7,"wall"],[42,13,"-",7,"wall"],[43,13,"-",7,"wall"],[44,13,"-",7,"wall"],[45,13,"-",7,"wall"],[46,13,"-",7,"wall"],[47,13,"-",7,"wall"],[48,13,"-",7,"wall"],[49,13,"-",7,"wall"],[50,13,"-",7,"wall"],[51,13,"-",7,"wall"],[52,13,"-",7,"wall"],[68,13,"|",7,"wall"],[69,13,">",7,"staircase down"],[70,13,".",7,"floor of a room"],[71,13,".",7,"floor of a room"],[72,13,".",7,"floor of a room"],[73,13,".",7,"floor of a room"],[74,13,"|",7,"wall"],[21,14,"#",7,"corridor"],[22,14,"#",7,"corridor"],[23,14,"#",7,"corridor"],[24,14,".",7,"doorway"],[25,14,".",0,"dark part of a room"],[26,14,".",0,"dark part of a room"],[27,14,".",0,"dark part of a room"],[28,14,".",0,"dark part of a room"],[29,14,".",0,"dark part of a room"],[30,14,".",0,"dark part of a room"],[31,14,".",0,"dark part of a room"],[32,14,".",0,"dark part of a room"],[33,14,".",0,"dark part of a room"],[34,14,"|",7,"wall"],[68,14,"-",7,"wall"],[69,14,"-",7,"wall"],[70,14,"-",7,"wall"],[71,14,"-",7,"wall"],[72,14,"-",7,"wall"],[73,14,"-",7,"wall"],[74,14,"-",7,"wall"],[24,15,"|",7,"wall"],[25,15,".",0,"dark part of a room"],[26,15,".",0,"dark part of a room"],[27,15,".",0,"dark part of a room"],[28,15,".",0,"dark part of a room"],[29,15,".",0,"dark part of a room"],[30,15,".",0,"dark part of a room"],[31,15,".",0,"dark part of a room"],[32,15,".",0,"dark part of a room"],[33,15,".",0,"dark part of a room"],[34,15,"|",7,"wall"],[24,16,"|",7,"wall"],[25,16,".",0,"dark part of a room"],[26,16,".",0,"dark part of a room"],[27,16,".",0,"dark part of a room"],[28,16,".",0,"dark part of a room"],[29,16,".",0,"dark part of a room"],[30,16,".",0,"dark part of a room"],[31,16,".",0,"dark part of a room"],[32,16,".",0,"dark part of a room"],[33,16,".",0,"dark part of a room"],[34,16,"|",7,"wall"],[24,17,"|",7,"wall"],[25,17,".",0,"dark part of a room"],[26,17,".",0,"dark part of a room"],[27,17,".",0,"dark part of a room"],[28,17,".",0,"dark part of a room"],[29,17,".",0,"dark part of a room"],[30,17,".",0,"dark part of a room"],[31,17,".",0,"dark part of a room"],[32,17,".",0,"dark part of a room"],[33,17,".",0,"dark part of a room"],[34,17,"|",7,"wall"],[24,18,"-",7,"wall"],[25,18,"-",7,"wall"],[26,18,"-",7,"wall"],[27,18,"-",7,"wall"],[28,18,"-",7,"wall"],[29,18,"-",7,"wall"],[30,18,"-",7,"wall"],[31,18,"-",7,"wall"],[32,18,"-",7,"wall"],[33,18,"-",7,"wall"],[34,18,"-",7,"wall"],[33,19,"#",7,"corridor"]]},"2:1":{"info":{"dnum":2,"dlevel":1,"depth":3,"dungeon":"The Gnomish Mines","desc":"Dlvl:3"},"seen":5,"cells":[[26,9,"|",7,"wall"],[27,9,".",7,"floor of a room"],[28,9,".",7,"floor of a room"],[26,10,".",7,"floor of a room"],[27,10,"<",11,"branch staircase up"],[28,10,".",7,"floor of a room"],[26,11,".",7,"floor of a room"],[27,11,".",7,"floor of a room"],[28,11,".",7,"floor of a room"]]},"0:3":{"info":{"dnum":0,"dlevel":3,"depth":3,"dungeon":"The Dungeons of Doom","desc":"Dlvl:3"},"seen":9,"cells":[[68,2,"-",7,"wall"],[69,2,"-",7,"wall"],[70,2,"-",7,"wall"],[71,2,"-",7,"wall"],[72,2,"-",7,"wall"],[73,2,"-",7,"wall"],[74,2,"-",7,"wall"],[75,2,"-",7,"wall"],[76,2,"-",7,"wall"],[77,2,"-",7,"wall"],[78,2,"-",7,"wall"],[3,3,"-",7,"wall"],[4,3,"-",7,"wall"],[5,3,"-",7,"wall"],[6,3,"-",7,"wall"],[7,3,"-",7,"wall"],[8,3,"-",7,"wall"],[9,3,"-",7,"wall"],[10,3,"-",7,"wall"],[11,3,"-",7,"wall"],[12,3,"-",7,"wall"],[13,3,"-",7,"wall"],[14,3,"-",7,"wall"],[40,3,"-",7,"wall"],[41,3,"-",7,"wall"],[42,3,"-",7,"wall"],[43,3,"-",7,"wall"],[44,3,"-",7,"wall"],[45,3,"-",7,"wall"],[46,3,"-",7,"wall"],[47,3,"-",7,"wall"],[48,3,"-",7,"wall"],[49,3,"-",7,"wall"],[50,3,"-",7,"wall"],[51,3,"-",7,"wall"],[52,3,"-",7,"wall"],[53,3,"-",7,"wall"],[54,3,"-",7,"wall"],[55,3,"-",7,"wall"],[68,3,"|",7,"wall"],[69,3,".",7,"floor of a room"],[70,3,".",7,"floor of a room"],[71,3,".",7,"floor of a room"],[72,3,".",7,"floor of a room"],[73,3,".",7,"floor of a room"],[74,3,".",7,"floor of a room"],[75,3,".",7,"floor of a room"],[76,3,".",7,"floor of a room"],[77,3,".",7,"floor of a room"],[78,3,"|",7,"wall"],[3,4,"|",7,"wall"],[4,4,".",0,"dark part of a room"],[5,4,".",0,"dark part of a room"],[6,4,".",0,"dark part of a room"],[7,4,".",0,"dark part of a room"],[8,4,".",0,"dark part of a room"],[9,4,".",0,"dark part of a room"],[10,4,".",0,"dark part of a room"],[11,4,".",0,"dark part of a room"],[12,4,".",0,"dark part of a room"],[13,4,".",0,"dark part of a room"],[14,4,"|",7,"wall"],[40,4,"|",7,"wall"],[41,4,".",0,"dark part of a room"],[42,4,".",0,"dark part of a room"],[43,4,".",0,"dark part of a room"],[44,4,".",0,"dark part of a room"],[45,4,".",0,"dark part of a room"],[46,4,".",0,"dark part of a room"],[47,4,"`",12,"engraving"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",0,"dark part of a room"],[54,4,".",0,"dark part of a room"],[55,4,"|",7,"wall"],[62,4,"#",7,"corridor"],[63,4,"#",7,"corridor"],[64,4,"#",7,"corridor"],[65,4,"#",7,"corridor"],[66,4,"#",7,"corridor"],[67,4,"#",7,"corridor"],[68,4,"+",3,"closed door"],[69,4,".",7,"floor of a room"],[70,4,".",7,"floor of a room"],[71,4,".",7,"floor of a room"],[72,4,".",7,"floor of a room"],[73,4,".",7,"floor of a room"],[74,4,".",7,"floor of a room"],[75,4,".",7,"floor of a room"],[76,4,".",7,"floor of a room"],[77,4,".",7,"floor of a room"],[78,4,"|",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",0,"dark part of a room"],[5,5,".",0,"dark part of a room"],[6,5,".",0,"dark part of a room"],[7,5,".",0,"dark part of a room"],[8,5,".",0,"dark part of a room"],[9,5,".",0,"dark part of a room"],[10,5,".",0,"dark part of a room"],[11,5,".",0,"dark part of a room"],[12,5,".",0,"dark part of a room"],[13,5,".",0,"dark part of a room"],[14,5,"|",7,"wall"],[22,5,"-",7,"wall"],[23,5,"-",7,"wall"],[24,5,"-",7,"wall"],[25,5,"-",7,"wall"],[26,5,"-",7,"wall"],[40,5,"|",7,"wall"],[41,5,".",0,"dark part of a room"],[42,5,".",0,"dark part of a room"],[43,5,".",0,"dark part of a room"],[44,5,".",0,"dark part of a room"],[45,5,".",0,"dark part of a room"],[46,5,".",0,"dark part of a room"],[47,5,".",0,"dark part of a room"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,".",0,"dark part of a room"],[54,5,".",0,"dark part of a room"],[55,5,"|",7,"wall"],[68,5,"|",7,"wall"],[69,5,".",7,"floor of a room"],[70,5,".",7,"floor of a room"],[71,5,".",7,"floor of a room"],[72,5,".",7,"floor of a room"],[73,5,".",7,"floor of a room"],[74,5,".",7,"floor of a room"],[75,5,".",7,"floor of a room"],[76,5,">",7,"staircase down"],[77,5,".",7,"floor of a room"],[78,5,"|",7,"wall"],[3,6,"|",7,"wall"],[4,6,".",0,"dark part of a room"],[5,6,".",0,"dark part of a room"],[6,6,".",0,"dark part of a room"],[7,6,".",0,"dark part of a room"],[8,6,".",0,"dark part of a room"],[9,6,".",0,"dark part of a room"],[10,6,".",0,"dark part of a room"],[11,6,".",0,"dark part of a room"],[12,6,".",0,"dark part of a room"],[13,6,".",0,"dark part of a room"],[14,6,"+",3,"closed door"],[15,6,"#",7,"corridor"],[16,6,"#",7,"corridor"],[17,6,"#",7,"corridor"],[22,6,"|",7,"wall"],[23,6,".",0,"dark part of a room"],[24,6,".",0,"dark part of a room"],[25,6,".",0,"dark part of a room"],[26,6,"|",7,"wall"],[39,6,"#",7,"corridor"],[40,6,"-",3,"open door"],[41,6,".",0,"dark part of a room"],[42,6,".",0,"dark part of a room"],[43,6,".",0,"dark part of a room"],[44,6,".",0,"dark part of a room"],[45,6,".",0,"dark part of a room"],[46,6,".",0,"dark part of a room"],[47,6,".",0,"dark part of a room"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",0,"dark part of a room"],[54,6,".",0,"dark part of a room"],[55,6,".",7,"doorway"],[56,6,"#",7,"corridor"],[68,6,"|",7,"wall"],[69,6,".",7,"floor of a room"],[70,6,".",7,"floor of a room"],[71,6,".",7,"floor of a room"],[72,6,".",7,"floor of a room"],[73,6,".",7,"floor of a room"],[74,6,".",7,"floor of a room"],[75,6,".",7,"floor of a room"],[76,6,".",7,"floor of a room"],[77,6,"o",7,"goblin"],[78,6,"|",7,"wall"],[3,7,"-",7,"wall"],[4,7,"-",7,"wall"],[5,7,"-",7,"wall"],[6,7,"-",7,"wall"],[7,7,"-",7,"wall"],[8,7,"-",7,"wall"],[9,7,"-",7,"wall"],[10,7,"-",7,"wall"],[11,7,"-",7,"wall"],[12,7,"-",7,"wall"],[13,7,"-",7,"wall"],[14,7,"-",7,"wall"],[17,7,"#",7,"corridor"],[18,7,"#",7,"corridor"],[19,7,"#",7,"corridor"],[20,7,"#",7,"corridor"],[21,7,"#",7,"corridor"],[22,7,"|",7,"wall"],[23,7,".",0,"dark part of a room"],[24,7,".",0,"dark part of a room"],[25,7,".",0,"dark part of a room"],[26,7,".",7,"doorway"],[27,7,"#",7,"corridor"],[28,7,"#",7,"corridor"],[29,7,"#",7,"corridor"],[30,7,"#",7,"corridor"],[31,7,"#",7,"corridor"],[32,7,"#",7,"corridor"],[40,7,"-",7,"wall"],[41,7,"-",7,"wall"],[42,7,"-",7,"wall"],[43,7,"-",7,"wall"],[44,7,"-",7,"wall"],[45,7,"-",7,"wall"],[46,7,"-",7,"wall"],[47,7,"-",7,"wall"],[48,7,"-",7,"wall"],[49,7,"-",7,"wall"],[50,7,".",7,"doorway"],[51,7,"-",7,"wall"],[52,7,"-",7,"wall"],[53,7,".",7,"doorway"],[54,7,"-",7,"wall"],[55,7,"-",7,"wall"],[56,7,"#",7,"corridor"],[68,7,"-",7,"wall"],[69,7,"-",7,"wall"],[70,7,"-",7,"wall"],[71,7,"-",7,"wall"],[72,7,"-",7,"wall"],[73,7,"-",7,"wall"],[74,7,"-",7,"wall"],[75,7,"-",7,"wall"],[76,7,"-",7,"wall"],[77,7,"-",7,"wall"],[78,7,"-",7,"wall"],[21,8,"#",7,"corridor"],[22,8,"|",7,"wall"],[23,8,".",0,"dark part of a room"],[24,8,".",0,"dark part of a room"],[25,8,".",0,"dark part of a room"],[26,8,"|",7,"wall"],[32,8,"#",7,"corridor"],[44,8,"#",7,"corridor"],[45,8,"#",7,"corridor"],[46,8,"#",7,"corridor"],[47,8,"#",7,"corridor"],[48,8,"#",7,"corridor"],[49,8,"#",7,"corridor"],[50,8,"#",7,"corridor"],[53,8,"#",7,"corridor"],[54,8,"#",7,"corridor"],[55,8,"#",7,"corridor"],[56,8,"#",7,"corridor"],[57,8,"#",7,"corridor"],[58,8,"#",7,"corridor"],[66,8,"#",7,"corridor"],[67,8,"#",7,"corridor"],[68,8,"#",7,"corridor"],[69,8,"#",7,"corridor"],[22,9,"|",7,"wall"],[23,9,".",0,"dark part of a room"],[24,9,".",0,"dark part of a room"],[25,9,"<",7,"staircase up"],[26,9,"|",7,"wall"],[32,9,"#",7,"corridor"],[33,9,"#",7,"corridor"],[34,9,"#",7,"corridor"],[44,9,"#",7,"corridor"],[57,9,"#",7,"corridor"],[58,9,"#",7,"corridor"],[59,9,"#",7,"corridor"],[60,9,"#",7,"corridor"],[61,9,"#",7,"corridor"],[62,9,"#",7,"corridor"],[64,9,"#",7,"corridor"],[65,9,"#",7,"corridor"],[66,9,"#",7,"corridor"],[22,10,"|",7,"wall"],[23,10,".",0,"dark part of a room"],[24,10,".",0,"dark part of a room"],[25,10,".",0,"dark part of a room"],[26,10,"|",7,"wall"],[34,10,"#",7,"corridor"],[35,10,"#",7,"corridor"],[41,10,"#",7,"corridor"],[42,10,"#",7,"corridor"],[43,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[57,10,"#",7,"corridor"],[58,10,"#",7,"corridor"],[62,10,"#",7,"corridor"],[64,10,"#",7,"corridor"],[22,11,"-",7,"wall"],[23,11,"-",7,"wall"],[24,11,"-",7,"wall"],[25,11,"-",7,"wall"],[26,11,"-",7,"wall"],[35,11,"#",7,"corridor"],[36,11,"-",7,"wall"],[37,11,"-",7,"wall"],[38,11,"-",7,"wall"],[39,11,"-",7,"wall"],[40,11,"-",7,"wall"],[41,11,".",7,"doorway"],[42,11,"-",7,"wall"],[43,11,"-",7,"wall"],[44,11,"-",7,"wall"],[45,11,"-",7,"wall"],[58,11,"#",7,"corridor"],[62,11,"#",7,"corridor"],[63,11,"#",7,"corridor"],[64,11,"#",7,"corridor"],[65,11,"#",7,"corridor"],[66,11,"#",7,"corridor"],[67,11,"#",7,"corridor"],[68,11,"#",7,"corridor"],[69,11,"#",7,"corridor"],[35,12,"#",7,"corridor"],[36,12,"|",7,"wall"],[37,12,".",0,"dark part of a room"],[38,12,".",0,"dark part of a room"],[39,12,".",0,"dark part of a room"],[40,12,".",0,"dark part of a room"],[41,12,".",0,"dark part of a room"],[42,12,".",0,"dark part of a room"],[43,12,".",0,"dark part of a room"],[44,12,".",0,"dark part of a room"],[45,12,"|",7,"wall"],[58,12,"#",7,"corridor"],[61,12,"#",7,"corridor"],[62,12,"#",7,"corridor"],[69,12,"#",7,"corridor"],[7,13,"-",7,"wall"],[8,13,"-",7,"wall"],[9,13,"-",7,"wall"],[10,13,"-",7,"wall"],[35,13,"#",7,"corridor"],[36,13,"+",3,"closed door"],[37,13,".",0,"dark part of a room"],[38,13,".",0,"dark part of a room"],[39,13,".",0,"dark part of a room"],[40,13,".",0,"dark part of a room"],[41,13,".",0,"dark part of a room"],[42,13,".",0,"dark part of a room"],[43,13,".",0,"dark part of a room"],[44,13,".",0,"dark part of a room"],[45,13,"|",7,"wall"],[58,13,"#",7,"corridor"],[60,13,"-",7,"wall"],[61,13,".",7,"doorway"],[62,13,"-",7,"wall"],[63,13,"-",7,"wall"],[64,13,"-",7,"wall"],[65,13,"-",7,"wall"],[66,13,"-",7,"wall"],[67,13,"-",7,"wall"],[68,13,"-",7,"wall"],[69,13,".",7,"doorway"],[70,13,"-",7,"wall"],[7,14,"|",7,"wall"],[8,14,".",0,"dark part of a room"],[9,14,".",0,"dark part of a room"],[10,14,"|",7,"wall"],[36,14,"|",7,"wall"],[37,14,".",0,"dark part of a room"],[38,14,".",0,"dark part of a room"],[39,14,".",0,"dark part of a room"],[40,14,".",0,"dark part of a room"],[41,14,".",0,"dark part of a room"],[42,14,".",0,"dark part of a room"],[43,14,".",0,"dark part of a room"],[44,14,".",0,"dark part of a room"],[45,14,"+",3,"closed door"],[46,14,"#",7,"corridor"],[47,14,"#",7,"corridor"],[48,14,"#",7,"corridor"],[49,14,"#",7,"corridor"],[50,14,"#",7,"corridor"],[58,14,"#",7,"corridor"],[60,14,"|",7,"wall"],[61,14,".",0,"dark part of a room"],[62,14,".",0,"dark part of a room"],[63,14,".",0,"dark part of a room"],[64,14,".",0,"dark part of a room"],[65,14,".",0,"dark part of a room"],[66,14,".",0,"dark part of a room"],[67,14,".",0,"dark part of a room"],[68,14,".",0,"dark part of a room"],[69,14,".",0,"dark part of a room"],[70,14,"|",7,"wall"],[7,15,"|",7,"wall"],[8,15,".",0,"dark part of a room"],[9,15,".",0,"dark part of a room"],[10,15,"|",7,"wall"],[36,15,"-",7,"wall"],[37,15,"#",6,"iron bars"],[38,15,"-",7,"wall"],[39,15,"-",7,"wall"],[40,15,"-",7,"wall"],[41,15,"-",7,"wall"],[42,15,"-",7,"wall"],[43,15,"-",7,"wall"],[44,15,"-",7,"wall"],[45,15,"-",7,"wall"],[50,15,"#",7,"corridor"],[51,15,"#",7,"corridor"],[52,15,"#",7,"corridor"],[53,15,"#",7,"corridor"],[54,15,"#",7,"corridor"],[55,15,"#",7,"corridor"],[56,15,"#",7,"corridor"],[57,15,"#",7,"corridor"],[58,15,"#",7,"corridor"],[59,15,"#",7,"corridor"],[60,15,".",7,"doorway"],[61,15,".",0,"dark part of a room"],[62,15,".",0,"dark part of a room"],[63,15,".",0,"dark part of a room"],[64,15,".",0,"dark part of a room"],[65,15,".",0,"dark part of a room"],[66,15,".",0,"dark part of a room"],[67,15,".",0,"dark part of a room"],[68,15,".",0,"dark part of a room"],[69,15,".",0,"dark part of a room"],[70,15,"|",7,"wall"],[7,16,"-",7,"wall"],[8,16,"-",7,"wall"],[9,16,"-",7,"wall"],[10,16,"-",7,"wall"],[37,16,"#",7,"corridor"],[44,16,"#",7,"corridor"],[60,16,"|",7,"wall"],[61,16,".",0,"dark part of a room"],[62,16,".",0,"dark part of a room"],[63,16,".",0,"dark part of a room"],[64,16,".",0,"dark part of a room"],[65,16,".",0,"dark part of a room"],[66,16,".",0,"dark part of a room"],[67,16,".",0,"dark part of a room"],[68,16,".",0,"dark part of a room"],[69,16,".",0,"dark part of a room"],[70,16,"|",7,"wall"],[60,17,"|",7,"wall"],[61,17,".",0,"dark part of a room"],[62,17,".",0,"dark part of a room"],[63,17,".",0,"dark part of a room"],[64,17,".",0,"dark part of a room"],[65,17,".",0,"dark part of a room"],[66,17,".",0,"dark part of a room"],[67,17,".",0,"dark part of a room"],[68,17,".",0,"dark part of a room"],[69,17,".",0,"dark part of a room"],[70,17,"|",7,"wall"],[60,18,"|",7,"wall"],[61,18,".",0,"dark part of a room"],[62,18,".",0,"dark part of a room"],[63,18,".",0,"dark part of a room"],[64,18,".",0,"dark part of a room"],[65,18,".",0,"dark part of a room"],[66,18,".",0,"dark part of a room"],[67,18,".",0,"dark part of a room"],[68,18,".",0,"dark part of a room"],[69,18,".",0,"dark part of a room"],[70,18,"|",7,"wall"],[60,19,"-",7,"wall"],[61,19,"-",7,"wall"],[62,19,"-",7,"wall"],[63,19,"-",7,"wall"],[64,19,"-",7,"wall"],[65,19,"-",7,"wall"],[66,19,"-",7,"wall"],[67,19,"-",7,"wall"],[68,19,"-",7,"wall"],[69,19,"-",7,"wall"],[70,19,"-",7,"wall"],[62,20,"#",7,"corridor"],[65,20,"#",7,"corridor"]]},"0:4":{"info":{"dnum":0,"dlevel":4,"depth":4,"dungeon":"The Dungeons of Doom","desc":"Dlvl:4"},"seen":10,"cells":[[52,1,"#",7,"corridor"],[17,2,"-",7,"wall"],[18,2,"-",7,"wall"],[19,2,"-",7,"wall"],[20,2,"-",7,"wall"],[21,2,"-",7,"wall"],[22,2,"-",7,"wall"],[47,2,"-",7,"wall"],[48,2,"-",7,"wall"],[49,2,"-",7,"wall"],[50,2,"-",7,"wall"],[51,2,"-",7,"wall"],[52,2,"-",7,"wall"],[53,2,"-",7,"wall"],[66,2,"^",5,"teleportation trap"],[16,3,"#",7,"corridor"],[17,3,".",7,"doorway"],[18,3,".",0,"dark part of a room"],[19,3,".",0,"dark part of a room"],[20,3,".",0,"dark part of a room"],[21,3,".",0,"dark part of a room"],[22,3,"+",3,"closed door"],[23,3,"#",7,"corridor"],[24,3,"#",7,"corridor"],[25,3,"#",7,"corridor"],[26,3,"#",7,"corridor"],[27,3,"#",7,"corridor"],[28,3,"#",7,"corridor"],[29,3,"#",7,"corridor"],[30,3,"#",7,"corridor"],[31,3,"#",7,"corridor"],[32,3,"#",7,"corridor"],[33,3,"#",7,"corridor"],[34,3,"#",7,"corridor"],[35,3,"#",7,"corridor"],[47,3,"|",7,"wall"],[48,3,".",0,"dark part of a room"],[49,3,".",0,"dark part of a room"],[50,3,".",0,"dark part of a room"],[51,3,".",0,"dark part of a room"],[52,3,".",0,"dark part of a room"],[53,3,"|",7,"wall"],[62,3,"-",7,"wall"],[63,3,"-",7,"wall"],[64,3,"-",7,"wall"],[65,3,"-",7,"wall"],[66,3,"-",7,"wall"],[67,3,"-",7,"wall"],[68,3,"-",7,"wall"],[69,3,"-",7,"wall"],[70,3,"-",7,"wall"],[16,4,"#",7,"corridor"],[17,4,"|",7,"wall"],[18,4,".",0,"dark part of a room"],[19,4,".",0,"dark part of a room"],[20,4,".",0,"dark part of a room"],[21,4,".",0,"dark part of a room"],[22,4,"|",7,"wall"],[47,4,"|",7,"wall"],[48,4,".",0,"dark part of a room"],[49,4,".",0,"dark part of a room"],[50,4,".",0,"dark part of a room"],[51,4,".",0,"dark part of a room"],[52,4,".",0,"dark part of a room"],[53,4,".",7,"doorway"],[54,4,"#",7,"corridor"],[62,4,"|",7,"wall"],[63,4,".",7,"floor of a room"],[64,4,".",7,"floor of a room"],[65,4,".",7,"floor of a room"],[66,4,"`",12,"engraving"],[67,4,".",7,"floor of a room"],[68,4,".",7,"floor of a room"],[69,4,".",7,"floor of a room"],[70,4,"|",7,"wall"],[16,5,"#",7,"corridor"],[17,5,"|",7,"wall"],[18,5,".",0,"dark part of a room"],[19,5,".",0,"dark part of a room"],[20,5,".",0,"dark part of a room"],[21,5,".",0,"dark part of a room"],[22,5,".",7,"doorway"],[23,5,"#",7,"corridor"],[24,5,"#",7,"corridor"],[25,5,"#",7,"corridor"],[30,5,"-",7,"wall"],[31,5,"-",7,"wall"],[32,5,"-",7,"wall"],[33,5,"-",7,"wall"],[34,5,"-",7,"wall"],[35,5,"-",7,"wall"],[36,5,"-",7,"wall"],[37,5,"-",7,"wall"],[38,5,"#",7,"corridor"],[39,5,"#",7,"corridor"],[40,5,"#",7,"corridor"],[41,5,"#",7,"corridor"],[42,5,"#",7,"corridor"],[43,5,"#",7,"corridor"],[44,5,"#",7,"corridor"],[45,5,"#",7,"corridor"],[46,5,"#",7,"corridor"],[47,5,".",7,"doorway"],[48,5,".",0,"dark part of a room"],[49,5,".",0,"dark part of a room"],[50,5,".",0,"dark part of a room"],[51,5,".",0,"dark part of a room"],[52,5,".",0,"dark part of a room"],[53,5,"|",7,"wall"],[54,5,"#",7,"corridor"],[62,5,"|",7,"wall"],[63,5,".",7,"floor of a room"],[64,5,".",7,"floor of a room"],[65,5,".",7,"floor of a room"],[66,5,".",7,"floor of a room"],[67,5,".",7,"floor of a room"],[68,5,".",7,"floor of a room"],[69,5,".",7,"floor of a room"],[70,5,"|",7,"wall"],[15,6,"#",7,"corridor"],[16,6,"#",7,"corridor"],[17,6,"-",7,"wall"],[18,6,"-",7,"wall"],[19,6,"-",7,"wall"],[20,6,"-",7,"wall"],[21,6,"-",7,"wall"],[22,6,"-",7,"wall"],[25,6,"#",7,"corridor"],[26,6,"#",7,"corridor"],[27,6,"#",7,"corridor"],[28,6,"#",7,"corridor"],[29,6,"#",7,"corridor"],[30,6,".",7,"doorway"],[31,6,".",0,"dark part of a room"],[32,6,".",0,"dark part of a room"],[33,6,".",0,"dark part of a room"],[34,6,".",0,"dark part of a room"],[35,6,".",0,"dark part of a room"],[36,6,".",0,"dark part of a room"],[37,6,"|",7,"wall"],[38,6,"#",7,"corridor"],[47,6,"|",7,"wall"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,".",0,"dark part of a room"],[53,6,".",7,"doorway"],[54,6,"#",7,"corridor"],[55,6,"#",7,"corridor"],[56,6,"#",7,"corridor"],[57,6,"#",7,"corridor"],[58,6,"#",7,"corridor"],[62,6,"|",7,"wall"],[63,6,".",7,"floor of a room"],[64,6,".",7,"floor of a room"],[65,6,".",7,"floor of a room"],[66,6,".",7,"floor of a room"],[67,6,"@",15,"human valkyrie called Agnes"],[68,6,".",7,"floor of a room"],[69,6,".",7,"floor of a room"],[70,6,"|",7,"wall"],[14,7,"#",7,"corridor"],[15,7,"#",7,"corridor"],[18,7,"#",7,"corridor"],[19,7,"#",7,"corridor"],[30,7,"|",7,"wall"],[31,7,".",0,"dark part of a room"],[32,7,".",0,"dark part of a room"],[33,7,".",0,"dark part of a room"],[34,7,".",0,"dark part of a room"],[35,7,".",0,"dark part of a room"],[36,7,".",0,"dark part of a room"],[37,7,"|",7,"wall"],[38,7,"#",7,"corridor"],[47,7,"|",7,"wall"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,".",0,"dark part of a room"],[51,7,".",0,"dark part of a room"],[52,7,".",0,"dark part of a room"],[53,7,"|",7,"wall"],[54,7,"#",7,"corridor"],[58,7,"#",7,"corridor"],[59,7,"#",7,"corridor"],[60,7,"#",7,"corridor"],[61,7,"#",7,"corridor"],[62,7,"+",3,"closed door"],[63,7,".",7,"floor of a room"],[64,7,".",7,"floor of a room"],[65,7,".",7,"floor of a room"],[66,7,".",7,"floor of a room"],[67,7,".",7,"floor of a room"],[68,7,".",7,"floor of a room"],[69,7,".",7,"floor of a room"],[70,7,"|",7,"wall"],[6,8,"-",7,"wall"],[7,8,"-",7,"wall"],[8,8,"-",7,"wall"],[9,8,"-",7,"wall"],[10,8,"-",7,"wall"],[11,8,"-",7,"wall"],[12,8,"-",7,"wall"],[14,8,"#",7,"corridor"],[19,8,"#",7,"corridor"],[28,8,"#",7,"corridor"],[29,8,"#",7,"corridor"],[30,8,"|",7,"wall"],[31,8,".",0,"dark part of a room"],[32,8,".",0,"dark part of a room"],[33,8,".",0,"dark part of a room"],[34,8,".",0,"dark part of a room"],[35,8,".",0,"dark part of a room"],[36,8,".",0,"dark part of a room"],[37,8,".",7,"doorway"],[38,8,"#",7,"corridor"],[47,8,"|",7,"wall"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",0,"dark part of a room"],[53,8,"|",7,"wall"],[54,8,"#",7,"corridor"],[62,8,"|",7,"wall"],[63,8,".",7,"floor of a room"],[64,8,".",7,"floor of a room"],[65,8,".",7,"floor of a room"],[66,8,".",7,"floor of a room"],[67,8,".",7,"floor of a room"],[68,8,".",7,"floor of a room"],[69,8,".",7,"floor of a room"],[70,8,"|",7,"wall"],[6,9,"|",7,"wall"],[7,9,".",0,"dark part of a room"],[8,9,".",0,"dark part of a room"],[9,9,".",0,"dark part of a room"],[10,9,".",0,"dark part of a room"],[11,9,".",0,"dark part of a room"],[12,9,"|",7,"wall"],[14,9,"#",7,"corridor"],[19,9,"#",7,"corridor"],[20,9,"#",7,"corridor"],[21,9,"#",7,"corridor"],[28,9,"#",7,"corridor"],[29,9,"#",7,"corridor"],[30,9,"-",7,"wall"],[31,9,"-",7,"wall"],[32,9,"-",7,"wall"],[33,9,"-",7,"wall"],[34,9,"-",7,"wall"],[35,9,"-",7,"wall"],[36,9,"-",7,"wall"],[37,9,"-",7,"wall"],[38,9,"#",7,"corridor"],[47,9,"-",7,"wall"],[48,9,".",7,"doorway"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[53,9,"-",7,"wall"],[54,9,"#",7,"corridor"],[62,9,"-",7,"wall"],[63,9,"-",7,"wall"],[64,9,"-",7,"wall"],[65,9,".",7,"doorway"],[66,9,"-",7,"wall"],[67,9,"-",7,"wall"],[68,9,"-",7,"wall"],[69,9,"-",7,"wall"],[70,9,"-",7,"wall"],[6,10,"|",7,"wall"],[7,10,".",0,"dark part of a room"],[8,10,".",0,"dark part of a room"],[9,10,".",0,"dark part of a room"],[10,10,".",0,"dark part of a room"],[11,10,".",0,"dark part of a room"],[12,10,"|",7,"wall"],[14,10,"#",7,"corridor"],[21,10,"#",7,"corridor"],[29,10,"#",7,"corridor"],[30,10,"#",7,"corridor"],[31,10,"#",7,"corridor"],[32,10,"#",7,"corridor"],[33,10,"#",7,"corridor"],[34,10,"#",7,"corridor"],[35,10,"#",7,"corridor"],[36,10,"#",7,"corridor"],[37,10,"#",7,"corridor"],[38,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[45,10,"#",7,"corridor"],[46,10,"#",7,"corridor"],[47,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[50,10,"#",7,"corridor"],[54,10,"#",7,"corridor"],[65,10,"#",7,"corridor"],[6,11,"|",7,"wall"],[7,11,".",0,"dark part of a room"],[8,11,".",0,"dark part of a room"],[9,11,".",0,"dark part of a room"],[10,11,".",0,"dark part of a room"],[11,11,".",0,"dark part of a room"],[12,11,"|",7,"wall"],[14,11,"#",7,"corridor"],[21,11,"#",7,"corridor"],[22,11,"#",7,"corridor"],[23,11,"#",7,"corridor"],[29,11,"#",7,"corridor"],[38,11,"#",7,"corridor"],[43,11,"#",7,"corridor"],[44,11,"#",7,"corridor"],[54,11,"#",7,"corridor"],[65,11,"#",7,"corridor"],[6,12,"|",7,"wall"],[7,12,".",0,"dark part of a room"],[8,12,".",0,"dark part of a room"],[9,12,".",0,"dark part of a room"],[10,12,".",0,"dark part of a room"],[11,12,".",0,"dark part of a room"],[12,12,"|",7,"wall"],[13,12,"#",7,"corridor"],[14,12,"#",7,"corridor"],[23,12,"#",7,"corridor"],[29,12,"#",7,"corridor"],[38,12,"#",7,"corridor"],[40,12,"#",7,"corridor"],[41,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[54,12,"#",7,"corridor"],[59,12,"#",7,"corridor"],[60,12,"#",7,"corridor"],[61,12,"#",7,"corridor"],[62,12,"#",7,"corridor"],[63,12,"#",7,"corridor"],[64,12,"#",7,"corridor"],[65,12,"#",7,"corridor"],[6,13,"|",7,"wall"],[7,13,".",0,"dark part of a room"],[8,13,".",0,"dark part of a room"],[9,13,".",0,"dark part of a room"],[10,13,".",0,"dark part of a room"],[11,13,".",0,"dark part of a room"],[12,13,"+",3,"closed door"],[13,13,"#",12,"engraving"],[23,13,"#",7,"corridor"],[24,13,"#",7,"corridor"],[25,13,"#",7,"corridor"],[26,13,"#",7,"corridor"],[28,13,"#",7,"corridor"],[29,13,"#",7,"corridor"],[36,13,"#",7,"corridor"],[37,13,"#",7,"corridor"],[38,13,"#",7,"corridor"],[40,13,"#",7,"corridor"],[54,13,"#",7,"corridor"],[55,13,"#",7,"corridor"],[57,13,"-",7,"wall"],[58,13,"-",7,"wall"],[59,13,".",7,"doorway"],[60,13,"-",7,"wall"],[61,13,"-",7,"wall"],[62,13,"-",7,"wall"],[63,13,"-",7,"wall"],[64,13,"-",7,"wall"],[65,13,"-",7,"wall"],[6,14,"-",7,"wall"],[7,14,"-",7,"wall"],[8,14,"-",7,"wall"],[9,14,"-",7,"wall"],[10,14,"-",7,"wall"],[11,14,"-",7,"wall"],[12,14,"-",7,"wall"],[26,14,"#",7,"corridor"],[28,14,"#",7,"corridor"],[36,14,"#",7,"corridor"],[37,14,"-",7,"wall"],[38,14,"-",7,"wall"],[39,14,"-",7,"wall"],[40,14,"|",3,"open door"],[41,14,"-",7,"wall"],[42,14,"-",7,"wall"],[43,14,"-",7,"wall"],[44,14,"-",7,"wall"],[45,14,"-",7,"wall"],[46,14,"-",7,"wall"],[47,14,"-",7,"wall"],[48,14,"-",7,"wall"],[49,14,"-",7,"wall"],[50,14,"-",7,"wall"],[55,14,"#",7,"corridor"],[56,14,"#",7,"corridor"],[57,14,"|",7,"wall"],[58,14,".",0,"dark part of a room"],[59,14,".",0,"dark part of a room"],[60,14,".",0,"dark part of a room"],[61,14,".",0,"dark part of a room"],[62,14,".",0,"dark part of a room"],[63,14,".",0,"dark part of a room"],[64,14,".",0,"dark part of a room"],[65,14,"|",7,"wall"],[71,14,"-",7,"wall"],[72,14,"-",7,"wall"],[73,14,"-",7,"wall"],[74,14,"-",7,"wall"],[26,15,"#",7,"corridor"],[28,15,"#",7,"corridor"],[36,15,"#",7,"corridor"],[37,15,".",7,"doorway"],[38,15,".",0,"dark part of a room"],[39,15,".",0,"dark part of a room"],[40,15,".",0,"dark part of a room"],[41,15,".",0,"dark part of a room"],[42,15,".",0,"dark part of a room"],[43,15,".",0,"dark part of a room"],[44,15,".",0,"dark part of a room"],[45,15,".",0,"dark part of a room"],[46,15,".",0,"dark part of a room"],[47,15,".",0,"dark part of a room"],[48,15,".",0,"dark part of a room"],[49,15,".",0,"dark part of a room"],[50,15,"+",3,"closed door"],[51,15,"#",7,"corridor"],[52,15,"#",7,"corridor"],[53,15,"#",7,"corridor"],[54,15,"#",7,"corridor"],[55,15,"#",7,"corridor"],[56,15,"#",7,"corridor"],[57,15,"|",7,"wall"],[58,15,".",0,"dark part of a room"],[59,15,".",0,"dark part of a room"],[60,15,".",0,"dark part of a room"],[61,15,".",0,"dark part of a room"],[62,15,".",0,"dark part of a room"],[63,15,".",0,"dark part of a room"],[64,15,".",0,"dark part of a room"],[65,15,"|",7,"wall"],[71,15,"|",7,"wall"],[72,15,".",0,"dark part of a room"],[73,15,".",0,"dark part of a room"],[74,15,"|",7,"wall"],[19,16,"-",7,"wall"],[20,16,"-",7,"wall"],[21,16,"-",7,"wall"],[22,16,"-",7,"wall"],[23,16,"-",7,"wall"],[24,16,"-",7,"wall"],[25,16,"-",7,"wall"],[26,16,"+",3,"closed door"],[27,16,"-",7,"wall"],[28,16,"#",7,"corridor"],[37,16,"|",7,"wall"],[38,16,".",0,"dark part of a room"],[39,16,".",0,"dark part of a room"],[40,16,".",0,"dark part of a room"],[41,16,".",0,"dark part of a room"],[42,16,".",0,"dark part of a room"],[43,16,".",0,"dark part of a room"],[44,16,".",0,"dark part of a room"],[45,16,".",0,"dark part of a room"],[46,16,".",0,"dark part of a room"],[47,16,".",0,"dark part of a room"],[48,16,".",0,"dark part of a room"],[49,16,".",0,"dark part of a room"],[50,16,"|",7,"wall"],[56,16,"#",7,"corridor"],[57,16,"+",3,"closed door"],[58,16,".",0,"dark part of a room"],[59,16,".",0,"dark part of a room"],[60,16,".",0,"dark part of a room"],[61,16,".",0,"dark part of a room"],[62,16,".",0,"dark part of a room"],[63,16,".",0,"dark part of a room"],[64,16,".",0,"dark part of a room"],[65,16,"|",7,"wall"],[71,16,"|",7,"wall"],[72,16,".",0,"dark part of a room"],[73,16,".",0,"dark part of a room"],[74,16,"|",7,"wall"],[19,17,"|",7,"wall"],[20,17,".",0,"dark part of a room"],[21,17,".",0,"dark part of a room"],[22,17,".",0,"dark part of a room"],[23,17,".",0,"dark part of a room"],[24,17,".",0,"dark part of a room"],[25,17,".",0,"dark part of a room"],[26,17,".",0,"dark part of a room"],[27,17,".",7,"doorway"],[28,17,"#",7,"corridor"],[37,17,"|",7,"wall"],[38,17,".",0,"dark part of a room"],[39,17,".",0,"dark part of a room"],[40,17,".",0,"dark part of a room"],[41,17,".",0,"dark part of a room"],[42,17,".",0,"dark part of a room"],[43,17,".",0,"dark part of a room"],[44,17,".",0,"dark part of a room"],[45,17,".",0,"dark part of a room"],[46,17,".",0,"dark part of a room"],[47,17,".",0,"dark part of a room"],[48,17,".",0,"dark part of a room"],[49,17,".",0,"dark part of a room"],[50,17,"|",7,"wall"],[57,17,"-",7,"wall"],[58,17,"-",7,"wall"],[59,17,"-",7,"wall"],[60,17,"-",7,"wall"],[61,17,"-",7,"wall"],[62,17,"-",7,"wall"],[63,17,"-",7,"wall"],[64,17,"-",7,"wall"],[65,17,"-",7,"wall"],[71,17,"-",7,"wall"],[72,17,"-",7,"wall"],[73,17,"-",7,"wall"],[74,17,"-",7,"wall"],[19,18,"|",7,"wall"],[20,18,">",7,"staircase down"],[21,18,".",0,"dark part of a room"],[22,18,".",0,"dark part of a room"],[23,18,".",0,"dark part of a room"],[24,18,".",0,"dark part of a room"],[25,18,".",0,"dark part of a room"],[26,18,".",0,"dark part of a room"],[27,18,"|",7,"wall"],[37,18,"-",7,"wall"],[38,18,"-",7,"wall"],[39,18,"-",7,"wall"],[40,18,"-",7,"wall"],[41,18,"-",7,"wall"],[42,18,"-",7,"wall"],[43,18,"-",7,"wall"],[44,18,"-",7,"wall"],[45,18,"-",7,"wall"],[46,18,"-",7,"wall"],[47,18,"-",7,"wall"],[48,18,"-",7,"wall"],[49,18,"-",7,"wall"],[50,18,"-",7,"wall"],[64,18,"#",7,"corridor"],[19,19,"-",7,"wall"],[20,19,"-",7,"wall"],[21,19,"-",7,"wall"],[22,19,"-",7,"wall"],[23,19,"-",7,"wall"],[24,19,"-",7,"wall"],[25,19,"-",7,"wall"],[26,19,"-",7,"wall"],[27,19,"-",7,"wall"]]}},"messages":[{"seq":7,"turn":1,"text":"Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie."}],"inventory":[{"letter":"a","text":"a blessed +1 spear (weapon in right hand)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"a +0 dagger (alternate weapon; not wielded)","class_sym":")","class":"weapons","quan":1,"slots":["alternate"],"worn":false,"wielded":false},{"letter":"c","text":"an uncursed +3 small shield (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["shield"],"worn":true,"wielded":false},{"letter":"d","text":"an uncursed food ration","class_sym":"%","class":"food","quan":1,"slots":[],"worn":false,"wielded":false}],"menu":null,"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven arrow (runed arrow)","* orcish arrow (crude arrow)","* ya (bamboo arrow)","* shuriken (throwing star)","* elven spear (runed spear)","* orcish spear (crude spear)","* dwarvish spear (stout spear)","* javelin (throwing spear)","* elven dagger (runed dagger)","* orcish dagger (crude dagger)","* battle-axe (double-headed axe)","* elven short sword (runed short sword)","* orcish short sword (crude short sword)","* dwarvish short sword (broad short sword)","* scimitar (curved sword)","* elven broadsword (runed broadsword)","* katana (samurai sword)","* tsurugi (long samurai sword)","* runesword (runed broadsword)","* dwarvish mattock (broad pick)","* quarterstaff (staff)","* aklys (thonged club)","* elven bow (runed bow)","* orcish bow (crude bow)","* yumi (long bow)","Armor","* elven leather helm (leather hat)","* orcish helm (iron skull cap)","* dwarvish iron helm (hard hat)","* helmet (etched helmet)","* orcish chain mail (crude chain mail)","* orcish ring mail (crude ring mail)","* orcish cloak (coarse mantelet)","* dwarvish cloak (hooded cloak)","* oilskin cloak (slippery cloak)","* elven shield (blue and green shield)","* Uruk-hai shield (white-handed shield)","* orcish shield (red-eyed shield)","* dwarvish roundshield (large round shield)","* pair of leather gloves (padded gloves)","* pair of low boots (walking shoes)","* pair of iron shoes (hard shoes)","* pair of high boots (jackboots)","  small shield (wooden shield)"],"overview":["The Dungeons of Doom: levels 1 to 4","   Level 2:","      Stairs down to The Gnomish Mines.","   Level 3:","      A general store.","   Level 4: <- You are here.","      A scroll shop.","The Gnomish Mines:","   Level 3:"],"underfoot":"staircase up","screen0":""},"hungry-conditions":{"game":{"name":"Agnes","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral"},"turn":773,"hero":{"x":14,"y":10},"status":{"fields":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"773","hunger":"Hungry","hp":"16","hp_max":"16","level_desc":"Dlvl:1","exp_points":"0"},"conditions":["Blind","Conf"]},"awaiting":{"seq":1231,"kind":"command","turn":773,"ux":14,"uy":10,"source":"feed"},"cur":"0:1","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":773,"cells":[[13,9,"-",7,"wall"],[14,9,"-",7,"wall"],[15,9,"-",7,"wall"],[16,9,"-",7,"wall"],[17,9,"-",7,"wall"],[18,9,"-",7,"wall"],[19,9,"-",7,"wall"],[20,9,"-",7,"wall"],[21,9,"-",7,"wall"],[22,9,"-",7,"wall"],[23,9,"-",7,"wall"],[24,9,"-",7,"wall"],[25,9,"-",7,"wall"],[13,10,"|",7,"wall"],[14,10,"@",15,"human valkyrie called Agnes"],[15,10,")",6,"a dart"],[16,10,".",0,"dark part of a room"],[17,10,".",0,"dark part of a room"],[18,10,".",0,"dark part of a room"],[19,10,".",0,"dark part of a room"],[20,10,".",0,"dark part of a room"],[21,10,".",0,"dark part of a room"],[22,10,".",0,"dark part of a room"],[23,10,".",0,"dark part of a room"],[24,10,".",0,"dark part of a room"],[25,10,"|",7,"wall"],[13,11,"|",7,"wall"],[14,11,")",6,"5 darts"],[15,11,".",0,"dark part of a room"],[16,11,".",0,"dark part of a room"],[17,11,".",0,"dark part of a room"],[18,11,".",0,"dark part of a room"],[19,11,".",0,"dark part of a room"],[20,11,".",0,"dark part of a room"],[21,11,".",0,"dark part of a room"],[22,11,".",0,"dark part of a room"],[23,11,".",0,"dark part of a room"],[24,11,".",0,"dark part of a room"],[25,11,".",7,"doorway"],[13,12,"|",7,"wall"],[14,12,".",0,"dark part of a room"],[15,12,".",0,"dark part of a room"],[16,12,".",0,"dark part of a room"],[17,12,".",0,"dark part of a room"],[18,12,".",0,"dark part of a room"],[19,12,".",0,"dark part of a room"],[20,12,".",0,"dark part of a room"],[21,12,".",0,"dark part of a room"],[22,12,".",0,"dark part of a room"],[23,12,".",0,"dark part of a room"],[24,12,".",0,"dark part of a room"],[25,12,"|",7,"wall"],[13,13,"-",7,"wall"],[14,13,"-",7,"wall"],[15,13,"-",7,"wall"],[16,13,"-",7,"wall"],[17,13,"-",7,"wall"],[18,13,"-",7,"wall"],[19,13,"-",7,"wall"],[20,13,"-",7,"wall"],[21,13,"-",7,"wall"],[22,13,"-",7,"wall"],[23,13,"-",7,"wall"],[24,13,"-",7,"wall"],[25,13,"-",7,"wall"]]}},"messages":[{"seq":1209,"turn":771,"text":"What do you want to drink? [f or ?*] "},{"seq":1212,"turn":771,"text":"Ooph!  This tastes like liquid fire!"},{"seq":1215,"turn":771,"text":"Call a yellow potion: "},{"seq":1222,"turn":772,"text":"What do you want to put on? [e or ?*] "},{"seq":1226,"turn":772,"text":"You are now wearing a blindfold."},{"seq":1227,"turn":772,"text":"You can't see any more."}],"inventory":[{"letter":"a","text":"a blessed +1 spear (weapon in right hand)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"a +0 dagger (alternate weapon; not wielded)","class_sym":")","class":"weapons","quan":1,"slots":["alternate"],"worn":false,"wielded":false},{"letter":"c","text":"an uncursed +3 small shield (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["shield"],"worn":true,"wielded":false},{"letter":"d","text":"an uncursed food ration","class_sym":"%","class":"food","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"e","text":"a blindfold (being worn)","class_sym":"(","class":"tools","quan":1,"slots":["eyewear"],"worn":true,"wielded":false}],"menu":null,"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven arrow (runed arrow)","* orcish arrow (crude arrow)","* ya (bamboo arrow)","* shuriken (throwing star)","* elven spear (runed spear)","* orcish spear (crude spear)","* dwarvish spear (stout spear)","* javelin (throwing spear)","* elven dagger (runed dagger)","* orcish dagger (crude dagger)","* battle-axe (double-headed axe)","* elven short sword (runed short sword)","* orcish short sword (crude short sword)","* dwarvish short sword (broad short sword)","* scimitar (curved sword)","* elven broadsword (runed broadsword)","* katana (samurai sword)","* tsurugi (long samurai sword)","* runesword (runed broadsword)","* dwarvish mattock (broad pick)","* quarterstaff (staff)","* aklys (thonged club)","* elven bow (runed bow)","* orcish bow (crude bow)","* yumi (long bow)","Armor","* elven leather helm (leather hat)","* orcish helm (iron skull cap)","* dwarvish iron helm (hard hat)","* helmet (etched helmet)","* orcish chain mail (crude chain mail)","* orcish ring mail (crude ring mail)","* orcish cloak (coarse mantelet)","* dwarvish cloak (hooded cloak)","* oilskin cloak (slippery cloak)","* elven shield (blue and green shield)","* Uruk-hai shield (white-handed shield)","* orcish shield (red-eyed shield)","* dwarvish roundshield (large round shield)","* pair of leather gloves (padded gloves)","* pair of low boots (walking shoes)","* pair of iron shoes (hard shoes)","* pair of high boots (jackboots)","  small shield (wooden shield)","Potions","  potion (yellow)"],"overview":["The Dungeons of Doom:","   Level 1: <- You are here."],"underfoot":"2 darts","screen0":"You are now wearing a blindfold.  You can't see any more."},"low-hp":{"game":{"name":"Agnes","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral"},"turn":12,"hero":{"x":30,"y":14},"status":{"fields":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"12","hunger":"","hp":"4","hp_max":"16","level_desc":"Dlvl:2","exp_points":"0"},"conditions":[]},"awaiting":{"seq":114,"kind":"command","turn":12,"ux":30,"uy":14,"source":"feed"},"cur":"0:2","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":1,"cells":[[13,9,"-",7,"wall"],[14,9,"-",7,"wall"],[15,9,"-",7,"wall"],[16,9,"-",7,"wall"],[17,9,"-",7,"wall"],[18,9,"-",7,"wall"],[19,9,"-",7,"wall"],[20,9,"-",7,"wall"],[21,9,"-",7,"wall"],[22,9,"-",7,"wall"],[23,9,"-",7,"wall"],[24,9,"-",7,"wall"],[25,9,"-",7,"wall"],[13,10,"|",7,"wall"],[14,10,"<",11,"branch staircase up"],[15,10,".",7,"floor of a room"],[16,10,".",7,"floor of a room"],[17,10,".",7,"floor of a room"],[18,10,".",7,"floor of a room"],[19,10,".",7,"floor of a room"],[20,10,".",7,"floor of a room"],[21,10,".",7,"floor of a room"],[22,10,".",7,"floor of a room"],[23,10,".",7,"floor of a room"],[24,10,".",7,"floor of a room"],[25,10,"|",7,"wall"],[13,11,"|",7,"wall"],[14,11,".",7,"floor of a room"],[15,11,"f",15,"tame kitten"],[16,11,".",7,"floor of a room"],[17,11,"d",1,"fox"],[18,11,".",7,"floor of a room"],[19,11,".",7,"floor of a room"],[20,11,".",7,"floor of a room"],[21,11,".",7,"floor of a room"],[22,11,".",7,"floor of a room"],[23,11,".",7,"floor of a room"],[24,11,".",7,"floor of a room"],[25,11,".",7,"doorway"],[13,12,"|",7,"wall"],[14,12,".",7,"floor of a room"],[15,12,".",7,"floor of a room"],[16,12,".",7,"floor of a room"],[17,12,".",7,"floor of a room"],[18,12,".",7,"floor of a room"],[19,12,".",7,"floor of a room"],[20,12,".",7,"floor of a room"],[21,12,".",7,"floor of a room"],[22,12,".",7,"floor of a room"],[23,12,".",7,"floor of a room"],[24,12,".",7,"floor of a room"],[25,12,"|",7,"wall"],[13,13,"-",7,"wall"],[14,13,"-",7,"wall"],[15,13,"-",7,"wall"],[16,13,"-",7,"wall"],[17,13,"-",7,"wall"],[18,13,"-",7,"wall"],[19,13,"-",7,"wall"],[20,13,"-",7,"wall"],[21,13,"-",7,"wall"],[22,13,"-",7,"wall"],[23,13,"-",7,"wall"],[24,13,"-",7,"wall"],[25,13,"-",7,"wall"]]},"0:2":{"info":{"dnum":0,"dlevel":2,"depth":2,"dungeon":"The Dungeons of Doom","desc":"Dlvl:2"},"seen":12,"cells":[[24,12,"-",7,"wall"],[26,12,"-",7,"wall"],[27,12,"-",7,"wall"],[28,12,"-",7,"wall"],[29,12,"-",7,"wall"],[30,12,"-",7,"wall"],[31,12,"-",7,"wall"],[32,12,"-",7,"wall"],[33,12,"-",7,"wall"],[34,12,"-",7,"wall"],[24,13,"|",7,"wall"],[25,13,"?",15,"a scroll"],[26,13,".",7,"floor of a room"],[27,13,".",7,"floor of a room"],[28,13,".",7,"floor of a room"],[29,13,"!",0,"a dark potion"],[30,13,".",7,"floor of a room"],[31,13,"d",3,"jackal"],[32,13,".",7,"floor of a room"],[33,13,".",7,"floor of a room"],[34,13,"|",7,"wall"],[24,14,".",7,"doorway"],[25,14,".",7,"floor of a room"],[26,14,".",7,"floor of a room"],[27,14,".",7,"floor of a room"],[28,14,".",7,"floor of a room"],[29,14,".",7,"floor of a room"],[30,14,"@",15,"human valkyrie called Agnes"],[31,14,".",7,"floor of a room"],[32,14,".",7,"floor of a room"],[33,14,".",7,"floor of a room"],[34,14,"|",7,"wall"],[24,15,"|",7,"wall"],[25,15,".",7,"floor of a room"],[26,15,".",7,"floor of a room"],[27,15,".",7,"floor of a room"],[28,15,".",7,"floor of a room"],[29,15,")",0,"an orcish dagger"],[30,15,"$",11,"6 gold pieces"],[31,15,"%",3,"a food ration"],[32,15,".",7,"floor of a room"],[33,15,".",7,"floor of a room"],[34,15,"|",7,"wall"],[24,16,"|",7,"wall"],[25,16,".",7,"floor of a room"],[26,16,".",7,"floor of a room"],[27,16,".",7,"floor of a room"],[28,16,".",7,"floor of a room"],[29,16,".",7,"floor of a room"],[30,16,"f",15,"tame kitten"],[31,16,".",7,"floor of a room"],[32,16,".",7,"floor of a room"],[33,16,".",7,"floor of a room"],[34,16,"|",7,"wall"],[24,17,"|",7,"wall"],[25,17,".",7,"floor of a room"],[26,17,".",7,"floor of a room"],[27,17,".",7,"floor of a room"],[28,17,".",7,"floor of a room"],[29,17,".",7,"floor of a room"],[30,17,".",7,"floor of a room"],[31,17,".",7,"floor of a room"],[32,17,".",7,"floor of a room"],[33,17,".",7,"floor of a room"],[34,17,"|",7,"wall"],[24,18,"-",7,"wall"],[25,18,"-",7,"wall"],[26,18,"-",7,"wall"],[27,18,"-",7,"wall"],[28,18,"-",7,"wall"],[29,18,"-",7,"wall"],[30,18,"-",7,"wall"],[31,18,"-",7,"wall"],[32,18,"-",7,"wall"],[33,18,"-",7,"wall"],[34,18,"-",7,"wall"]]}},"messages":[{"seq":7,"turn":1,"text":"Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie."},{"seq":49,"turn":2,"text":"The jackal bites!"},{"seq":51,"turn":2,"text":"The jackal misses!"},{"seq":52,"turn":2,"text":"The hill orc wields an orcish dagger!"},{"seq":53,"turn":2,"text":"The kitten misses the jackal."},{"seq":54,"turn":2,"text":"The kitten bites the jackal."},{"seq":55,"turn":2,"text":"The jackal is killed!"},{"seq":60,"turn":3,"text":"The jackal misses!"},{"seq":61,"turn":3,"text":"The kitten bites the hill orc."},{"seq":62,"turn":3,"text":"The hill orc thrusts his orcish dagger at the kitten."},{"seq":63,"turn":3,"text":"The hill orc misses the kitten."},{"seq":64,"turn":3,"text":"The kitten misses the hill orc."},{"seq":67,"turn":4,"text":"The jackal misses!"},{"seq":68,"turn":4,"text":"The kitten bites the hill orc."},{"seq":69,"turn":4,"text":"The kitten misses the hill orc."},{"seq":72,"turn":5,"text":"The jackal just misses!"},{"seq":73,"turn":5,"text":"The hill orc thrusts his orcish dagger."},{"seq":74,"turn":5,"text":"The hill orc hits!"},{"seq":76,"turn":5,"text":"The kitten misses the hill orc."},{"seq":77,"turn":5,"text":"The kitten misses the hill orc."},{"seq":80,"turn":6,"text":"The jackal bites!"},{"seq":82,"turn":6,"text":"The kitten misses the hill orc."},{"seq":85,"turn":7,"text":"The jackal bites!"},{"seq":87,"turn":7,"text":"The hill orc thrusts his orcish dagger."},{"seq":88,"turn":7,"text":"The hill orc hits!"},{"seq":90,"turn":7,"text":"The kitten bites the hill orc."},{"seq":91,"turn":7,"text":"The hill orc is killed!"},{"seq":95,"turn":8,"text":"The jackal bites!"},{"seq":97,"turn":8,"text":"The kitten picks up an orcish dagger."},{"seq":98,"turn":8,"text":"The kitten drops an orcish dagger."},{"seq":102,"turn":9,"text":"The jackal just misses!"},{"seq":106,"turn":10,"text":"The jackal misses!"},{"seq":110,"turn":11,"text":"The jackal bites!"}],"inventory":[{"letter":"a","text":"a blessed +1 spear (weapon in right hand)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"a +0 dagger (alternate weapon; not wielded)","class_sym":")","class":"weapons","quan":1,"slots":["alternate"],"worn":false,"wielded":false},{"letter":"c","text":"an uncursed +3 small shield (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["shield"],"worn":true,"wielded":false},{"letter":"d","text":"an uncursed food ration","class_sym":"%","class":"food","quan":1,"slots":[],"worn":false,"wielded":false}],"menu":null,"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven arrow (runed arrow)","* orcish arrow (crude arrow)","* ya (bamboo arrow)","* shuriken (throwing star)","* elven spear (runed spear)","* orcish spear (crude spear)","* dwarvish spear (stout spear)","* javelin (throwing spear)","* elven dagger (runed dagger)","  orcish dagger (crude dagger)","* battle-axe (double-headed axe)","* elven short sword (runed short sword)","* orcish short sword (crude short sword)","* dwarvish short sword (broad short sword)","* scimitar (curved sword)","* elven broadsword (runed broadsword)","* katana (samurai sword)","* tsurugi (long samurai sword)","* runesword (runed broadsword)","* dwarvish mattock (broad pick)","* quarterstaff (staff)","* aklys (thonged club)","* elven bow (runed bow)","* orcish bow (crude bow)","* yumi (long bow)","Armor","* elven leather helm (leather hat)","* orcish helm (iron skull cap)","* dwarvish iron helm (hard hat)","* helmet (etched helmet)","* orcish chain mail (crude chain mail)","* orcish ring mail (crude ring mail)","* orcish cloak (coarse mantelet)","* dwarvish cloak (hooded cloak)","* oilskin cloak (slippery cloak)","* elven shield (blue and green shield)","* Uruk-hai shield (white-handed shield)","* orcish shield (red-eyed shield)","* dwarvish roundshield (large round shield)","* pair of leather gloves (padded gloves)","* pair of low boots (walking shoes)","* pair of iron shoes (hard shoes)","* pair of high boots (jackboots)","  small shield (wooden shield)","Potions","  potion (dark)"],"overview":["The Dungeons of Doom: levels 1 to 2","   Level 2: <- You are here."],"underfoot":"floor of a room","screen0":"The jackal bites!"},"menu-open":{"game":{"name":"Agnes","role":"Wizard","race":"elf","gender":"female","alignment":"chaotic"},"turn":5,"hero":{"x":7,"y":10},"status":{"fields":{"title":"Agnes the Evoker","str":"7","dex":"13","con":"12","int":"17","wis":"14","cha":"12","align":"Chaotic","encumbrance":"","gold":"0","power":"4","power_max":"9","xp_level":"1","ac":"9","time":"5","hunger":"","hp":"11","hp_max":"11","level_desc":"Dlvl:1","exp_points":"6"},"conditions":[]},"awaiting":{"seq":51,"kind":"menu","turn":5,"ux":7,"uy":10,"source":"feed"},"cur":"0:1","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":5,"cells":[[3,4,"-",7,"wall"],[4,4,"-",7,"wall"],[5,4,"-",7,"wall"],[6,4,"-",7,"wall"],[7,4,"-",7,"wall"],[8,4,"-",7,"wall"],[9,4,"-",7,"wall"],[10,4,"-",7,"wall"],[11,4,"-",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",7,"floor of a room"],[5,5,".",7,"floor of a room"],[6,5,".",7,"floor of a room"],[7,5,".",7,"floor of a room"],[8,5,".",7,"floor of a room"],[9,5,".",7,"floor of a room"],[10,5,".",7,"floor of a room"],[11,5,".",7,"doorway"],[3,6,"|",7,"wall"],[4,6,".",7,"floor of a room"],[5,6,".",7,"floor of a room"],[6,6,".",7,"floor of a room"],[7,6,".",7,"floor of a room"],[8,6,".",7,"floor of a room"],[9,6,".",7,"floor of a room"],[10,6,".",7,"floor of a room"],[11,6,"|",7,"wall"],[3,7,"|",7,"wall"],[4,7,".",7,"floor of a room"],[5,7,"{",12,"fountain"],[6,7,".",7,"floor of a room"],[7,7,".",7,"floor of a room"],[8,7,".",7,"floor of a room"],[9,7,".",7,"floor of a room"],[10,7,".",7,"floor of a room"],[11,7,"|",7,"wall"],[3,8,"|",7,"wall"],[4,8,".",7,"floor of a room"],[5,8,".",7,"floor of a room"],[6,8,".",7,"floor of a room"],[7,8,".",7,"floor of a room"],[8,8,".",7,"floor of a room"],[9,8,".",7,"floor of a room"],[10,8,".",7,"floor of a room"],[11,8,"|",7,"wall"],[3,9,"|",7,"wall"],[4,9,".",7,"floor of a room"],[5,9,"<",11,"branch staircase up"],[6,9,".",7,"floor of a room"],[7,9,".",7,"floor of a room"],[8,9,"%",7,"a goblin corpse"],[9,9,".",7,"floor of a room"],[10,9,".",7,"floor of a room"],[11,9,"+",3,"closed door"],[3,10,"|",7,"wall"],[4,10,".",7,"floor of a room"],[5,10,".",7,"floor of a room"],[6,10,"f",15,"tame kitten"],[7,10,"@",15,"elven wizard called Agnes"],[8,10,".",7,"floor of a room"],[9,10,".",7,"floor of a room"],[10,10,"!",7,"a potion"],[11,10,"|",7,"wall"],[3,11,"-",7,"wall"],[4,11,"-",7,"wall"],[5,11,"-",7,"wall"],[6,11,"-",7,"wall"],[7,11,"-",7,"wall"],[8,11,"-",7,"wall"],[9,11,"-",7,"wall"],[10,11,"-",7,"wall"],[11,11,"-",7,"wall"]]}},"messages":[{"seq":7,"turn":1,"text":"Hello Agnes, welcome to NetHack!  You are a chaotic female elven Wizard."},{"seq":21,"turn":1,"text":"In what direction? "},{"seq":24,"turn":1,"text":"The spell hits the goblin!"},{"seq":25,"turn":1,"text":"You kill the goblin!"},{"seq":36,"turn":3,"text":"You see here a scroll labeled ASHPD SODALG."},{"seq":41,"turn":4,"text":"p - a scroll labeled ASHPD SODALG."},{"seq":48,"turn":5,"text":"# "}],"inventory":[{"letter":"a","text":"a blessed +1 quarterstaff (weapon in hands)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"an uncursed +0 cloak of magic resistance (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["cloak"],"worn":true,"wielded":false},{"letter":"c","text":"a wand of locking (0:5)","class_sym":"/","class":"wands","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"d","text":"an uncursed ring of sustain ability","class_sym":"=","class":"rings","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"e","text":"an uncursed +1 ring of increase damage","class_sym":"=","class":"rings","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"f","text":"a potion of holy water","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"g","text":"an uncursed potion of booze","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"h","text":"an uncursed potion of oil","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"i","text":"an uncursed scroll of destroy armor","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"j","text":"an uncursed scroll of magic mapping","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"k","text":"an uncursed scroll of identify","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"l","text":"a blessed spellbook of force bolt","class_sym":"+","class":"spellbooks","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"m","text":"an uncursed spellbook of confuse monster","class_sym":"+","class":"spellbooks","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"n","text":"a magic marker (0:22)","class_sym":"(","class":"tools","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"o","text":"an uncursed bell","class_sym":"(","class":"tools","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"p","text":"a scroll labeled ASHPD SODALG","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false}],"menu":{"seq":50,"win":5,"how":"one","prompt":"What do you want to name?","pages":1,"items":[{"text":"a monster","ch":"m","page":1,"selectable":true},{"text":"a particular object in inventory","ch":"i","page":1,"selectable":true},{"text":"the type of an object in inventory","ch":"o","page":1,"selectable":true},{"text":"the type of an object upon the floor","ch":"f","page":1,"selectable":true},{"text":"the type of an object on discoveries list","ch":"d","page":1,"selectable":true},{"text":"record an annotation for the current level","ch":"a","page":1,"selectable":true}]},"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven short sword (runed short sword)","* elven arrow (runed arrow)","* elven bow (runed bow)","* elven spear (runed spear)","* elven dagger (runed dagger)","* elven broadsword (runed broadsword)","  quarterstaff (staff)","Armor","* elven leather helm (leather hat)","* elven shield (blue and green shield)","* pair of elven boots (jungle boots)","* elven cloak (faded pall)","  cloak of magic resistance (opera cloak)","Scrolls","  scroll of destroy armor (THARR)","  scroll of magic mapping (HAPAX LEGOMENON)","  scroll of identify (KERNOD WEL)","  scroll (ASHPD SODALG)","Spellbooks","  spellbook of force bolt (parchment)","  spellbook of confuse monster (thin)","* spellbook of magic missile (bronze)","* spellbook of sleep (gold)","* spellbook of light (dark brown)","* spellbook of detect monsters (magenta)","* spellbook of healing (vellum)","* spellbook of knock (cyan)","* spellbook of drain life (mottled)","* spellbook of slow monster (shining)","* spellbook of cause fear (light blue)","* spellbook of protection (dusty)","* spellbook of jumping (purple)","* spellbook of chain lightning (yellow)","Potions","  potion of water (clear)","  potion of booze (fizzy)","  potion of oil (emerald)","Rings","  ring of sustain ability (ivory)","  ring of increase damage (diamond)","Wands","  wand of locking (aluminum)"],"overview":["The Dungeons of Doom:","   Level 1: <- You are here.","      A fountain."],"underfoot":"floor of a room","screen0":"                                What do you want to name?"},"fountain-quaff-prompt":{"game":{"name":"Agnes","role":"Wizard","race":"elf","gender":"female","alignment":"chaotic"},"turn":4,"hero":{"x":5,"y":7},"status":{"fields":{"title":"Agnes the Evoker","str":"7","dex":"13","con":"12","int":"17","wis":"14","cha":"12","align":"Chaotic","encumbrance":"","gold":"0","power":"4","power_max":"9","xp_level":"1","ac":"9","time":"4","hunger":"","hp":"11","hp_max":"11","level_desc":"Dlvl:1","exp_points":"6"},"conditions":[]},"awaiting":{"seq":42,"kind":"key","turn":4,"ux":5,"uy":7,"source":"feed"},"cur":"0:1","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":4,"cells":[[3,4,"-",7,"wall"],[4,4,"-",7,"wall"],[5,4,"-",7,"wall"],[6,4,"-",7,"wall"],[7,4,"-",7,"wall"],[8,4,"-",7,"wall"],[9,4,"-",7,"wall"],[10,4,"-",7,"wall"],[11,4,"-",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",7,"floor of a room"],[5,5,".",7,"floor of a room"],[6,5,".",7,"floor of a room"],[7,5,".",7,"floor of a room"],[8,5,".",7,"floor of a room"],[9,5,".",7,"floor of a room"],[10,5,".",7,"floor of a room"],[11,5,".",7,"doorway"],[3,6,"|",7,"wall"],[4,6,".",7,"floor of a room"],[5,6,".",7,"floor of a room"],[6,6,"f",15,"tame kitten"],[7,6,".",7,"floor of a room"],[8,6,".",7,"floor of a room"],[9,6,".",7,"floor of a room"],[10,6,".",7,"floor of a room"],[11,6,"|",7,"wall"],[3,7,"|",7,"wall"],[4,7,".",7,"floor of a room"],[5,7,"@",15,"elven wizard called Agnes"],[6,7,".",7,"floor of a room"],[7,7,".",7,"floor of a room"],[8,7,".",7,"floor of a room"],[9,7,".",7,"floor of a room"],[10,7,".",7,"floor of a room"],[11,7,"|",7,"wall"],[3,8,"|",7,"wall"],[4,8,".",7,"floor of a room"],[5,8,".",7,"floor of a room"],[6,8,".",7,"floor of a room"],[7,8,".",7,"floor of a room"],[8,8,".",7,"floor of a room"],[9,8,".",7,"floor of a room"],[10,8,".",7,"floor of a room"],[11,8,"|",7,"wall"],[3,9,"|",7,"wall"],[4,9,".",7,"floor of a room"],[5,9,"<",11,"branch staircase up"],[6,9,".",7,"floor of a room"],[7,9,".",7,"floor of a room"],[8,9,"%",7,"a goblin corpse"],[9,9,".",7,"floor of a room"],[10,9,".",7,"floor of a room"],[11,9,"+",3,"closed door"],[3,10,"|",7,"wall"],[4,10,".",7,"floor of a room"],[5,10,".",7,"floor of a room"],[6,10,".",7,"floor of a room"],[7,10,"?",15,"a scroll labeled ASHPD SODALG"],[8,10,".",7,"floor of a room"],[9,10,".",7,"floor of a room"],[10,10,"!",7,"a potion"],[11,10,"|",7,"wall"],[3,11,"-",7,"wall"],[4,11,"-",7,"wall"],[5,11,"-",7,"wall"],[6,11,"-",7,"wall"],[7,11,"-",7,"wall"],[8,11,"-",7,"wall"],[9,11,"-",7,"wall"],[10,11,"-",7,"wall"],[11,11,"-",7,"wall"]]}},"messages":[{"seq":7,"turn":1,"text":"Hello Agnes, welcome to NetHack!  You are a chaotic female elven Wizard."},{"seq":21,"turn":1,"text":"In what direction? "},{"seq":24,"turn":1,"text":"The spell hits the goblin!"},{"seq":25,"turn":1,"text":"You kill the goblin!"},{"seq":41,"turn":4,"text":"Drink from the fountain? [yn] (n) "}],"inventory":[{"letter":"a","text":"a blessed +1 quarterstaff (weapon in hands)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"an uncursed +0 cloak of magic resistance (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["cloak"],"worn":true,"wielded":false},{"letter":"c","text":"a wand of locking (0:5)","class_sym":"/","class":"wands","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"d","text":"an uncursed ring of sustain ability","class_sym":"=","class":"rings","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"e","text":"an uncursed +1 ring of increase damage","class_sym":"=","class":"rings","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"f","text":"a potion of holy water","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"g","text":"an uncursed potion of booze","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"h","text":"an uncursed potion of oil","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"i","text":"an uncursed scroll of destroy armor","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"j","text":"an uncursed scroll of magic mapping","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"k","text":"an uncursed scroll of identify","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"l","text":"a blessed spellbook of force bolt","class_sym":"+","class":"spellbooks","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"m","text":"an uncursed spellbook of confuse monster","class_sym":"+","class":"spellbooks","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"n","text":"a magic marker (0:22)","class_sym":"(","class":"tools","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"o","text":"an uncursed bell","class_sym":"(","class":"tools","quan":1,"slots":[],"worn":false,"wielded":false}],"menu":null,"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven short sword (runed short sword)","* elven arrow (runed arrow)","* elven bow (runed bow)","* elven spear (runed spear)","* elven dagger (runed dagger)","* elven broadsword (runed broadsword)","  quarterstaff (staff)","Armor","* elven leather helm (leather hat)","* elven shield (blue and green shield)","* pair of elven boots (jungle boots)","* elven cloak (faded pall)","  cloak of magic resistance (opera cloak)","Scrolls","  scroll of destroy armor (THARR)","  scroll of magic mapping (HAPAX LEGOMENON)","  scroll of identify (KERNOD WEL)","  scroll (ASHPD SODALG)","Spellbooks","  spellbook of force bolt (parchment)","  spellbook of confuse monster (thin)","* spellbook of magic missile (bronze)","* spellbook of sleep (gold)","* spellbook of light (dark brown)","* spellbook of detect monsters (magenta)","* spellbook of healing (vellum)","* spellbook of knock (cyan)","* spellbook of drain life (mottled)","* spellbook of slow monster (shining)","* spellbook of cause fear (light blue)","* spellbook of protection (dusty)","* spellbook of jumping (purple)","* spellbook of chain lightning (yellow)","Potions","  potion of water (clear)","  potion of booze (fizzy)","  potion of oil (emerald)","Rings","  ring of sustain ability (ivory)","  ring of increase damage (diamond)","Wands","  wand of locking (aluminum)"],"overview":["The Dungeons of Doom:","   Level 1: <- You are here.","      A fountain."],"underfoot":"fountain","screen0":"Drink from the fountain? [yn] (n) "},"shop":{"game":{"name":"Agnes","role":"Valkyrie","race":"human","gender":"female","alignment":"neutral"},"turn":3,"hero":{"x":75,"y":15},"status":{"fields":{"title":"Agnes the Stripling","str":"18","dex":"13","con":"18","int":"7","wis":"9","cha":"8","align":"Neutral","encumbrance":"","gold":"0","power":"2","power_max":"2","xp_level":"1","ac":"6","time":"3","hunger":"","hp":"16","hp_max":"16","level_desc":"Dlvl:3","exp_points":"0"},"conditions":[]},"awaiting":{"seq":82,"kind":"command","turn":3,"ux":75,"uy":15,"source":"feed"},"cur":"0:3","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":1,"cells":[[13,9,"-",7,"wall"],[14,9,"-",7,"wall"],[15,9,"-",7,"wall"],[16,9,"-",7,"wall"],[17,9,"-",7,"wall"],[18,9,"-",7,"wall"],[19,9,"-",7,"wall"],[20,9,"-",7,"wall"],[21,9,"-",7,"wall"],[22,9,"-",7,"wall"],[23,9,"-",7,"wall"],[24,9,"-",7,"wall"],[25,9,"-",7,"wall"],[13,10,"|",7,"wall"],[14,10,"<",11,"branch staircase up"],[15,10,".",7,"floor of a room"],[16,10,".",7,"floor of a room"],[17,10,".",7,"floor of a room"],[18,10,".",7,"floor of a room"],[19,10,".",7,"floor of a room"],[20,10,".",7,"floor of a room"],[21,10,".",7,"floor of a room"],[22,10,".",7,"floor of a room"],[23,10,".",7,"floor of a room"],[24,10,".",7,"floor of a room"],[25,10,"|",7,"wall"],[13,11,"|",7,"wall"],[14,11,".",7,"floor of a room"],[15,11,"f",15,"tame kitten"],[16,11,".",7,"floor of a room"],[17,11,"d",1,"fox"],[18,11,".",7,"floor of a room"],[19,11,".",7,"floor of a room"],[20,11,".",7,"floor of a room"],[21,11,".",7,"floor of a room"],[22,11,".",7,"floor of a room"],[23,11,".",7,"floor of a room"],[24,11,".",7,"floor of a room"],[25,11,".",7,"doorway"],[13,12,"|",7,"wall"],[14,12,".",7,"floor of a room"],[15,12,".",7,"floor of a room"],[16,12,".",7,"floor of a room"],[17,12,".",7,"floor of a room"],[18,12,".",7,"floor of a room"],[19,12,".",7,"floor of a room"],[20,12,".",7,"floor of a room"],[21,12,".",7,"floor of a room"],[22,12,".",7,"floor of a room"],[23,12,".",7,"floor of a room"],[24,12,".",7,"floor of a room"],[25,12,"|",7,"wall"],[13,13,"-",7,"wall"],[14,13,"-",7,"wall"],[15,13,"-",7,"wall"],[16,13,"-",7,"wall"],[17,13,"-",7,"wall"],[18,13,"-",7,"wall"],[19,13,"-",7,"wall"],[20,13,"-",7,"wall"],[21,13,"-",7,"wall"],[22,13,"-",7,"wall"],[23,13,"-",7,"wall"],[24,13,"-",7,"wall"],[25,13,"-",7,"wall"]]},"0:2":{"info":{"dnum":0,"dlevel":2,"depth":2,"dungeon":"The Dungeons of Doom","desc":"Dlvl:2"},"seen":1,"cells":[[24,12,"-",7,"wall"],[26,12,"-",7,"wall"],[27,12,"-",7,"wall"],[28,12,"-",7,"wall"],[29,12,"-",7,"wall"],[30,12,"-",7,"wall"],[31,12,"-",7,"wall"],[32,12,"-",7,"wall"],[33,12,"-",7,"wall"],[34,12,"-",7,"wall"],[24,13,"|",7,"wall"],[25,13,"?",15,"a scroll"],[26,13,".",7,"floor of a room"],[27,13,".",7,"floor of a room"],[28,13,".",7,"floor of a room"],[29,13,"!",0,"a dark potion"],[30,13,".",7,"floor of a room"],[31,13,".",7,"floor of a room"],[32,13,".",7,"floor of a room"],[33,13,".",7,"floor of a room"],[34,13,"|",7,"wall"],[24,14,".",7,"doorway"],[25,14,".",7,"floor of a room"],[26,14,".",7,"floor of a room"],[27,14,".",7,"floor of a room"],[28,14,".",7,"floor of a room"],[29,14,".",7,"floor of a room"],[30,14,".",7,"floor of a room"],[31,14,".",7,"floor of a room"],[32,14,".",7,"floor of a room"],[33,14,".",7,"floor of a room"],[34,14,"|",7,"wall"],[24,15,"|",7,"wall"],[25,15,".",7,"floor of a room"],[26,15,".",7,"floor of a room"],[27,15,".",7,"floor of a room"],[28,15,".",7,"floor of a room"],[29,15,"f",15,"tame kitten"],[30,15,".",7,"floor of a room"],[31,15,"%",3,"a food ration"],[32,15,".",7,"floor of a room"],[33,15,".",7,"floor of a room"],[34,15,"|",7,"wall"],[24,16,"|",7,"wall"],[25,16,".",7,"floor of a room"],[26,16,".",7,"floor of a room"],[27,16,".",7,"floor of a room"],[28,16,".",7,"floor of a room"],[29,16,".",7,"floor of a room"],[30,16,".",7,"floor of a room"],[31,16,".",7,"floor of a room"],[32,16,".",7,"floor of a room"],[33,16,".",7,"floor of a room"],[34,16,"|",7,"wall"],[24,17,"|",7,"wall"],[25,17,".",7,"floor of a room"],[26,17,".",7,"floor of a room"],[27,17,".",7,"floor of a room"],[28,17,".",7,"floor of a room"],[29,17,".",7,"floor of a room"],[30,17,".",7,"floor of a room"],[31,17,".",7,"floor of a room"],[32,17,".",7,"floor of a room"],[33,17,".",7,"floor of a room"],[34,17,"|",7,"wall"],[24,18,"-",7,"wall"],[25,18,"-",7,"wall"],[26,18,"-",7,"wall"],[27,18,"-",7,"wall"],[28,18,"-",7,"wall"],[29,18,"-",7,"wall"],[30,18,"-",7,"wall"],[31,18,"-",7,"wall"],[32,18,"-",7,"wall"],[33,18,"-",7,"wall"],[34,18,"-",7,"wall"]]},"0:3":{"info":{"dnum":0,"dlevel":3,"depth":3,"dungeon":"The Dungeons of Doom","desc":"Dlvl:3"},"seen":3,"cells":[[74,0,"#",7,"corridor"],[4,1,"-",7,"wall"],[5,1,"-",7,"wall"],[6,1,"-",7,"wall"],[7,1,"-",7,"wall"],[8,1,"-",7,"wall"],[9,1,"-",7,"wall"],[10,1,"-",7,"wall"],[11,1,"-",7,"wall"],[22,1,"-",7,"wall"],[23,1,"-",7,"wall"],[24,1,"-",7,"wall"],[25,1,"-",7,"wall"],[26,1,"-",7,"wall"],[70,1,"-",7,"wall"],[71,1,"-",7,"wall"],[72,1,"-",7,"wall"],[73,1,"-",7,"wall"],[74,1,".",7,"doorway"],[75,1,"-",7,"wall"],[76,1,"-",7,"wall"],[77,1,"-",7,"wall"],[78,1,"-",7,"wall"],[4,2,"|",7,"wall"],[5,2,".",0,"dark part of a room"],[6,2,".",0,"dark part of a room"],[7,2,".",0,"dark part of a room"],[8,2,".",0,"dark part of a room"],[9,2,".",0,"dark part of a room"],[10,2,".",0,"dark part of a room"],[11,2,".",7,"doorway"],[12,2,"#",7,"corridor"],[13,2,"#",7,"corridor"],[14,2,"#",7,"corridor"],[15,2,"#",7,"corridor"],[16,2,"#",7,"corridor"],[17,2,"#",7,"corridor"],[18,2,"#",7,"corridor"],[19,2,"#",7,"corridor"],[20,2,"#",7,"corridor"],[21,2,"#",7,"corridor"],[22,2,".",7,"doorway"],[23,2,"%",3,"a food ration"],[24,2,"(",3,"a large box"],[25,2,".",0,"dark part of a room"],[26,2,"|",7,"wall"],[46,2,"$",11,"39 gold pieces (buried)"],[53,2,"$",11,"35 gold pieces (buried)"],[70,2,"|",7,"wall"],[71,2,".",0,"dark part of a room"],[72,2,".",0,"dark part of a room"],[73,2,".",0,"dark part of a room"],[74,2,".",0,"dark part of a room"],[75,2,".",0,"dark part of a room"],[76,2,".",0,"dark part of a room"],[77,2,".",0,"dark part of a room"],[78,2,"|",7,"wall"],[4,3,"|",7,"wall"],[5,3,"<",7,"staircase up"],[6,3,".",0,"dark part of a room"],[7,3,".",0,"dark part of a room"],[8,3,".",0,"dark part of a room"],[9,3,".",0,"dark part of a room"],[10,3,".",0,"dark part of a room"],[11,3,"|",7,"wall"],[13,3,"#",7,"corridor"],[14,3,"#",7,"corridor"],[15,3,"#",7,"corridor"],[16,3,"#",7,"corridor"],[17,3,"#",7,"corridor"],[22,3,"|",7,"wall"],[23,3,".",0,"dark part of a room"],[24,3,">",7,"staircase down"],[25,3,".",0,"dark part of a room"],[26,3,".",7,"doorway"],[27,3,"#",7,"corridor"],[40,3,"$",11,"47 gold pieces embedded in stone"],[70,3,"|",7,"wall"],[71,3,".",0,"dark part of a room"],[72,3,".",0,"dark part of a room"],[73,3,".",0,"dark part of a room"],[74,3,".",0,"dark part of a room"],[75,3,".",0,"dark part of a room"],[76,3,".",0,"dark part of a room"],[77,3,".",0,"dark part of a room"],[78,3,"|",7,"wall"],[4,4,"|",7,"wall"],[5,4,".",0,"dark part of a room"],[6,4,".",0,"dark part of a room"],[7,4,".",0,"dark part of a room"],[8,4,".",0,"dark part of a room"],[9,4,".",0,"dark part of a room"],[10,4,".",0,"dark part of a room"],[11,4,"|",7,"wall"],[12,4,"#",7,"corridor"],[13,4,"#",7,"corridor"],[22,4,"-",7,"wall"],[23,4,"-",7,"wall"],[24,4,"-",7,"wall"],[25,4,"-",7,"wall"],[26,4,"-",7,"wall"],[27,4,"#",7,"corridor"],[32,4,"-",7,"wall"],[33,4,"-",7,"wall"],[34,4,"-",7,"wall"],[35,4,"-",7,"wall"],[36,4,"-",7,"wall"],[37,4,"-",7,"wall"],[60,4,"$",11,"49 gold pieces embedded in stone"],[62,4,"$",11,"49 gold pieces embedded in stone"],[70,4,"|",7,"wall"],[71,4,".",0,"dark part of a room"],[72,4,".",0,"dark part of a room"],[73,4,".",0,"dark part of a room"],[74,4,".",0,"dark part of a room"],[75,4,".",0,"dark part of a room"],[76,4,"$",11,"4 gold pieces"],[77,4,".",0,"dark part of a room"],[78,4,"|",7,"wall"],[4,5,"|",7,"wall"],[5,5,"$",11,"5 gold pieces"],[6,5,".",0,"dark part of a room"],[7,5,".",0,"dark part of a room"],[8,5,".",0,"dark part of a room"],[9,5,".",0,"dark part of a room"],[10,5,".",0,"dark part of a room"],[11,5,"|",7,"wall"],[27,5,"#",7,"corridor"],[31,5,"#",7,"corridor"],[32,5,"-",3,"open door"],[33,5,".",0,"dark part of a room"],[34,5,".",0,"dark part of a room"],[35,5,".",0,"dark part of a room"],[36,5,".",0,"dark part of a room"],[37,5,"+",3,"closed door"],[38,5,"#",7,"corridor"],[45,5,"-",7,"wall"],[46,5,"-",7,"wall"],[47,5,"-",7,"wall"],[48,5,"-",7,"wall"],[49,5,"-",7,"wall"],[50,5,"-",7,"wall"],[51,5,"-",7,"wall"],[52,5,"-",7,"wall"],[69,5,"#",7,"corridor"],[70,5,"|",7,"wall"],[71,5,".",0,"dark part of a room"],[72,5,".",0,"dark part of a room"],[73,5,".",0,"dark part of a room"],[74,5,".",0,"dark part of a room"],[75,5,".",0,"dark part of a room"],[76,5,".",0,"dark part of a room"],[77,5,".",0,"dark part of a room"],[78,5,"|",7,"wall"],[4,6,"-",7,"wall"],[5,6,"-",7,"wall"],[6,6,"-",7,"wall"],[7,6,".",7,"doorway"],[8,6,"-",7,"wall"],[9,6,"-",7,"wall"],[10,6,"-",7,"wall"],[11,6,"-",7,"wall"],[27,6,"#",7,"corridor"],[31,6,"#",7,"corridor"],[32,6,"|",7,"wall"],[33,6,".",0,"dark part of a room"],[34,6,".",0,"dark part of a room"],[35,6,".",0,"dark part of a room"],[36,6,".",0,"dark part of a room"],[37,6,"|",7,"wall"],[38,6,"#",7,"corridor"],[39,6,"#",7,"corridor"],[40,6,"#",7,"corridor"],[41,6,"#",7,"corridor"],[42,6,"#",7,"corridor"],[43,6,"#",7,"corridor"],[44,6,"#",7,"corridor"],[45,6,"|",7,"wall"],[46,6,".",0,"dark part of a room"],[47,6,".",0,"dark part of a room"],[48,6,".",0,"dark part of a room"],[49,6,".",0,"dark part of a room"],[50,6,".",0,"dark part of a room"],[51,6,".",0,"dark part of a room"],[52,6,"|",7,"wall"],[63,6,"#",7,"corridor"],[64,6,"#",7,"corridor"],[65,6,"#",7,"corridor"],[66,6,"#",7,"corridor"],[67,6,"#",7,"corridor"],[68,6,"#",7,"corridor"],[69,6,"#",7,"corridor"],[70,6,"-",7,"wall"],[71,6,"-",7,"wall"],[72,6,"-",7,"wall"],[73,6,"-",7,"wall"],[74,6,"-",7,"wall"],[75,6,"-",7,"wall"],[76,6,"-",7,"wall"],[77,6,"-",7,"wall"],[78,6,"-",7,"wall"],[6,7,"#",7,"corridor"],[7,7,"#",7,"corridor"],[27,7,"#",7,"corridor"],[31,7,"#",7,"corridor"],[32,7,"|",7,"wall"],[33,7,".",0,"dark part of a room"],[34,7,".",0,"dark part of a room"],[35,7,"?",15,"a scroll labeled DUAM XNAHT"],[36,7,".",0,"dark part of a room"],[37,7,".",7,"doorway"],[38,7,"#",7,"corridor"],[39,7,"#",7,"corridor"],[40,7,"#",7,"corridor"],[41,7,"#",7,"corridor"],[42,7,"#",7,"corridor"],[43,7,"#",7,"corridor"],[44,7,"#",7,"corridor"],[45,7,".",7,"doorway"],[46,7,".",0,"dark part of a room"],[47,7,"^",12,"anti-magic field"],[48,7,".",0,"dark part of a room"],[49,7,".",0,"dark part of a room"],[50,7,".",0,"dark part of a room"],[51,7,".",0,"dark part of a room"],[52,7,"|",7,"wall"],[63,7,"#",7,"corridor"],[68,7,"#",7,"corridor"],[69,7,"#",7,"corridor"],[76,7,"#",7,"corridor"],[77,7,"#",7,"corridor"],[6,8,"#",7,"corridor"],[27,8,"#",7,"corridor"],[31,8,"#",7,"corridor"],[32,8,"-",7,"wall"],[33,8,"-",7,"wall"],[34,8,"-",7,"wall"],[35,8,"-",7,"wall"],[36,8,"-",7,"wall"],[37,8,"-",7,"wall"],[44,8,"#",7,"corridor"],[45,8,"|",7,"wall"],[46,8,".",0,"dark part of a room"],[47,8,".",0,"dark part of a room"],[48,8,".",0,"dark part of a room"],[49,8,".",0,"dark part of a room"],[50,8,".",0,"dark part of a room"],[51,8,".",0,"dark part of a room"],[52,8,".",7,"doorway"],[53,8,"#",7,"corridor"],[54,8,"#",7,"corridor"],[55,8,"#",7,"corridor"],[56,8,"#",7,"corridor"],[62,8,"#",7,"corridor"],[63,8,"#",7,"corridor"],[68,8,"#",7,"corridor"],[76,8,"#",7,"corridor"],[6,9,"#",7,"corridor"],[13,9,"$",11,"28 gold pieces embedded in stone"],[27,9,"#",7,"corridor"],[31,9,"#",7,"corridor"],[32,9,"#",7,"corridor"],[33,9,"#",7,"corridor"],[44,9,"#",7,"corridor"],[45,9,"-",7,"wall"],[46,9,"-",7,"wall"],[47,9,"-",7,"wall"],[48,9,"-",7,"wall"],[49,9,"-",7,"wall"],[50,9,"-",7,"wall"],[51,9,"-",7,"wall"],[52,9,"-",7,"wall"],[56,9,"#",7,"corridor"],[57,9,"#",7,"corridor"],[58,9,"#",7,"corridor"],[59,9,"#",7,"corridor"],[60,9,"#",7,"corridor"],[61,9,"#",7,"corridor"],[62,9,"#",7,"corridor"],[67,9,"#",7,"corridor"],[68,9,"#",7,"corridor"],[70,9,"$",11,"60 gold pieces embedded in stone"],[76,9,"#",7,"corridor"],[6,10,"#",7,"corridor"],[27,10,"#",7,"corridor"],[33,10,"#",7,"corridor"],[44,10,"#",7,"corridor"],[45,10,"#",7,"corridor"],[46,10,"#",7,"corridor"],[47,10,"#",7,"corridor"],[48,10,"#",7,"corridor"],[56,10,"#",7,"corridor"],[57,10,"-",7,"wall"],[58,10,"-",7,"wall"],[59,10,"-",7,"wall"],[60,10,"-",7,"wall"],[61,10,"-",7,"wall"],[62,10,"-",7,"wall"],[65,10,"#",7,"corridor"],[66,10,"#",7,"corridor"],[67,10,"#",7,"corridor"],[76,10,"#",7,"corridor"],[5,11,"#",7,"corridor"],[6,11,"#",7,"corridor"],[27,11,"#",7,"corridor"],[33,11,"#",7,"corridor"],[48,11,"#",7,"corridor"],[49,11,"`",7,"a boulder"],[56,11,"#",7,"corridor"],[57,11,"|",7,"wall"],[58,11,"{",12,"fountain"],[59,11,".",0,"dark part of a room"],[60,11,"$",11,"11 gold pieces"],[61,11,".",0,"dark part of a room"],[62,11,"|",7,"wall"],[65,11,"#",7,"corridor"],[74,11,"#",7,"corridor"],[75,11,"#",7,"corridor"],[76,11,"#",7,"corridor"],[5,12,"#",7,"corridor"],[27,12,"#",7,"corridor"],[28,12,"#",7,"corridor"],[29,12,"#",7,"corridor"],[30,12,"#",7,"corridor"],[31,12,"#",7,"corridor"],[32,12,"#",7,"corridor"],[33,12,"#",7,"corridor"],[34,12,"#",7,"corridor"],[35,12,"#",7,"corridor"],[36,12,"#",7,"corridor"],[37,12,"#",7,"corridor"],[38,12,"#",7,"corridor"],[39,12,"#",7,"corridor"],[40,12,"#",7,"corridor"],[41,12,"#",7,"corridor"],[42,12,"#",7,"corridor"],[43,12,"#",7,"corridor"],[44,12,"#",7,"corridor"],[45,12,"#",7,"corridor"],[46,12,"#",7,"corridor"],[47,12,"#",7,"corridor"],[48,12,"#",7,"corridor"],[49,12,"#",7,"corridor"],[50,12,"#",7,"corridor"],[51,12,"#",7,"corridor"],[52,12,"#",7,"corridor"],[53,12,"#",7,"corridor"],[54,12,"#",7,"corridor"],[55,12,"#",7,"corridor"],[56,12,"#",7,"corridor"],[57,12,"+",3,"closed door"],[58,12,".",0,"dark part of a room"],[59,12,".",0,"dark part of a room"],[60,12,".",0,"dark part of a room"],[61,12,".",0,"dark part of a room"],[62,12,"|",7,"wall"],[63,12,"#",7,"corridor"],[64,12,"#",7,"corridor"],[65,12,"#",7,"corridor"],[73,12,"-",7,"wall"],[74,12,"|",3,"open door"],[75,12,"-",7,"wall"],[76,12,"-",7,"wall"],[77,12,"-",7,"wall"],[78,12,"-",7,"wall"],[3,13,"#",7,"corridor"],[4,13,"#",7,"corridor"],[5,13,"#",7,"corridor"],[28,13,"#",7,"corridor"],[29,13,"-",7,"wall"],[30,13,"-",7,"wall"],[31,13,"-",7,"wall"],[32,13,"-",7,"wall"],[33,13,"-",7,"wall"],[34,13,"#",7,"corridor"],[57,13,"|",7,"wall"],[58,13,".",0,"dark part of a room"],[59,13,".",0,"dark part of a room"],[60,13,".",0,"dark part of a room"],[61,13,".",0,"dark part of a room"],[62,13,"+",3,"closed door"],[63,13,"#",7,"corridor"],[73,13,"|",7,"wall"],[74,13,"@",15,"peaceful Hebiwerie"],[75,13,".",7,"floor of a room"],[76,13,".",7,"floor of a room"],[77,13,".",7,"floor of a room"],[78,13,"|",7,"wall"],[2,14,"-",7,"wall"],[3,14,".",7,"doorway"],[4,14,"-",7,"wall"],[5,14,"-",7,"wall"],[6,14,"-",7,"wall"],[7,14,"-",7,"wall"],[8,14,"-",7,"wall"],[9,14,"-",7,"wall"],[10,14,"-",7,"wall"],[11,14,"-",7,"wall"],[12,14,"-",7,"wall"],[13,14,"-",7,"wall"],[28,14,"#",7,"corridor"],[29,14,"|",7,"wall"],[30,14,".",0,"dark part of a room"],[31,14,"{",12,"fountain"],[32,14,"^",6,"dart trap"],[33,14,"|",7,"wall"],[34,14,"#",7,"corridor"],[45,14,"*",11,"a yellow gem (buried)"],[57,14,"|",7,"wall"],[58,14,".",0,"dark part of a room"],[59,14,".",0,"dark part of a room"],[60,14,"(",3,"a chest"],[61,14,".",0,"dark part of a room"],[62,14,"|",7,"wall"],[73,14,"|",7,"wall"],[74,14,"%",11,"a fortune cookie (for sale, 9 zorkmids)"],[75,14,"%",15,"an egg (for sale, 12 zorkmids)"],[76,14,"%",3,"a slime mold (for sale, 23 zorkmids)"],[77,14,"%",3,"a slime mold (for sale, 23 zorkmids)"],[78,14,"|",7,"wall"],[2,15,"|",7,"wall"],[3,15,".",0,"dark part of a room"],[4,15,".",0,"dark part of a room"],[5,15,".",0,"dark part of a room"],[6,15,".",0,"dark part of a room"],[7,15,".",0,"dark part of a room"],[8,15,".",0,"dark part of a room"],[9,15,".",0,"dark part of a room"],[10,15,".",0,"dark part of a room"],[11,15,".",0,"dark part of a room"],[12,15,".",0,"dark part of a room"],[13,15,"+",3,"closed door"],[14,15,"#",7,"corridor"],[15,15,"#",7,"corridor"],[16,15,"#",7,"corridor"],[17,15,"#",7,"corridor"],[18,15,"#",7,"corridor"],[19,15,"`",7,"a boulder"],[20,15,"#",7,"corridor"],[21,15,"#",7,"corridor"],[22,15,"#",7,"corridor"],[23,15,"#",7,"corridor"],[24,15,"#",7,"corridor"],[25,15,"#",7,"corridor"],[26,15,"#",7,"corridor"],[27,15,"#",7,"corridor"],[28,15,"#",7,"corridor"],[29,15,".",7,"doorway"],[30,15,".",0,"dark part of a room"],[31,15,".",0,"dark part of a room"],[32,15,".",0,"dark part of a room"],[33,15,"|",7,"wall"],[34,15,"#",7,"corridor"],[52,15,"$",11,"12 gold pieces embedded in stone"],[57,15,"-",7,"wall"],[58,15,"-",7,"wall"],[59,15,"-",7,"wall"],[60,15,"-",7,"wall"],[61,15,"-",7,"wall"],[62,15,"-",7,"wall"],[73,15,"|",7,"wall"],[74,15,")",3,"a bow (for sale, 80 zorkmids)"],[75,15,"@",15,"human valkyrie called Agnes"],[76,15,"[",3,"a pair of riding boots (for sale, 40 zorkmids)"],[77,15,"%",15,"a clove of garlic (for sale, 9 zorkmids)"],[78,15,"|",7,"wall"],[2,16,"|",7,"wall"],[3,16,".",0,"dark part of a room"],[4,16,".",0,"dark part of a room"],[5,16,".",0,"dark part of a room"],[6,16,".",0,"dark part of a room"],[7,16,".",0,"dark part of a room"],[8,16,".",0,"dark part of a room"],[9,16,".",0,"dark part of a room"],[10,16,".",0,"dark part of a room"],[11,16,".",0,"dark part of a room"],[12,16,".",0,"dark part of a room"],[13,16,"|",7,"wall"],[29,16,"|",7,"wall"],[30,16,".",0,"dark part of a room"],[31,16,".",0,"dark part of a room"],[32,16,".",0,"dark part of a room"],[33,16,".",7,"doorway"],[34,16,"#",7,"corridor"],[73,16,"|",7,"wall"],[74,16,"(",11,"a lamp (for sale, 67 zorkmids)"],[75,16,"f",15,"tame kitten"],[76,16,"(",0,"a blindfold (for sale, 27 zorkmids)"],[77,16,")",7,"a silver saber (for sale, 100 zorkmids)"],[78,16,"|",7,"wall"],[2,17,"|",7,"wall"],[3,17,".",0,"dark part of a room"],[4,17,".",0,"dark part of a room"],[5,17,".",0,"dark part of a room"],[6,17,".",0,"dark part of a room"],[7,17,".",0,"dark part of a room"],[8,17,".",0,"dark part of a room"],[9,17,".",0,"dark part of a room"],[10,17,".",0,"dark part of a room"],[11,17,"{",12,"fountain"],[12,17,".",0,"dark part of a room"],[13,17,"|",7,"wall"],[29,17,"|",7,"wall"],[30,17,".",0,"dark part of a room"],[31,17,".",0,"dark part of a room"],[32,17,"^",7,"rolling boulder trap"],[33,17,"|",7,"wall"],[40,17,"$",11,"42 gold pieces embedded in stone"],[55,17,"$",11,"30 gold pieces embedded in stone"],[73,17,"|",7,"wall"],[74,17,"?",15,"a scroll labeled READ ME (for sale, 80 zorkmids)"],[75,17,"(",6,"a whistle (for sale, 18 zorkmids)"],[76,17,"?",15,"a scroll labeled GNIK SISI VLE (for sale, 107 zorkmids)"],[77,17,"!",7,"a smoky potion (for sale, 267 zorkmids)"],[78,17,"|",7,"wall"],[2,18,"-",7,"wall"],[3,18,"-",7,"wall"],[4,18,"-",7,"wall"],[5,18,"-",7,"wall"],[6,18,"-",7,"wall"],[7,18,"-",7,"wall"],[8,18,"-",7,"wall"],[9,18,"-",7,"wall"],[10,18,"-",7,"wall"],[11,18,"-",7,"wall"],[12,18,"-",7,"wall"],[13,18,"-",7,"wall"],[29,18,"-",7,"wall"],[30,18,"-",7,"wall"],[31,18,"-",7,"wall"],[32,18,"-",7,"wall"],[33,18,"-",7,"wall"],[73,18,"-",7,"wall"],[74,18,"-",7,"wall"],[75,18,"-",7,"wall"],[76,18,"-",7,"wall"],[77,18,"-",7,"wall"],[78,18,"-",7,"wall"]]}},"messages":[{"seq":7,"turn":1,"text":"Velkommen Agnes, welcome to NetHack!  You are a neutral human Valkyrie."},{"seq":81,"turn":3,"text":"You see here a fizzy potion (for sale, 333 zorkmids)."}],"inventory":[{"letter":"a","text":"a blessed +1 spear (weapon in right hand)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"a +0 dagger (alternate weapon; not wielded)","class_sym":")","class":"weapons","quan":1,"slots":["alternate"],"worn":false,"wielded":false},{"letter":"c","text":"an uncursed +3 small shield (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["shield"],"worn":true,"wielded":false},{"letter":"d","text":"an uncursed food ration","class_sym":"%","class":"food","quan":1,"slots":[],"worn":false,"wielded":false}],"menu":null,"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven arrow (runed arrow)","* orcish arrow (crude arrow)","* ya (bamboo arrow)","* shuriken (throwing star)","* elven spear (runed spear)","* orcish spear (crude spear)","* dwarvish spear (stout spear)","* javelin (throwing spear)","* elven dagger (runed dagger)","* orcish dagger (crude dagger)","* battle-axe (double-headed axe)","* elven short sword (runed short sword)","* orcish short sword (crude short sword)","* dwarvish short sword (broad short sword)","* scimitar (curved sword)","* elven broadsword (runed broadsword)","* katana (samurai sword)","* tsurugi (long samurai sword)","* runesword (runed broadsword)","* dwarvish mattock (broad pick)","* quarterstaff (staff)","* aklys (thonged club)","* elven bow (runed bow)","* orcish bow (crude bow)","* yumi (long bow)","Armor","* elven leather helm (leather hat)","* orcish helm (iron skull cap)","* dwarvish iron helm (hard hat)","* helmet (etched helmet)","* orcish chain mail (crude chain mail)","* orcish ring mail (crude ring mail)","* orcish cloak (coarse mantelet)","* dwarvish cloak (hooded cloak)","* oilskin cloak (slippery cloak)","* elven shield (blue and green shield)","* Uruk-hai shield (white-handed shield)","* orcish shield (red-eyed shield)","* dwarvish roundshield (large round shield)","* pair of leather gloves (padded gloves)","* pair of low boots (walking shoes)","* pair of iron shoes (hard shoes)","* pair of high boots (jackboots)","  small shield (wooden shield)","  pair of riding boots {buy 40}","Scrolls","  scroll (GNIK SISI VLE)","  scroll (READ ME)","  scroll (DUAM XNAHT)","  scroll (NR 9)","Potions","  potion (dark)","  potion (fizzy) {buy 333}","  potion (smoky)","  potion of object detection (ruby)","  potion (milky)","  potion (dark green)","  potion (brilliant blue)","Wands","  wand (marble)","Tools","  whistle","  lamp","  key","Gems/Stones","  yellow gem"],"overview":["The Dungeons of Doom: levels 1 to 3","   Level 3: <- You are here.","      A general store, many fountains."],"underfoot":"a fizzy potion (for sale, 333 zorkmids)","screen0":"You see here a fizzy potion (for sale, 333 zorkmids)."},"more-prompt":{"game":{"name":"Agnes","role":"Wizard","race":"elf","gender":"female","alignment":"chaotic"},"turn":6,"hero":{"x":6,"y":8},"status":{"fields":{"title":"Agnes the Evoker","str":"7","dex":"13","con":"12","int":"17","wis":"14","cha":"12","align":"Chaotic","encumbrance":"","gold":"0","power":"4","power_max":"9","xp_level":"1","ac":"9","time":"6","hunger":"","hp":"11","hp_max":"11","level_desc":"Dlvl:1","exp_points":"6"},"conditions":[]},"awaiting":{"seq":41,"kind":"more","turn":6,"ux":6,"uy":8,"prompt":"You begin praying to Anhur.  You finish your prayer.","source":"screen"},"cur":"0:1","levels":{"0:1":{"info":{"dnum":0,"dlevel":1,"depth":1,"dungeon":"The Dungeons of Doom","desc":"Dlvl:1"},"seen":3,"cells":[[3,4,"-",7,"wall"],[4,4,"-",7,"wall"],[5,4,"-",7,"wall"],[6,4,"-",7,"wall"],[7,4,"-",7,"wall"],[8,4,"-",7,"wall"],[9,4,"-",7,"wall"],[10,4,"-",7,"wall"],[11,4,"-",7,"wall"],[3,5,"|",7,"wall"],[4,5,".",7,"floor of a room"],[5,5,".",7,"floor of a room"],[6,5,".",7,"floor of a room"],[7,5,".",7,"floor of a room"],[8,5,".",7,"floor of a room"],[9,5,".",7,"floor of a room"],[10,5,".",7,"floor of a room"],[11,5,".",7,"doorway"],[3,6,"|",7,"wall"],[4,6,".",7,"floor of a room"],[5,6,".",7,"floor of a room"],[6,6,".",7,"floor of a room"],[7,6,".",7,"floor of a room"],[8,6,".",7,"floor of a room"],[9,6,".",7,"floor of a room"],[10,6,".",7,"floor of a room"],[11,6,"|",7,"wall"],[3,7,"|",7,"wall"],[4,7,".",7,"floor of a room"],[5,7,"{",12,"fountain"],[6,7,"f",15,"tame kitten"],[7,7,".",7,"floor of a room"],[8,7,".",7,"floor of a room"],[9,7,".",7,"floor of a room"],[10,7,".",7,"floor of a room"],[11,7,"|",7,"wall"],[3,8,"|",7,"wall"],[4,8,".",7,"floor of a room"],[5,8,".",7,"floor of a room"],[6,8,"@",15,"elven wizard called Agnes"],[7,8,".",7,"floor of a room"],[8,8,".",7,"floor of a room"],[9,8,".",7,"floor of a room"],[10,8,".",7,"floor of a room"],[11,8,"|",7,"wall"],[3,9,"|",7,"wall"],[4,9,".",7,"floor of a room"],[5,9,"<",11,"branch staircase up"],[6,9,".",7,"floor of a room"],[7,9,".",7,"floor of a room"],[8,9,"%",7,"a goblin corpse"],[9,9,".",7,"floor of a room"],[10,9,".",7,"floor of a room"],[11,9,"+",3,"closed door"],[3,10,"|",7,"wall"],[4,10,".",7,"floor of a room"],[5,10,".",7,"floor of a room"],[6,10,".",7,"floor of a room"],[7,10,"?",15,"a scroll labeled ASHPD SODALG"],[8,10,".",7,"floor of a room"],[9,10,".",7,"floor of a room"],[10,10,"!",7,"a potion"],[11,10,"|",7,"wall"],[3,11,"-",7,"wall"],[4,11,"-",7,"wall"],[5,11,"-",7,"wall"],[6,11,"-",7,"wall"],[7,11,"-",7,"wall"],[8,11,"-",7,"wall"],[9,11,"-",7,"wall"],[10,11,"-",7,"wall"],[11,11,"-",7,"wall"]]}},"messages":[{"seq":7,"turn":1,"text":"Hello Agnes, welcome to NetHack!  You are a chaotic female elven Wizard."},{"seq":21,"turn":1,"text":"In what direction? "},{"seq":24,"turn":1,"text":"The spell hits the goblin!"},{"seq":25,"turn":1,"text":"You kill the goblin!"},{"seq":37,"turn":3,"text":"# "},{"seq":40,"turn":3,"text":"Are you sure you want to pray? [yn] (n) "},{"seq":43,"turn":3,"text":"You begin praying to Anhur."},{"seq":47,"turn":6,"text":"You finish your prayer."},{"seq":48,"turn":6,"text":"The voice of Anhur rings out: "}],"inventory":[{"letter":"a","text":"a blessed +1 quarterstaff (weapon in hands)","class_sym":")","class":"weapons","quan":1,"slots":["wielded"],"worn":false,"wielded":true},{"letter":"b","text":"an uncursed +0 cloak of magic resistance (being worn)","class_sym":"[","class":"armor","quan":1,"slots":["cloak"],"worn":true,"wielded":false},{"letter":"c","text":"a wand of locking (0:5)","class_sym":"/","class":"wands","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"d","text":"an uncursed ring of sustain ability","class_sym":"=","class":"rings","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"e","text":"an uncursed +1 ring of increase damage","class_sym":"=","class":"rings","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"f","text":"a potion of holy water","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"g","text":"an uncursed potion of booze","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"h","text":"an uncursed potion of oil","class_sym":"!","class":"potions","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"i","text":"an uncursed scroll of destroy armor","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"j","text":"an uncursed scroll of magic mapping","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"k","text":"an uncursed scroll of identify","class_sym":"?","class":"scrolls","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"l","text":"a blessed spellbook of force bolt","class_sym":"+","class":"spellbooks","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"m","text":"an uncursed spellbook of confuse monster","class_sym":"+","class":"spellbooks","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"n","text":"a magic marker (0:22)","class_sym":"(","class":"tools","quan":1,"slots":[],"worn":false,"wielded":false},{"letter":"o","text":"an uncursed bell","class_sym":"(","class":"tools","quan":1,"slots":[],"worn":false,"wielded":false}],"menu":null,"discoveries":["Discoveries, by order of discovery within each class","","Weapons","* elven short sword (runed short sword)","* elven arrow (runed arrow)","* elven bow (runed bow)","* elven spear (runed spear)","* elven dagger (runed dagger)","* elven broadsword (runed broadsword)","  quarterstaff (staff)","Armor","* elven leather helm (leather hat)","* elven shield (blue and green shield)","* pair of elven boots (jungle boots)","* elven cloak (faded pall)","  cloak of magic resistance (opera cloak)","Scrolls","  scroll of destroy armor (THARR)","  scroll of magic mapping (HAPAX LEGOMENON)","  scroll of identify (KERNOD WEL)","  scroll (ASHPD SODALG)","Spellbooks","  spellbook of force bolt (parchment)","  spellbook of confuse monster (thin)","* spellbook of magic missile (bronze)","* spellbook of sleep (gold)","* spellbook of light (dark brown)","* spellbook of detect monsters (magenta)","* spellbook of healing (vellum)","* spellbook of knock (cyan)","* spellbook of drain life (mottled)","* spellbook of slow monster (shining)","* spellbook of cause fear (light blue)","* spellbook of protection (dusty)","* spellbook of jumping (purple)","* spellbook of chain lightning (yellow)","Potions","  potion of water (clear)","  potion of booze (fizzy)","  potion of oil (emerald)","Rings","  ring of sustain ability (ivory)","  ring of increase damage (diamond)","Wands","  wand of locking (aluminum)"],"overview":["The Dungeons of Doom:","   Level 1: <- You are here.","      A fountain."],"underfoot":"floor of a room","screen0":"You begin praying to Anhur.  You finish your prayer.--More--"}};
+
+/* NetHack colour index → light-paper ink. Bright colours also get bold weight. */
+const NHC = ['#2A2A2A','#C1271D','#2B7A2B','#8A5A14','#2342B5','#8E2C8A','#007F8A','#57534B',
+             '#8C877D','#C25400','#13892C','#9A6E00','#1660E0','#BE1AAE','#008A9E','#141414'];
+const DARKFLOOR = '#C4BEB2';
+
+/* ───────── mockup states ───────── */
+const AUG_D4 = [ // plausible extra lines for the magic-mapped descent (fixture has only the welcome)
+  {turn:2,text:'A map coalesces in your mind!'},{turn:7,text:'A map coalesces in your mind!'},
+  {turn:9,text:'A map coalesces in your mind!'},{turn:10,text:'A map coalesces in your mind!'},
+  {turn:11,text:'There is a staircase up here.'}];
+const STATES = [
+ {key:'nominal', label:'1 Nominal', fx:'deep-dlvl4', alert:'nominal', augment:AUG_D4,
+  hp:[16,16,16,16,16,15,15,15,15,15,15], pw:[2,2,2,2,2,2,2,2,2,2,2],
+  comms:{mode:'listening', mic:true, t:[
+    {t:10,w:'you',via:'voice',x:'Where are the stairs down?'},
+    {t:10,w:'ast',x:'Far southwest — 47 west, 12 south, in the bottom-left room. Quickest is travel: press _ then > then period.',chips:[['get_level_map','Dlvl 4']]},
+    {t:11,w:'you',via:'voice',x:'Anything nasty on the way?'},
+    {t:11,w:'ast',x:'Nothing in sight. There’s a teleport trap just outside the north wall, one step west of you — travel will route around it.',chips:[['get_level_map','Dlvl 4'],['look','66,2']]},
+  ]}},
+ {key:'caution', label:'2 Caution', fx:'hungry-conditions', alert:'caution',
+  hp:[16,16,16,16,16,16,16,16,16,16,16,16], t0:762,
+  info:'BLIND — map shows remembered terrain only · contacts unavailable',
+  comms:{mode:'standby', mic:false, t:[
+    {t:771,w:'sys',x:'caution raised · Conf'},
+    {t:772,w:'sys',x:'caution raised · Blind'},
+    {t:773,w:'you',via:'voice',x:'Why can’t I see anything?'},
+    {t:773,w:'ast',x:'It’s the blindfold you just put on — R takes it off. You’re also Confused from the booze, and Hungry: eat the food ration with e, then d.',chips:[['get_status'],['get_inventory']]},
+  ]}},
+ {key:'warning', label:'3 Warning', fx:'low-hp', alert:'warning',
+  hp:[16,15,15,15,12,10,6,5,5,5,4,4], pw:[2,2,2,2,2,2,2,2,2,2,2,2],
+  comms:{mode:'speaking', mic:true, t:[
+    {t:5,w:'you',via:'voice',x:'Orc or jackal first?'},
+    {t:5,w:'ast',x:'Jackal — one good hit kills it. The kitten’s already on the orc.',chips:[['nethack_lookup','jackal','monsters.h'],['nethack_lookup','hill orc','monsters.h']]},
+    {t:7,w:'ast',x:'Kitten got the orc.'},
+    {t:12,w:'sys',x:'warning raised · HP 4/16 < ⅓'},
+  ], live:{trigger:'AUTO · HP < ⅓',
+    said:'Four hit points — careful. Don’t pray: it’s turn twelve, far too early, Odin won’t answer. ',
+    cur:'The jackal’s adjacent, northeast,',
+    rest:' and only bites for one or two. Finish it, or engrave Elbereth to scare it off.',
+    chips:[['get_status'],['fetch_wiki_page','Prayer'],['nethack_lookup','jackal','monsters.h']]}}},
+ {key:'menu', label:'4 Menu', fx:'menu-open', alert:'nominal', focus:'menu',
+  hp:[11,11,11,11,11], pw:[9,5,5,4,4],
+  comms:{mode:'listening', mic:true, t:[
+    {t:4,w:'sys',x:'picked up p · scroll labeled ASHPD SODALG (unidentified)'},
+    {t:5,w:'you',via:'typed',x:'how do i name this scroll so i remember it'},
+    {t:5,w:'ast',x:'Press o — “the type of an object in inventory”. Then pick p and type a name. Every ASHPD SODALG scroll will show it from now on.',chips:[['get_inventory'],['get_screen','menu']]},
+  ]}},
+ {key:'yn', label:'5 y/n', fx:'fountain-quaff-prompt', alert:'nominal', focus:'prompt', advise:'n',
+  hp:[11,11,11,11], pw:[9,5,5,4],
+  comms:{mode:'listening', mic:true, t:[
+    {t:4,w:'you',via:'voice',x:'Should I drink from this?'},
+    {t:4,w:'ast',x:'I wouldn’t. Quaffing from fountains is mostly bad news at your level — water moccasins, a water demon, or a curse. Press n.',chips:[['nethack_lookup','fountain','fountain.c']]},
+  ]}},
+ {key:'inspect', label:'6 Inspect', fx:'shop', alert:'nominal', pin:[77,17], invTab:'inv',
+  hp:[16,16,16], pw:[2,2,2],
+  comms:{mode:'listening', mic:true, t:[
+    {t:3,w:'you',via:'voice',x:'Is this fizzy potion worth buying?'},
+    {t:3,w:'ast',x:'That needs price identification — a mild spoiler. Want it?',gate:true},
+    {t:3,w:'you',via:'voice',x:'Yeah, go ahead.'},
+    {t:3,w:'ast',x:'With Charisma 8 you pay a third extra, so 333 means a base of 250: acid or oil. I’d skip it.',
+      chips:[['nethack_lookup','potion of acid','objects.h',1],['nethack_lookup','potion of oil','objects.h'],['fetch_wiki_page','Price identification']],
+      card:{h:'potion of acid',src:'include/objects.h',l:['Base price 250 zorkmids. (price identification)','Generation probability 10 per 1000 of its class.','Weight 20, material glass.']}},
+  ]}},
+ {key:'more', label:'7 More', fx:'more-prompt', alert:'nominal', focus:'more',
+  hp:[11,11,11,11,11,11], pw:[9,5,5,4,4,4],
+  comms:{mode:'listening', mic:true, t:[
+    {t:3,w:'you',via:'voice',x:'Can I pray to get my power back?'},
+    {t:3,w:'ast',x:'I wouldn’t — it’s turn three, your prayer timeout is still high, and low power doesn’t count as trouble.',chips:[['fetch_wiki_page','Prayer']]},
+    {t:6,w:'ast',auto:1,x:'Brace yourself — Anhur is speaking. Praying this early costs luck and angers him. Press Enter to read on.'},
+  ]}},
+ {key:'text', label:'8 Text win', fx:'deep-dlvl4', alert:'nominal', augment:AUG_D4, focus:'text', invTab:'disc',
+  hp:[16,16,16,16,16,15,15,15,15,15,15], pw:[2,2,2,2,2,2,2,2,2,2,2],
+  comms:{mode:'listening', mic:true, t:[
+    {t:11,w:'you',via:'voice',x:'Have I identified anything useful yet?'},
+    {t:11,w:'ast',x:'Not yet — that list is the weapon and armor names a Valkyrie knows from the start. Runed means elven, crude means orcish.',chips:[['get_discoveries']]},
+  ]}},
+];
+
+/* ───────── helpers ───────── */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pad = (n,w) => String(n).padStart(w,' ');
+function bearing(dx,dy){
+  const r = Math.max(Math.abs(dx),Math.abs(dy));
+  if(r===0) return {r:0,txt:'here'};
+  const ns = dy<0?'N':dy>0?'S':'', ew = dx<0?'W':dx>0?'E':'';
+  if(dx===0||dy===0||Math.abs(dx)===Math.abs(dy)) return {r, txt:`${r} ${ns}${ew}`};
+  return {r, txt:`${Math.abs(dx)}${ew} ${Math.abs(dy)}${ns}`};
+}
+function cellStyle(ch,color,desc){
+  if(ch==='.' && color===0) return {c:DARKFLOOR,b:false};
+  return {c:NHC[color]||NHC[7], b:color>=9||color===15};
+}
+function isMonster(c,hero){
+  const [x,y,ch,col,desc]=c;
+  if(hero && x===hero.x && y===hero.y) return false;
+  if(!/[A-Za-z@:;&'~]/.test(ch)) return false;
+  if(/^(a|an|the|\d+)\s/.test(desc)) return false;
+  return true;
+}
+function disp(desc){ return /^tame /.test(desc)?'t':/^peaceful /.test(desc)?'p':'h'; }
+function alertOf(F){
+  const f=F.status.fields, hp=+f.hp, mx=+f.hp_max, conds=F.status.conditions||[];
+  const r = hp/mx;
+  const lvl = (hp<6||r<1/3)?'warning':r<0.5?'caution':'nominal';
+  return {hp,mx,r,lvl,conds};
+}
+
+let S, F, view = {level:null, tab:'inv', hover:null};
+
+/* ───────── header ───────── */
+function renderHeader(){
+  const f=F.status.fields, g=F.game, L=F.levels[F.cur].info;
+  $('#hName').textContent = f.title;
+  $('#hSub').textContent = `${g.role} · ${g.race} · ${g.gender} · ${g.alignment}`.replace(/\b\w/g,m=>m.toUpperCase());
+  $('#hRo').innerHTML = `
+   <div class="ro"><label>Dlvl</label><span>${L.depth}<small>${L.dungeon.replace(/^The /,'')}</small></span></div>
+   <div class="ro"><label>Turn</label><span>${f.time}</span></div>
+   <div class="ro"><label>XL</label><span>${f.xp_level}<small>${f.exp_points} xp</small></span></div>
+   <div class="ro"><label>AC</label><span>${f.ac}</span></div>
+   <div class="ro"><label>Gold</label><span>${f.gold}</span></div>`;
+  const a=alertOf(F); const cau=[];
+  if(a.lvl==='caution') cau.push('HP');
+  if(f.hunger) cau.push(f.hunger.toUpperCase());
+  cau.push(...a.conds.map(c=>c.toUpperCase()));
+  $('#lampC').textContent = cau.length? cau.slice(0,3).join(' · ') : '—';
+  $('#lampW').textContent = S.alert==='warning'? `HP ${a.hp}/${a.mx}` : '—';
+  const fp=$('#focusPill'); fp.className='pill';
+  const fm={menu:['MENU','menu'],prompt:['PROMPT y/n','menu'],more:['--MORE--','menu'],text:['TEXT WINDOW','menu']}[S.focus];
+  if(fm){fp.textContent=fm[0]; fp.classList.add(fm[1]);} else fp.textContent='GAME';
+  $('#feedTxt').textContent = `feed · seq ${F.awaiting.seq}`;
+}
+
+/* ───────── vitals ───────── */
+function spark(vals, mx, t0, warnLine){
+  const W=240,H=36,n=vals.length; if(n<2) return '';
+  const X=i=>2+i*(W-4)/(n-1), Y=v=>H-3-(v/mx)*(H-7);
+  const pts=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  const lo = Math.min(...vals), li = vals.lastIndexOf(vals[n-1]);
+  const col = warnLine? 'var(--warn)':'var(--ink)';
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="HP over the last ${n} turns">
+    <line x1="0" x2="${W}" y1="${Y(mx)}" y2="${Y(mx)}" stroke="var(--line2)" stroke-width="1"/>
+    <line x1="0" x2="${W}" y1="${Y(mx/3)}" y2="${Y(mx/3)}" stroke="${warnLine?'var(--warn-line)':'var(--line)'}" stroke-dasharray="3 3" stroke-width="1"/>
+    <polygon points="2,${H} ${pts} ${W-2},${H}" fill="${warnLine?'rgba(196,36,32,.08)':'rgba(22,22,26,.05)'}"/>
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+    <circle cx="${X(n-1)}" cy="${Y(vals[n-1])}" r="3.2" fill="${col}" stroke="#fff" stroke-width="1.5"/>
+  </svg>`;
+}
+function renderVitals(){
+  const f=F.status.fields, a=alertOf(F);
+  const hpv=S.hp, t1=+f.time, t0=t1-hpv.length+1;
+  const d=hpv[hpv.length-1]-hpv[0];
+  const stateWord={nominal:'NOMINAL',caution:'LOW',warning:'CRITICAL'}[a.lvl];
+  const pw=+f.power, pwm=+f.power_max, xl=+f.xp_level, xp=+f.exp_points;
+  const xpNext=[0,20,40,80,160,320,640,1280,2560,5120,10000][xl]||20, xpPrev=[0,0,20,40,80,160,320,640,1280,2560,5120][xl]||0;
+  $('#vitMeta').textContent = `T${t0}–T${t1}`;
+  $('#vitals').innerHTML = `
+   <div class="gauge hp ${a.lvl}">
+     <div class="g-row"><span class="lbl">HP</span><span class="g-val">${a.hp}</span><span class="g-max">/ ${a.mx}</span>
+       <span class="g-pct">${Math.round(a.r*100)}%</span><span class="g-state">${a.lvl==='warning'?'▲ ':''}${stateWord}</span></div>
+     <div class="bar"><i style="width:${a.r*100}%"></i><span class="tk" style="left:${100/7}%"></span><span class="tk" style="left:33.3%"></span><span class="tk" style="left:50%"></span></div>
+     <div class="ticks"><span style="left:${100/7}%">1/7</span><span style="left:33.3%">1/3</span><span style="left:50%">1/2</span></div>
+     ${spark(hpv,a.mx,t0,a.lvl==='warning')}
+     <div class="trend"><span>T${t0}</span><b>${d===0?'steady':(d>0?'+':'−')+Math.abs(d)+' in '+(hpv.length-1)+' turns'}</b><span>T${t1}</span></div>
+   </div>
+   <div class="duo">
+    <div class="gauge"><div class="g-row"><span class="lbl">Pw</span><span class="g-val" style="font-size:16px">${pw}</span><span class="g-max">/ ${pwm}</span></div>
+      <div class="bar bar-sm"><i style="width:${pw/pwm*100}%;background:var(--ink2)"></i></div></div>
+    <div class="gauge"><div class="g-row"><span class="lbl">XL</span><span class="g-val" style="font-size:16px">${xl}</span><span class="g-max">${xp}/${xpNext}</span></div>
+      <div class="bar bar-sm"><i style="width:${(xp-xpPrev)/(xpNext-xpPrev)*100}%;background:var(--ink3)"></i></div></div>
+   </div>`;
+}
+function renderCond(){
+  const f=F.status.fields, conds=(F.status.conditions||[]).map(c=>c.toLowerCase());
+  const hung=['Satiated','Not hungry','Hungry','Weak','Fainting'];
+  const hc = f.hunger||'Not hungry'; const hi=hung.indexOf(hc);
+  const enc=['Unenc.','Burdened','Stressed','Strained','Overtaxed','Overloaded'], encA=['UNENC','BURD','STRS','STRN','OVTX','OVLD'];
+  const ei = f.encumbrance? enc.findIndex(e=>e.toLowerCase().startsWith(f.encumbrance.toLowerCase().slice(0,5))):0;
+  const ANN=[['Stone','stone','crit'],['Slime','slime','crit'],['Strngl','strngl','crit'],['FoodPs','foodpois','crit'],['TermIl','termill','crit'],
+             ['Blind','blind','cau'],['Deaf','deaf','cau'],['Stun','stun','cau'],['Conf','conf','cau'],['Hallu','hallu','cau'],
+             ['Lev','lev','inf'],['Fly','fly','inf'],['Ride','ride','inf'],['Held','held','inf'],['Trap','trapped','inf']];
+  const lit = ANN.filter(a=>conds.includes(a[1])).length + (hi>=2?1:0);
+  $('#condMeta').innerHTML = lit? `<span style="color:var(--caution);font-weight:700">${lit} ACTIVE</span>`:'all clear';
+  $('#cond').innerHTML = `
+    <div class="crow"><span class="lbl">Hunger</span><div class="scale" style="grid-template-columns:repeat(5,1fr)">${hung.map((h,i)=>`<span class="${i===hi?'on '+(i===2?'cau':i>2?'wrn':''):''}">${h==='Not hungry'?'OK':h==='Satiated'?'Sat.':h==='Fainting'?'Faint':h}</span>`).join('')}</div></div>
+    <div class="crow"><span class="lbl">Load</span><div class="scale" style="grid-template-columns:repeat(6,1fr)">${enc.map((h,i)=>`<span class="${i===ei?'on '+(i===1?'cau':i>1?'wrn':''):''}">${encA[i]}</span>`).join('')}</div></div>
+    <div class="sub-h" style="margin-top:2px"><span class="lbl">Annunciator</span><em>${conds.length?conds.length+' lit':''}</em></div>
+    <div class="ann">${ANN.map(a=>`<span class="${conds.includes(a[1])?'on '+a[2]:''}">${a[0].toUpperCase()}</span>`).join('')}</div>
+    <div class="attrs" style="margin-top:9px">${['str','dex','con','int','wis','cha'].map(k=>`<div><label>${k.slice(0,2).toUpperCase()}</label><b>${f[k]}</b></div>`).join('')}</div>`;
+}
+
+/* ───────── dungeon ladder ───────── */
+function thumb(level, isCur, hero){
+  const s=1.75, sy=2, c=document.createElement('canvas'); const dpr=2;
+  c.width=80*s*dpr; c.height=21*sy*dpr; c.style.width=80*s+'px'; c.style.height=21*sy+'px';
+  const g=c.getContext('2d'); g.scale(dpr,dpr);
+  for(const [x,y,ch,col,desc] of level.cells){
+    let fill;
+    if(ch==='.') fill = col===0?'#E4E0D7':'#CBC6BB';
+    else if(ch==='#'&&desc==='corridor') fill='#A7A296';
+    else if(ch==='-'||ch==='|') fill = col===3?'#8A5A14':'#5E5A52';
+    else if(ch==='+') fill='#8A5A14';
+    else if(ch==='>'||ch==='<') fill='#2342B5';
+    else if(ch==='{') fill='#1660E0';
+    else if(ch==='^') fill='#BE1AAE';
+    else if(ch==='$') fill='#C9A227';
+    else fill='#7A766D';
+    g.fillStyle=fill; g.fillRect(x*s,y*sy,s,sy);
+    if(ch==='>'||ch==='<'){g.fillRect(x*s-1,y*sy-1,s+2,sy+2);}
+  }
+  if(isCur&&hero){g.fillStyle='#C42420';g.fillRect(hero.x*s-2,hero.y*sy-2,s+4,sy+4);g.fillStyle='#fff';g.fillRect(hero.x*s,hero.y*sy,s,sy);}
+  return c;
+}
+function overviewNotes(){
+  const notes={}; let dg=null, lv=null;
+  for(const line of F.overview){
+    let m;
+    if(!/^\s/.test(line)){ dg=line.replace(/:.*$/,''); lv=null; continue; }
+    if((m=line.match(/^\s+Level (\d+):(.*)$/))){ lv=+m[1]; const k=dg+'|'+lv; notes[k]=notes[k]||[]; if(/You are here/.test(m[2])) notes[k].here=1; continue; }
+    if(lv!=null){ notes[dg+'|'+lv].push(line.trim()); }
+  }
+  return notes;
+}
+function noteTag(n){
+  if(/general store/i.test(n)) return 'SHOP·GEN';
+  if(/scroll shop/i.test(n)) return 'SHOP·SCR';
+  if(/Gnomish Mines/i.test(n)) return '▸MINES';
+  if(/fountain/i.test(n)) return 'FOUNT';
+  return n.replace(/\.$/,'').slice(0,8).toUpperCase();
+}
+function renderLadder(){
+  const notes=overviewNotes(), el=$('#ladder'); el.innerHTML='';
+  const keys=Object.keys(F.levels).sort((a,b)=>F.levels[a].info.depth-F.levels[b].info.depth || F.levels[a].info.dnum-F.levels[b].info.dnum);
+  const box=document.createElement('div'); box.className='ladder';
+  let lastDg=null;
+  for(const k of keys){
+    const L=F.levels[k], I=L.info, branch=I.dnum!==0, isCur=k===F.cur;
+    if(!branch && lastDg!=='dod'){ const h=document.createElement('div'); h.className='dg-h'; h.textContent='Dungeons of Doom'; box.appendChild(h); lastDg='dod'; }
+    const row=document.createElement('div'); row.className='lv'+(isCur?' cur':'')+(branch?' branch':'')+(view.level===k&&!isCur?' viewing':'');
+    const nk=(I.dungeon)+'|'+I.dlevel; const ns=(notes[nk]||[]).map(noteTag);
+    row.innerHTML=`<div class="d">${I.depth}<small>${branch?'MINES':'DL'}</small></div>`;
+    row.appendChild(thumb(L,isCur,F.hero));
+    const a=document.createElement('div'); a.className='ann2';
+    const full=(notes[nk]||[]).join(' ');
+    a.title=full;
+    a.innerHTML = (isCur?'<span class="tag you">YOU</span>':'') + ns.map(n=>`<span class="tag">${esc(n)}</span>`).join('') +
+      `<span style="font:500 9px var(--mono);color:var(--ink4)">${isCur?'live':'seen T'+L.seen}</span>`;
+    row.appendChild(a);
+    row.onclick=()=>{ view.level = (k===F.cur||view.level===k)? null : k; renderMap(); renderLadder(); };
+    box.appendChild(row);
+  }
+  el.appendChild(box);
+}
+
+/* ───────── map ───────── */
+function fitMap(){
+  const wrap=$('#mapwrap'), W=wrap.clientWidth-44-12;
+  const app=$('#app').clientHeight;
+  const maxH = Math.max(300,(app-46-26-16)*0.6 - 120);
+  let cw=Math.min(W/80, maxH/21/2); cw=Math.max(7.5,Math.floor(cw*4)/4);
+  const r=document.documentElement.style;
+  r.setProperty('--cw',cw+'px'); r.setProperty('--rh',(Math.round(cw*2*2)/2)+'px'); r.setProperty('--mfs',(cw/0.6).toFixed(2)+'px');
+}
+function renderMap(){
+  const key=view.level||F.cur, L=F.levels[key], mem=key!==F.cur, hero=mem?null:F.hero;
+  const grid=Array.from({length:21},()=>Array(80).fill(null));
+  for(const c of L.cells){ if(c[1]<21&&c[0]<80) grid[c[1]][c[0]]=c; }
+  const adj = (c)=> hero && Math.max(Math.abs(c[0]-hero.x),Math.abs(c[1]-hero.y))===1;
+  // ruler
+  let rx=''; for(let x=0;x<80;x++){ const cl=(x%10===0?'t5 t10':x%5===0?'t5':'')+(hero&&x===hero.x?' hx':''); rx+=`<span class="${cl}">${x%10===0?x:''}</span>`; }
+  $('#rulerX').innerHTML=rx;
+  const keep = new Set();
+  if(S.focus==='menu'||S.focus==='text'){ if(hero) keep.add(hero.x+','+hero.y); }
+  let h='';
+  for(let y=0;y<21;y++){
+    h+=`<div class="mrow"><span class="ry ${y%5===0?'r5':''} ${hero&&y===hero.y?'hy':''}">${y}</span>`;
+    for(let x=0;x<80;x++){
+      const c=grid[y][x];
+      if(!c){ h+=`<span class="c" data-x="${x}" data-y="${y}"> </span>`; continue; }
+      const st=cellStyle(c[2],c[3],c[4]); let cls='c'+(st.b?' b':'');
+      if(hero&&x===hero.x&&y===hero.y) cls+=' hero';
+      else if(isMonster(c,hero)){ const d=disp(c[4]); cls+=' m'+d; if(d==='h'&&adj(c)&&S.alert==='warning') cls+=' adj'; }
+      if(S.pin&&S.pin[0]===x&&S.pin[1]===y&&!mem) cls+=' pin';
+      if(keep.has(x+','+y)) cls+=' keep';
+      h+=`<span class="${cls}" style="color:${st.c}" data-x="${x}" data-y="${y}">${esc(c[2])}</span>`;
+    }
+    h+='</div>';
+  }
+  const mr=$('#maprows'); mr.innerHTML=h;
+  $('#mapwrap').classList.toggle('dim', !mem && (S.focus==='menu'||S.focus==='text'));
+  if(hero){ // crosshair bands
+    const cw=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cw')), rh=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--rh'));
+    mr.insertAdjacentHTML('beforeend',`<div class="xh" style="left:${44+hero.x*cw}px;width:${cw}px;top:0;bottom:0"></div><div class="xh" style="top:${hero.y*rh}px;height:${rh}px;left:44px;right:0"></div>`);
+  }
+  // overlays
+  mr.querySelectorAll('.ovl,.memtag').forEach(n=>n.remove());
+  if(mem) mr.insertAdjacentHTML('beforeend',`<div class="memtag">MEMORY · ${L.info.dungeon.replace(/^The /,'')} ${L.info.depth} · last seen T${L.seen} · <span style="font-family:var(--mono)">F6/Esc</span> live</div>`);
+  if(!mem && S.focus==='menu' && F.menu) mr.insertAdjacentHTML('beforeend', menuOverlay());
+  if(!mem && S.focus==='text'){ twFit(); } if(!mem && S.focus==='text') mr.insertAdjacentHTML('beforeend', textOverlay());
+  const I=L.info;
+  $('#mapMeta').innerHTML = mem? `<span style="color:var(--comms);font-weight:600">MEMORY</span> · Dlvl ${I.depth} · ${esc(I.dungeon)}`
+      : `<span style="color:var(--pet);font-weight:700">● LIVE</span> · Dlvl ${I.depth} · ${esc(I.dungeon)} · hero ${F.hero.x},${F.hero.y}`;
+  $('#under').innerHTML = `<span class="lbl">Underfoot</span> ${esc(F.underfoot||'—')}`;
+  inspect(S.pin && !mem ? S.pin : null);
+}
+function menuOverlay(){
+  const m=F.menu;
+  const tip={o:'COMMS ▸ suggested'};
+  return `<div class="ovl" style="right:18px;top:10px;width:430px">
+    <div class="oh"><span class="t">Menu · pick one</span><span class="meta">#call · page ${m.pages}/${m.pages}</span></div>
+    <div class="q">${esc(m.prompt)}</div>
+    <div class="items">${m.items.map(it=>`<div class="it ${it.ch==='o'?'sel':''}"><span class="kc">${esc(it.ch)}</span><span>${esc(it.text)}</span><span class="tag">${tip[it.ch]||''}</span></div>`).join('')}</div>
+    <div class="of"><span><span class="kc">a–z</span>select</span><span><span class="kc">↵</span>accept</span><span><span class="kc">Esc</span>cancel</span><span style="margin-left:auto">keys go to the game</span></div>
+  </div>`;
+}
+let TWN=34;
+function twFit(){ const rows=$('#maprows'); if(!rows) return; const h=rows.clientHeight-16-28-26-36-34; TWN=Math.max(12,Math.floor(h/17)*2); }
+function textOverlay(){
+  const lines=F.discoveries.slice(2, 2+TWN);
+  return `<div class="ovl" style="left:64px;right:18px;top:8px;bottom:8px">
+    <div class="oh"><span class="t">Text window · Discoveries</span><span class="meta">\\ · page 1/2 · ${F.discoveries.length-2} lines</span></div>
+    <div class="tw"><div class="lead">${esc(F.discoveries[0])}</div>${lines.map(l=>{
+      if(!/^[\s*]/.test(l)) return `<div class="h">${esc(l)}</div>`;
+      const m=l.match(/^([*\s])\s(.*?)\s\((.*)\)$/);
+      return m?`<div><span class="pre">${m[1]==='*'?'*':'·'}</span> ${esc(m[2])} <span class="pre">(${esc(m[3])})</span></div>`:`<div>${esc(l)}</div>`;
+    }).join('')}</div>
+    <div class="of" style="margin-top:auto"><span><span class="kc">Space</span>next page</span><span><span class="kc">&lt;</span>prev</span><span><span class="kc">Esc</span>close</span><span><span class="kc">F7</span>ask about a line</span><span style="margin-left:auto">1–${TWN} of ${F.discoveries.length-2}</span></div>
+  </div>`;
+}
+function inspect(p){
+  const el=$('#insp');
+  if(!p){ el.innerHTML=`<span class="lbl">Cursor</span><span style="color:var(--ink4)">hover a tile to inspect</span>`; return; }
+  const key=view.level||F.cur, L=F.levels[key];
+  const c=L.cells.find(c=>c[0]===p[0]&&c[1]===p[1]);
+  const st=c?cellStyle(c[2],c[3],c[4]):{c:'#999',b:0};
+  const b=key===F.cur?bearing(p[0]-F.hero.x,p[1]-F.hero.y):null;
+  el.innerHTML=`<span class="lbl">Cursor</span><span style="color:var(--ink3)">${pad(p[0],2)},${pad(p[1],2)}</span>
+    <span class="g" style="color:${st.c}">${c?esc(c[2]):'·'}</span><span style="color:var(--ink)">${c?esc(c[4]):'unexplored'}</span>
+    ${b?`<span class="rel">${b.txt}${b.r?' · r'+b.r:''}</span>`:''}`;
+}
+document.addEventListener('mouseover',e=>{
+  const t=e.target.closest('.mrow .c'); if(!t) return;
+  document.querySelectorAll('.c.hov').forEach(n=>n.classList.remove('hov'));
+  t.classList.add('hov'); inspect([+t.dataset.x,+t.dataset.y]);
+});
+document.addEventListener('mouseout',e=>{
+  if(e.target.closest&&e.target.closest('.maprows')&&!(e.relatedTarget&&e.relatedTarget.closest&&e.relatedTarget.closest('.maprows'))){
+    document.querySelectorAll('.c.hov').forEach(n=>n.classList.remove('hov')); inspect(S.pin||null);
+  }
+});
+
+/* ───────── top line, strips ───────── */
+function renderTopline(){
+  const tl=$('#topline'), aw=F.awaiting, last=F.messages[F.messages.length-1];
+  tl.className='topline';
+  if(S.focus==='prompt'){
+    const q=F.screen0.trim().replace(/\s*\[yn\].*$/,'');
+    tl.classList.add('ask');
+    tl.innerHTML=`<span class="tl-t">T${F.turn}</span><span class="tl-m">${esc(q)}</span>
+      <span class="opt"><span class="kc">y</span>yes</span><span class="opt"><span class="kc def">n</span>no · default</span>
+      <span class="advice">● COMMS ADVISES <span class="kc" style="height:16px;font-size:9.5px;background:#fff;color:var(--ink)">n</span></span>`;
+  } else if(S.focus==='more'){
+    tl.classList.add('more');
+    tl.innerHTML=`<span class="tl-t">T${F.turn}</span><span class="tl-m">${esc(aw.prompt)}</span>
+      <span class="morekey"><span style="font:700 12px var(--mono);letter-spacing:0">--More--</span> <span class="kc">↵</span></span><span style="font:500 10px var(--mono);color:var(--ink3)">1 queued</span>`;
+  } else if(S.focus==='menu'||S.focus==='text'){
+    tl.innerHTML=`<span class="tl-t">T${F.turn}</span><span class="tl-m" style="font-family:var(--sans);font-size:12px">${S.focus==='menu'?'Menu open — letter selects, Esc cancels. All keys go to the menu.':'Text window open — Space pages, Esc closes.'}</span>`;
+  } else {
+    const txt=F.screen0.trim()||'';
+    tl.innerHTML=`<span class="tl-t">${txt&&last?'T'+last.turn:''}</span><span class="tl-m" style="${txt?'color:var(--ink2)':''}">${txt?esc(txt):'<span style="color:var(--ink5)">— no message this turn —</span>'}</span>`;
+  }
+  const ws=$('#warnStrip');
+  if(S.alert==='warning'){
+    const a=alertOf(F);
+    const host=F.levels[F.cur].cells.filter(c=>isMonster(c,F.hero)&&disp(c[4])==='h').map(c=>({c,b:bearing(c[0]-F.hero.x,c[1]-F.hero.y)})).sort((p,q)=>p.b.r-q.b.r)[0];
+    ws.innerHTML=`<span class="sym">▲ WARNING</span><span>HP ${a.hp}/${a.mx} (${Math.round(a.r*100)}%)</span><span class="sep">|</span>
+      <span>hostile ${host?esc(host.c[4])+' '+host.b.txt+(host.b.r===1?' · adjacent':''):''}</span><span class="sep">|</span><span>prayer: too early (T${F.turn})</span>
+      <span style="margin-left:auto;font:600 10px var(--mono);opacity:.85">−${S.hp[0]-a.hp} HP in ${S.hp.length-1} turns</span>`;
+  } else ws.innerHTML='';
+  const is=$('#infoStrip');
+  if(S.info){ is.style.display='flex'; is.innerHTML=`<span class="sym" style="color:var(--caution)">◆</span><span>${esc(S.info)}</span>`; }
+  else is.style.display='none';
+}
+
+/* ───────── messages ───────── */
+function renderMessages(){
+  let ms=F.messages.slice(); if(S.augment) ms=ms.concat(S.augment).sort((a,b)=>a.turn-b.turn);
+  ms=ms.filter(m=>m.text.trim()!=='#');
+  // collapse identical consecutive within a turn
+  const out=[]; for(const m of ms){ const p=out[out.length-1]; if(p&&p.turn===m.turn&&p.text===m.text){p.n++;} else out.push({...m,n:1}); }
+  const cur=F.turn; let prevT=null, h='';
+  for(const m of out){
+    const t=m.text.trim();
+    let cls='msg';
+    if(/\?\s*(\[.*\])?\s*(\(.\))?$|potion:\s*$/.test(t)) cls+=' q';
+    else if(/^The (jackal|hill orc|fox|newt|goblin)[^.]*?(bites|hits|thrusts)/.test(t)&&!/the kitten/.test(t)) cls+=' dmg';
+    else if(/kitten|little dog|pony/.test(t)) cls+=' pet';
+    if(m.turn===cur) cls+=' now'; else if(m.turn<cur-2) cls+=' old';
+    if(prevT!==null&&m.turn!==prevT) cls+=' sep';
+    h+=`<div class="${cls}"><span class="tn">${m.turn!==prevT?'T'+m.turn:''}</span><span class="k"></span><span class="tx">${esc(t)}${m.n>1?`<span class="x">×${m.n}</span>`:''}</span></div>`;
+    prevT=m.turn;
+  }
+  const el=$('#msgs'); el.innerHTML=h; el.scrollTop=el.scrollHeight;
+  $('#msgMeta').textContent=`${ms.length} · T${ms[0]?ms[0].turn:0}–T${cur}`;
+}
+
+/* ───────── contacts ───────── */
+function renderContacts(){
+  const L=F.levels[F.cur], hero=F.hero, blind=(F.status.conditions||[]).includes('Blind');
+  const mons=L.cells.filter(c=>isMonster(c,hero)).map(c=>({c,b:bearing(c[0]-hero.x,c[1]-hero.y)})).sort((a,b)=>a.b.r-b.b.r);
+  const wp=L.cells.filter(c=>/staircase|ladder|fountain|altar|sink|throne|trap|anti-magic/.test(c[4])&&!(c[0]===hero.x&&c[1]===hero.y))
+    .map(c=>({c,b:bearing(c[0]-hero.x,c[1]-hero.y)})).sort((a,b)=>a.b.r-b.b.r).slice(0,7);
+  let h='<table class="tbl"><thead><tr><th></th><th>Entity</th><th>Disp</th><th style="text-align:right">Rng</th><th style="text-align:right">Bearing</th></tr></thead><tbody>';
+  if(blind) h+=`<tr><td colspan="5" class="empty">No contacts — you are blind.</td></tr>`;
+  else if(!mons.length) h+=`<tr><td colspan="5" class="empty">No monsters in view.</td></tr>`;
+  for(const {c,b} of mons){
+    const d=disp(c[4]), st=cellStyle(c[2],c[3],c[4]);
+    const name=c[4].replace(/^(tame|peaceful) /,'');
+    h+=`<tr class="${d==='h'&&b.r===1&&S.alert==='warning'?'adjrow':''}"><td class="g" style="color:${st.c}">${esc(c[2])}</td><td class="nm">${esc(name)}</td>
+      <td><span class="disp ${d}">${{h:'HOSTILE',t:'TAME',p:'PEACEFUL'}[d]}</span></td><td class="n">${b.r}</td><td class="n">${b.txt}</td></tr>`;
+  }
+  h+=`<tr class="sect"><td colspan="5">Waypoints · this level</td></tr>`;
+  for(const {c,b} of wp){
+    const st=cellStyle(c[2],c[3],c[4]);
+    h+=`<tr><td class="g" style="color:${st.c}">${esc(c[2])}</td><td class="nm" colspan="2">${esc(c[4])}</td><td class="n">${b.r}</td><td class="n">${b.txt}</td></tr>`;
+  }
+  if(!wp.length) h+=`<tr><td colspan="5" class="empty">None known.</td></tr>`;
+  h+='</tbody></table>';
+  $('#contacts').innerHTML=h;
+  const nh=mons.filter(m=>disp(m.c[4])==='h').length;
+  $('#conMeta').innerHTML= blind?'—':`${mons.length} in view${nh?` · <b style="color:var(--warn)">${nh} hostile</b>`:''}`;
+}
+
+/* ───────── comms ───────── */
+const ICON_MIC='<svg width="8" height="10" viewBox="0 0 8 10" style="vertical-align:-1px;margin-right:3px"><rect x="2.2" y="0.5" width="3.6" height="6" rx="1.8" fill="none" stroke="currentColor"/><path d="M0.8 4.6a3.2 3.2 0 0 0 6.4 0M4 7.8v1.7" fill="none" stroke="currentColor"/></svg>';
+const ICON_KB='<svg width="11" height="8" viewBox="0 0 11 8" style="vertical-align:-0.5px;margin-right:3px"><rect x="0.5" y="0.5" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M2.5 5.5h6M2.5 3h1M5 3h1M7.5 3h1" stroke="currentColor"/></svg>';
+function waveBars(n,seed,live){
+  let s=seed, h='';
+  for(let i=0;i<n;i++){ s=(s*9301+49297)%233280; const r=s/233280;
+    const env=live?0.35+0.65*Math.sin(Math.PI*i/n):(seed===7?0.32:0.16); const v=Math.max(0.1,env*(0.35+0.65*r));
+    h+=`<i style="--h:${(v*100).toFixed(0)}%;--d:${(-r*0.9).toFixed(2)}s"></i>`; }
+  return h;
+}
+function chip(c,open){ return `<span class="chip ${open?'open':''}">⌕ <b>${esc(c[0])}</b>${c[1]?' '+esc(c[1]):''}${c[2]?' → '+esc(c[2]):''}</span>`; }
+function renderComms(){
+  const C=S.comms, mode=C.mode;
+  const lbl={listening:'LISTENING',standby:'MIC OFF',speaking:'SPEAKING',thinking:'THINKING'}[mode];
+  $('#chState').innerHTML=`<span class="chstate ${mode}"><span class="led"></span>${lbl}</span>`;
+  $('#vox').innerHTML=`
+    <span class="lbl">You</span><div class="wave mic ${C.mic?'on':''}">${waveBars(44,7,false)}</div><span class="st ${C.mic?'on':''}">${C.mic?'MIC OPEN · F3':'MUTED · F3'}</span>
+    <span class="lbl">Asst</span><div class="wave ast ${mode==='speaking'?'live':''}">${waveBars(44,3,mode==='speaking')}</div><span class="st ${mode==='speaking'?'on':''}">${mode==='speaking'?'0:06 / 0:14':'idle'}</span>`;
+  const cap=$('#caption');
+  if(C.live){ const L=C.live;
+    cap.innerHTML=`<div class="caption"><div class="ch"><span class="trig">${esc(L.trigger)}</span><span style="font:600 10px var(--mono);color:var(--comms)">T${F.turn} · speaking</span>
+      <span style="margin-left:auto;font:600 9.5px var(--mono);color:var(--ink3)"><span class="kc" style="height:16px;font-size:9px">F2</span> interrupt</span></div>
+      <span class="said">${esc(L.said)}</span><span class="cur">${esc(L.cur)}</span>${esc(L.rest)}
+      <div class="chips">${L.chips.map(c=>chip(c)).join('')}</div></div>`;
+  } else cap.innerHTML='';
+  let h='';
+  for(const e of C.t){
+    h+=`<div class="te ${e.w}"><span class="tn">T${e.t}</span><span class="wh">${{you:'YOU',ast:'ASST',sys:'SYS'}[e.w]}</span><div><span class="tx">${esc(e.x)}</span>${e.via?`<span class="via">${e.via==='voice'?ICON_MIC+'voice':ICON_KB+'typed'}</span>`:''}${e.auto?'<span class="trig n" style="margin-left:6px">AUTO</span>':''}
+      ${e.gate?`<div class="gate done"><span>⚑ SPOILER GATE · price identification</span><span style="margin-left:auto;font:500 10px var(--mono)">allowed by voice</span><span class="kc">F8</span></div>`:''}
+      ${e.chips?`<div class="chips">${e.chips.map(c=>chip(c,c[3])).join('')}</div>`:''}
+      ${e.card?`<div class="card"><div class="h">${esc(e.card.h)}<span>${esc(e.card.src)}</span></div><ul>${e.card.l.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`:''}
+    </div></div>`;
+  }
+  const tr=$('#transcript'); tr.innerHTML=h; tr.scrollTop=tr.scrollHeight;
+}
+
+/* ───────── inventory ───────── */
+const CLASS_ORDER=['weapons','armor','food','scrolls','spellbooks','potions','rings','wands','tools','amulets','gems'];
+const CLASS_NAME={food:'Comestibles'};
+function parseItem(it){
+  let t=it.text, tag=[], chg='', called='';
+  const pm=t.match(/\s\(([^)]*)\)$/);
+  if(pm){ const p=pm[1]; t=t.slice(0,pm.index);
+    if(/^\d+:\d+$/.test(p)) chg=p;
+    else if(/weapon in/.test(p)) tag.push(['WIELD','w']);
+    else if(/alternate/.test(p)) tag.push(['ALT','']);
+    else if(/being worn/.test(p)) tag.push(['WORN','w']);
+    else if(/quiver/.test(p)) tag.push(['QUIV','']); }
+  t=t.replace(/^(a|an|the)\s+/,'');
+  let buc='', en='';
+  let m=t.match(/^(blessed|uncursed|cursed)\s+/); if(m){buc=m[1][0].toUpperCase(); t=t.slice(m[0].length);}
+  m=t.match(/^([+-]\d+)\s+/); if(m){en=m[1]; t=t.slice(m[0].length);}
+  m=t.match(/\scalled\s(.*)$/); if(m){called=m[1]; t=t.slice(0,m.index);}
+  const magic=['potions','scrolls','rings','wands','amulets','spellbooks'].includes(it.class);
+  const unid = magic && (!/ of /.test(t) || /labeled/.test(t)) && !/holy water|unholy water/.test(t);
+  if(unid) tag.push(['UNID','u']);
+  return {t,buc,en,tag,chg,called,unid};
+}
+function renderInv(){
+  const tab=view.tab, inv=F.inventory, nd=F.discoveries.filter(l=>/^[*\s] /.test(l)).length;
+  $('#tabs').innerHTML=`<button class="${tab==='inv'?'on':''}" data-t="inv">Inventory<b>${inv.length}</b></button><button class="${tab==='disc'?'on':''}" data-t="disc">Discoveries<b>${nd}</b></button>
+    <span class="meta"><span class="fk" style="font:600 9px var(--mono);border:1px solid var(--line);padding:2px 3px;background:#fff">F5</span>switch</span>`;
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{view.tab=b.dataset.t;renderInv();});
+  const body=$('#invBody');
+  if(tab==='disc'){
+    const lines=F.discoveries.slice(2);
+    let h='<table class="tbl"><tbody>';
+    for(const l of lines){ if(!/^[*\s] /.test(l)){ h+=`<tr class="sect"><td colspan="2">${esc(l)}</td></tr>`; continue; }
+      const m=l.match(/^([*\s])\s(.*?)\s\((.*)\)$/); if(!m) continue;
+      h+=`<tr><td class="nm" style="font-weight:600">${esc(m[2])}</td><td style="color:var(--ink3)">${esc(m[3])}${m[1]==='*'?' <span style="font:500 9px var(--mono);color:var(--ink4)">· pre</span>':''}</td></tr>`; }
+    body.innerHTML=h+'</tbody></table>'; return;
+  }
+  const slotMap={}; for(const it of inv) for(const s of it.slots) slotMap[s]=it.letter;
+  const SL=[['Weapon','wielded'],['Alt','alternate'],['Quiver','quiver'],['Shield','shield'],['Body','suit'],['Cloak','cloak'],
+            ['Helm','helmet'],['Gloves','gloves'],['Boots','boots'],['Ring L','left_ring'],['Ring R','right_ring'],['Eyes','eyewear']];
+  let h=`<div class="equip">${SL.map(([n,k])=>`<div class="${slotMap[k]?'on':'off'}"><label>${n}</label><b>${slotMap[k]||'—'}</b></div>`).join('')}</div>`;
+  h+='<table class="tbl itbl"><tbody>';
+  const groups={}; for(const it of inv) (groups[it.class]=groups[it.class]||[]).push(it);
+  for(const cl of CLASS_ORDER.concat(Object.keys(groups).filter(k=>!CLASS_ORDER.includes(k)))){
+    const g=groups[cl]; if(!g) continue;
+    const nu=g.filter(i=>parseItem(i).unid).length;
+    h+=`<tr class="sect"><td colspan="2">${esc(g[0].class_sym)}&nbsp; ${esc(CLASS_NAME[cl]||cl)}</td><td colspan="3" style="text-align:right">${g.length}${nu?` · <span style="color:var(--caution)">${nu} unid</span>`:''}</td></tr>`;
+    for(const it of g){ const p=parseItem(it);
+      h+=`<tr class="${p.unid?'unid':''}"><td class="l">${it.letter}</td><td class="buc ${p.buc}" title="${{B:'blessed',U:'uncursed',C:'cursed'}[p.buc]||'BUC unknown'}">${p.buc||'·'}</td><td class="en">${p.en}</td>
+        <td class="nm">${esc(p.t)}${p.called?` <span class="cn">“${esc(p.called)}”</span>`:''}${p.chg?`<span class="chg">${p.chg}</span>`:''}</td>
+        <td style="text-align:right">${p.tag.map(([n,c])=>`<span class="st ${c}">${n}</span>`).join('')}</td></tr>`; }
+  }
+  body.innerHTML=h+'</tbody></table>';
+}
+
+/* ───────── wiring ───────── */
+function render(i){
+  S=STATES[i]; F=DATA[S.fx]; view.level=null; view.tab=S.invTab||'inv';
+  document.body.dataset.alert=S.alert;
+  document.querySelectorAll('#demo button').forEach((b,j)=>b.classList.toggle('on',j===i));
+  fitMap(); renderHeader(); renderVitals(); renderCond(); renderLadder(); renderTopline(); renderMap(); renderMessages(); renderContacts(); renderComms(); renderInv();
+  history.replaceState(null,'','#'+S.key);
+}
+const demo=$('#demo');
+STATES.forEach((s,i)=>{ const b=document.createElement('button'); const [n,...r]=s.label.split(' '); b.innerHTML=`<b>${n}</b><span> ${r.join(' ')}</span>`; b.title=s.label; b.onclick=()=>render(i); demo.appendChild(b); });
+document.addEventListener('keydown',e=>{
+  if(/^[1-8]$/.test(e.key)&&!e.ctrlKey&&!e.metaKey){ render(+e.key-1); return; } // mockup-only switcher
+  if(e.key==='F5'){ e.preventDefault(); view.tab=view.tab==='inv'?'disc':'inv'; renderInv(); }
+  if(e.key==='F6'){ e.preventDefault(); const ks=Object.keys(F.levels).sort((a,b)=>F.levels[a].info.depth-F.levels[b].info.depth); const i=ks.indexOf(view.level||F.cur); view.level=ks[(i-1+ks.length)%ks.length]; if(view.level===F.cur) view.level=null; renderMap(); renderLadder(); }
+  if(e.key==='F4'){ e.preventDefault(); $('#askIn').classList.add('typing'); const fp=$('#focusPill'); fp.className='pill comms'; fp.textContent='COMMS · Esc returns'; }
+  if(e.key==='Escape'){ $('#askIn').classList.remove('typing'); view.level=null; renderHeader(); renderMap(); renderLadder(); }
+});
+window.addEventListener('resize',()=>{ fitMap(); renderMap(); });
+const start=Math.max(0,STATES.findIndex(s=>'#'+s.key===location.hash));
+document.fonts.ready.then(()=>render(start)); render(start);
+</script>
+</body>
+</html>
