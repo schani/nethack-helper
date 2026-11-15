@@ -86,11 +86,15 @@ const NO_LOOKUP_EDITS = [
 export const VARIANTS: Record<string, Variant> = Object.fromEntries(
   [
     // ---- current production (server/prompts, default tool formats): use these for new experiments
-    v('baseline', 'current production config (v3: v2 + knowledge tools P1-P3 + prompt fixes P9)'),
+    v('baseline', 'current production config (v3: v2 + knowledge tools P1-P3 + prompt fixes P9; deep-thinking expert enabled)'),
     v('mini', 'production on gpt-realtime-2.1-mini (production prompt + mini addendum)', { model: 'gpt-realtime-2.1-mini' }),
     v('reasoning-minimal', 'production with reasoning effort minimal', { reasoning: 'minimal' }),
     v('reasoning-medium', 'production with reasoning effort medium', { reasoning: 'medium' }),
     v('no-snapshot', 'production without live-context snapshots (tools only)', { snapshot: 'none' }),
+    // ---- deep-thinking expert (consult_expert -> gpt-6.1-terra, reasoning high, in the background)
+    // runs: deep-noexp / deep-exp2 (tags deep, N=3: 37% -> 74%), core-noexp / core-exp (core, N=2: 82% -> 82%, expert never called)
+    v('no-expert', 'production without the deep-thinking expert', { expert: false }),
+    v('expert', 'production with the deep-thinking expert (consult_expert, gpt-6.1-terra high)', { expert: true }),
     // ---- v3 ablations (production = v3)
     v('v2-frozen', 'the v2 production config: frozen v2 prompt and v2 knowledge tools (no lookup, no wiki tables/changelog)', { promptsDir: 'evals/prompts/v2', knowledge: 'v2' }),
     v('tools-only', 'v3 knowledge tools (wiki tables + changelog, source search, nethack_lookup) with the frozen v2 prompt', { promptsDir: 'evals/prompts/v2' }),

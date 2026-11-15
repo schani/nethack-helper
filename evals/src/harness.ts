@@ -8,13 +8,13 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TOOL_DEFS, AssistantService } from '../../server/src/assistant/service.ts';
+import { AssistantService, sessionTools } from '../../server/src/assistant/service.ts';
 import { KnowledgeService } from '../../server/src/assistant/knowledge/index.ts';
 import { ToolError } from '../../server/src/assistant/knowledge/util.ts';
-import { TIMEOUTS, WEB_SEARCH_MODEL, apiKey } from '../../server/src/assistant/config.ts';
+import { EXPERT, TIMEOUTS, WEB_SEARCH_MODEL, apiKey } from '../../server/src/assistant/config.ts';
 import { buildSessionConfig } from '../../server/src/assistant/session-config.ts';
 import { loadConfig } from '../../server/src/config.ts';
-import type { AssistantBackend, GameContext } from '../../shared/assistant/realtime-core.ts';
+import type { AssistantBackend, ExpertResult, GameContext } from '../../shared/assistant/realtime-core.ts';
 import { FixtureGameSource, type Fixture } from './fixtures.ts';
 import type { EvalCase, Json, Variant } from './types.ts';
 import { fetchWikiPage as fetchWikiPageV2 } from './legacy/wiki-v2.ts';
@@ -108,11 +108,14 @@ function deepMerge(a: Json, b: Json): Json {
 export const DEFAULTS = { model: 'gpt-realtime-2.1', reasoning: 'low', voice: 'marin' };
 
 export function resolvedVariant(v: Variant) {
+  const expert = v.expert ?? EXPERT.enabled;
   return {
     model: v.model ?? DEFAULTS.model,
     reasoning: v.reasoning ?? DEFAULTS.reasoning,
     voice: v.voice ?? DEFAULTS.voice,
     promptsDir: v.promptsDir ? path.resolve(ROOT, v.promptsDir) : serverCfg.assistant.promptsDir,
+    expert,
+    ...(expert ? { expertModel: v.expertModel ?? EXPERT.model, expertEffort: v.expertEffort ?? EXPERT.effort } : {}),
   };
 }
 
@@ -120,10 +123,10 @@ export function resolvedVariant(v: Variant) {
 export async function sessionFor(v: Variant): Promise<Json> {
   const r = resolvedVariant(v);
   const descriptions = { ...(v.knowledge === 'v2' ? V2_TOOL_DESCRIPTIONS : {}), ...Object.fromEntries(Object.entries(v.tools ?? {}).map(([k, x]) => [k, x.description])) };
-  const tools = TOOL_DEFS.filter((t) => !v.disableTools?.includes(t.name) && !(v.knowledge === 'v2' && t.name === 'nethack_lookup')).map((t) =>
-    descriptions[t.name] ? { ...t, description: descriptions[t.name]! } : t,
-  );
-  let s: Json = await buildSessionConfig({ model: r.model, voice: r.voice, reasoning: r.reasoning, tools, promptsDir: r.promptsDir });
+  const tools = sessionTools(r.expert)
+    .filter((t) => !v.disableTools?.includes(t.name) && !(v.knowledge === 'v2' && t.name === 'nethack_lookup'))
+    .map((t) => (descriptions[t.name] ? { ...t, description: descriptions[t.name]! } : t));
+  let s: Json = await buildSessionConfig({ model: r.model, voice: r.voice, reasoning: r.reasoning, tools, promptsDir: r.promptsDir, expert: r.expert });
   for (const e of v.promptEdits ?? []) {
     if (!s.instructions.includes(e.find)) throw new Error(`variant ${v.name}: prompt edit target not found: ${e.find.slice(0, 80)}`);
     s.instructions = s.instructions.replace(e.find, e.replace);
@@ -149,6 +152,7 @@ export function fixtureBackend(fx: Fixture, c: EvalCase, v: Variant, knowledge: 
     knowledge,
     timeouts: c.faults?.timeouts,
     gameOptions: v.game,
+    expert: { enabled: resolvedVariant(v).expert, model: v.expertModel, effort: v.expertEffort },
   });
   const none = v.snapshot === 'none';
   const backend: AssistantBackend = {
@@ -161,6 +165,8 @@ export function fixtureBackend(fx: Fixture, c: EvalCase, v: Variant, knowledge: 
     },
     context: async () => (none ? { text: '', turn: 0 } : service.context()),
     log: () => {},
+    // the expert runs the same in-process tools (game fixture + cached knowledge)
+    ...(resolvedVariant(v).expert ? { expert: (req, signal) => service.consultExpert(req, signal) } : {}),
   };
   return { backend, initialContext: none ? null : service.context(), close: async () => {} };
 }
@@ -185,5 +191,18 @@ export function httpBackend(base: string, v: Variant): AssistantBackend {
     },
     context: async () => (none ? { text: '', turn: 0 } : ((await (await fetch(`${base}/api/assistant/context`)).json()) as GameContext)),
     log: () => {},
+    ...(resolvedVariant(v).expert
+      ? {
+          expert: async (req, signal) => {
+            const r = await fetch(`${base}/api/assistant/expert`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ question: req.question, excerpt: req.excerpt, consultation_id: req.consultationId, session_id: req.sessionId }),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(150_000)]),
+            });
+            return (await r.json()) as ExpertResult;
+          },
+        }
+      : {}),
   };
 }

@@ -77,6 +77,29 @@ export interface TurnRecord {
   unpaired: string[];
   /** live-context snapshots added during this turn */
   contexts: number;
+  /** expert consultations started during this turn (their results were awaited and spoken within the turn) */
+  expert?: ExpertRecord[];
+}
+
+export interface ExpertRecord {
+  id: string;
+  question: string;
+  status: string;
+  ok: boolean;
+  error?: string;
+  /** expert run time (ms) */
+  ms: number;
+  rounds: number;
+  tools: { name: string; args: Json; ok: boolean; ms: number }[];
+  answer: string;
+  keyFacts: string[];
+  confidence: string;
+  spoiler: boolean;
+  spoilerDetails?: string;
+  unknowns: string[];
+  cost: number;
+  usage?: { input: number; cached: number; output: number; reasoning: number };
+  interrupted?: boolean;
 }
 
 export interface NodeSessionOptions {
@@ -241,15 +264,17 @@ export class NodeRealtimeSession implements RealtimeHost {
       finals: this.view.finals.length,
       calls: this.view.calls.length,
       contexts: this.conversation.debug.contexts.length,
+      experts: this.conversation.experts.list.length,
     };
   }
 
   /** wait until the model gave its final answer of the turn and nothing is in flight */
   private async waitTurnDone(t0: number) {
-    const limit = this.opts.turnTimeoutMs ?? 90_000;
+    // expert consultations take up to ~90 s and are spoken within the turn
+    const limit = this.opts.turnTimeoutMs ?? (this.opts.backend.expert ? 200_000 : 90_000);
     for (;;) {
       const t = this.turn!;
-      const idle = !this.conversation.activeResponse && this.conversation.debug.unpaired().length === 0;
+      const idle = !this.conversation.activeResponse && this.conversation.debug.unpaired().length === 0 && this.conversation.experts.settled;
       if (idle && t.finalSeen && Date.now() - t.lastDoneAt > 300) return;
       if (t.errors.length && idle && Date.now() - t.lastDoneAt > 1000 && t.responses.length) return;
       if (this.state !== 'connected') return;
@@ -292,6 +317,25 @@ export class NodeRealtimeSession implements RealtimeHost {
       errors: [...t.errors, ...d.errors.splice(0)],
       unpaired: d.unpaired(),
       contexts: d.contexts.length - before.contexts,
+      expert: this.conversation.experts.list.slice(before.experts).map((c) => ({
+        id: c.id,
+        question: c.question,
+        status: c.status,
+        ok: !!c.result?.ok,
+        ...(c.result?.error ? { error: c.result.error } : {}),
+        ms: c.result?.ms ?? 0,
+        rounds: c.result?.rounds ?? 0,
+        tools: c.result?.tools ?? [],
+        answer: c.result?.answer ?? '',
+        keyFacts: c.result?.keyFacts ?? [],
+        confidence: c.result?.confidence ?? '',
+        spoiler: !!c.result?.spoiler,
+        ...(c.result?.spoilerDetails ? { spoilerDetails: c.result.spoilerDetails } : {}),
+        unknowns: c.result?.unknowns ?? [],
+        cost: c.result?.cost ?? 0,
+        usage: c.result?.usage,
+        ...(c.interrupted ? { interrupted: true } : {}),
+      })),
     };
   }
 
@@ -362,6 +406,7 @@ export class NodeRealtimeSession implements RealtimeHost {
 
   close() {
     this.state = 'idle';
+    this.conversation.endSession();
     this.conversation.detach();
     try {
       this.ws?.close();

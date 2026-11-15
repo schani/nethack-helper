@@ -8,9 +8,11 @@
 import path from 'node:path';
 import type { AssistantPaths } from '../config.ts';
 import {
-  CLIENT_SECRET_TTL_S, DEFAULT_MODEL, DEFAULT_REASONING, DEFAULT_VOICE, REALTIME_MODELS, REASONING_EFFORTS, TIMEOUTS, VOICES,
+  CLIENT_SECRET_TTL_S, DEFAULT_MODEL, DEFAULT_REASONING, DEFAULT_VOICE, EXPERT, REALTIME_MODELS, REASONING_EFFORTS, TIMEOUTS, VOICES,
   WEB_SEARCH_MODEL, apiKey,
 } from './config.ts';
+import type { ExpertRequest, ExpertResult } from '../../../shared/assistant/consultations.ts';
+import { EXPERT_TOOL_DEFS, ExpertService } from './expert.ts';
 import { GAME_TOOL_DEFS, GameTools, type GameSource } from './game/tools.ts';
 import type { GameViewOptions } from './game/view.ts';
 import { KNOWLEDGE_TOOL_DEFS, KnowledgeService } from './knowledge/index.ts';
@@ -20,6 +22,11 @@ import { buildSessionConfig } from './session-config.ts';
 
 export const TOOL_DEFS = [...GAME_TOOL_DEFS, ...KNOWLEDGE_TOOL_DEFS] as const;
 export const TOOL_NAMES: readonly string[] = TOOL_DEFS.map((t) => t.name);
+
+/** Realtime session tools: the server tools, plus consult_expert / cancel_expert when the expert is enabled. */
+export function sessionTools(expert: boolean) {
+  return expert ? [...TOOL_DEFS, ...EXPERT_TOOL_DEFS] : [...TOOL_DEFS];
+}
 
 export interface ToolResult {
   ok: boolean;
@@ -59,6 +66,8 @@ export interface AssistantServiceOptions {
   timeouts?: Record<string, number>;
   /** game tool output options (eval variants); defaults = production */
   gameOptions?: GameViewOptions;
+  /** deep-thinking expert: offered to the realtime model (default EXPERT.enabled) and its settings */
+  expert?: { enabled?: boolean; model?: string; effort?: string; timeoutMs?: number; maxRounds?: number };
 }
 
 export class AssistantService {
@@ -69,6 +78,8 @@ export class AssistantService {
   private transcriptLog: JsonlLog;
   private fetchFn: typeof fetch;
   private timeouts: Record<string, number>;
+  readonly expert: ExpertService;
+  readonly expertEnabled: boolean;
 
   constructor(opts: AssistantServiceOptions) {
     this.paths = opts.paths;
@@ -85,6 +96,21 @@ export class AssistantService {
     this.transcriptLog = new JsonlLog(path.join(opts.paths.logDir, 'transcripts.jsonl'));
     this.fetchFn = opts.fetch ?? fetch;
     this.timeouts = { ...TIMEOUTS, ...opts.timeouts };
+    this.expertEnabled = opts.expert?.enabled ?? EXPERT.enabled;
+    // the expert uses exactly the assistant's server tools and executors (player-visible game state only)
+    this.expert = new ExpertService({
+      apiKey,
+      tools: TOOL_DEFS,
+      runTool: (name, args, meta) => this.runTool(name, args, meta),
+      snapshot: () => this.context(),
+      promptsDir: opts.paths.promptsDir,
+      log: new JsonlLog(path.join(opts.paths.logDir, 'expert-calls.jsonl')),
+      fetch: opts.fetch,
+      model: opts.expert?.model,
+      effort: opts.expert?.effort,
+      timeoutMs: opts.expert?.timeoutMs,
+      maxRounds: opts.expert?.maxRounds,
+    });
   }
 
   async config() {
@@ -97,6 +123,7 @@ export class AssistantService {
       defaultReasoning: DEFAULT_REASONING,
       tools: TOOL_NAMES,
       webSearchModel: WEB_SEARCH_MODEL,
+      expert: { enabled: this.expertEnabled, model: this.expert.model, effort: this.expert.effort, timeoutMs: this.expert.timeoutMs },
       sourceAvailable: await this.knowledge.sourceAvailable(),
       apiKeyConfigured: !!process.env.OPENAI_API_KEY,
     };
@@ -104,7 +131,7 @@ export class AssistantService {
 
   /** Session config sent to OpenAI (exposed for tests / debugging). */
   sessionConfig(opts: { model: string; voice: string; reasoning: string }) {
-    return buildSessionConfig({ ...opts, tools: TOOL_DEFS, promptsDir: this.paths.promptsDir });
+    return buildSessionConfig({ ...opts, tools: sessionTools(this.expertEnabled), expert: this.expertEnabled, promptsDir: this.paths.promptsDir });
   }
 
   /** Mint an ephemeral client secret for a WebRTC Realtime call. */
@@ -153,14 +180,25 @@ export class AssistantService {
     }
   }
 
+  /** Ask the deep-thinking expert (never throws; ok:false on failure, timeout or cancellation). */
+  consultExpert(req: ExpertRequest, signal?: AbortSignal): Promise<ExpertResult> {
+    return this.expert.consult(req, signal);
+  }
+
   /** Run one tool call with its time limit; never throws (errors become the result text). */
-  async runTool(name: string, args: Record<string, unknown>, meta: { callId?: string; sessionId?: string } = {}): Promise<ToolResult & { known: boolean }> {
+  async runTool(
+    name: string,
+    args: Record<string, unknown>,
+    meta: { callId?: string; sessionId?: string; signal?: AbortSignal } = {},
+  ): Promise<ToolResult & { known: boolean }> {
     const t0 = performance.now();
     const known = TOOL_NAMES.includes(name);
     let ok = true;
     let result: string;
     const limit = this.game.has(name) ? this.timeouts.game : (this.timeouts[name] ?? 10_000);
     const ac = new AbortController();
+    const onOuter = () => ac.abort();
+    meta.signal?.addEventListener('abort', onOuter, { once: true });
     let timer: NodeJS.Timeout | undefined;
     try {
       if (!known) throw new ToolError(`unknown tool '${name}'`);
@@ -179,6 +217,7 @@ export class AssistantService {
       if (!(e instanceof ToolError) && !timeout) console.error(`assistant tool ${name} failed:`, e);
     } finally {
       clearTimeout(timer);
+      meta.signal?.removeEventListener('abort', onOuter);
     }
     const ms = Math.round(performance.now() - t0);
     this.toolLog.write({ call_id: meta.callId, session_id: meta.sessionId, name, args, ok, ms, chars: result.length, preview: result.slice(0, 300) });

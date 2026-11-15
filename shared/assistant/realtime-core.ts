@@ -16,9 +16,20 @@
  *  - Text turns, latency marks (first text / first audio), the recap used
  *    after a reconnect, and the debug record (window.voiceDebug in the browser).
  *
+ *  - Deep-thinking expert: consult_expert / cancel_expert are answered here
+ *    (not by the server's tool endpoint); the slow expert runs in the
+ *    background and its result is spoken when the channel is idle
+ *    (see consultations.ts).
+ *
  * The host owns the transport (connect, reconnect, audio) and tells the core
  * when a session is attached / detached.  No DOM or Node APIs here.
  */
+import {
+  CLIENT_TOOLS, CANCEL_EXPERT_TOOL, Consultations, EXPERT_TOOL, deliveryText,
+  type Consultation, type ExpertRequest, type ExpertResult,
+} from './consultations.ts';
+
+export type { Consultation, ExpertRequest, ExpertResult } from './consultations.ts';
 
 export type Json = Record<string, any>;
 
@@ -63,6 +74,8 @@ export interface RealtimeView {
   tool(call: ToolCall): void;
   listening(on: boolean): void;
   mic(muted: boolean, available: boolean): void;
+  /** an expert consultation started / finished / was delivered or cancelled */
+  expert?(c: Consultation): void;
 }
 
 /** Server-side services the conversation needs (HTTP in the browser, in-process or HTTP in Node). */
@@ -71,6 +84,8 @@ export interface AssistantBackend {
   tool(name: string, args: Record<string, unknown>, callId: string, sessionId?: string): Promise<ToolResponse>;
   context(): Promise<GameContext>;
   log(entry: Record<string, unknown>): void;
+  /** the deep-thinking expert (absent: consult_expert reports it is unavailable); resolves with ok:false on failure */
+  expert?(req: ExpertRequest, signal: AbortSignal): Promise<ExpertResult>;
 }
 
 /** What the core needs from the transport owner. */
@@ -99,6 +114,8 @@ export interface VoiceDebug {
   unpaired(): string[];
   dropped(): string[];
   bargeIn: null | { text: string; on: 'item' | 'args' };
+  /** expert consultations (status, timing, result summary) */
+  consultations(): { id: string; question: string; status: string; ms?: number; ok?: boolean; interrupted?: boolean }[];
   sendText(text: string): void;
   /** e2e: force the reconnect path */
   simulateDrop(): void;
@@ -111,6 +128,10 @@ export interface ConversationOptions {
   now?: () => number;
   /** max wait for a fresh snapshot before a text turn is sent (ms) */
   contextWaitMs?: number;
+  /** quiet gap after the last channel activity before an expert result is spoken (ms) */
+  expertQuietMs?: number;
+  /** max concurrent expert consultations */
+  expertMaxConcurrent?: number;
 }
 
 export class RealtimeConversation {
@@ -143,9 +164,21 @@ export class RealtimeConversation {
   private ctxSeq = 0;
   private ctxLast = 0;
   private ctxInflight: Promise<void> | null = null;
+  private ctxTurn: number | undefined;
   /** recap material for reconnects */
   history: { role: 'user' | 'assistant'; text: string }[] = [];
   readonly debug: VoiceDebug;
+  // idle detection for expert deliveries
+  readonly experts: Consultations;
+  private userSpeaking = false;
+  private speechStoppedAt = 0;
+  private awaitingAutoResponse = false;
+  private sendingText = false;
+  private lastActivity = 0;
+  /** an expert delivery's response.create was sent but its response not created yet */
+  private deliveryPending = false;
+  private deliveryResponseId: string | null = null;
+  private deliveryIds = '';
 
   constructor(view: RealtimeView, backend: AssistantBackend, host: RealtimeHost, opts: ConversationOptions = {}) {
     this.view = view;
@@ -154,6 +187,15 @@ export class RealtimeConversation {
     this.now = opts.now ?? (() => performance.now());
     this.contextWaitMs = opts.contextWaitMs ?? 400;
     const self = this;
+    this.experts = new Consultations({
+      expert: backend.expert ? (req, signal) => backend.expert!(req, signal) : undefined,
+      now: () => this.now(),
+      idleSince: () => this.idleSince(),
+      deliver: (batch) => this.deliverExperts(batch),
+      changed: (c) => this.expertChanged(c),
+      quietMs: opts.expertQuietMs,
+      maxConcurrent: opts.expertMaxConcurrent,
+    });
     this.debug = {
       events: [],
       transcript: [],
@@ -172,6 +214,14 @@ export class RealtimeConversation {
       unpaired: () => [...self.calls.values()].filter((c) => !c.outputSent).map((c) => `${c.name}:${c.callId}`),
       dropped: () => [...self.calls.values()].filter((c) => c.dropped).map((c) => `${c.name}:${c.callId}`),
       bargeIn: null,
+      consultations: () =>
+        self.experts.list.map((c) => ({
+          id: c.id,
+          question: c.question,
+          status: c.status,
+          ...(c.finishedAt !== undefined ? { ms: Math.round(c.finishedAt - c.startedAt), ok: c.result?.ok } : {}),
+          ...(c.interrupted ? { interrupted: true } : {}),
+        })),
       sendText: (t: string) => void self.sendText(t),
       simulateDrop: () => self.host.simulateDrop?.(),
     };
@@ -188,6 +238,8 @@ export class RealtimeConversation {
     this.ctxText = '';
     if (opts.isReconnect && this.history.length) this.sendRecap();
     this.applyContext(opts.context);
+    this.lastActivity = this.now();
+    this.experts.pump();
   }
 
   /** The transport is closed: nothing in flight can be answered in that conversation any more. */
@@ -196,6 +248,11 @@ export class RealtimeConversation {
     this.activeResponse = null;
     this.audioPlaying = false;
     this.pendingCreate = false;
+    this.userSpeaking = this.awaitingAutoResponse = this.sendingText = false;
+    // a result being delivered was not spoken in the old session: deliver it again in the next one
+    if (this.deliveryPending || this.deliveryResponseId || this.experts.delivering) this.experts.requeue();
+    this.deliveryPending = false;
+    this.deliveryResponseId = null;
     // calls of the old session can never be answered there
     for (const c of this.calls.values()) if (!c.outputSent) (c.outputSent = true), (c.dropped = true);
   }
@@ -203,6 +260,12 @@ export class RealtimeConversation {
   /** a user-initiated start: forget the previous conversation */
   reset() {
     this.history = [];
+  }
+
+  /** The user ended the session: running consultations are cancelled, queued results dropped. */
+  endSession(reason = 'session ended') {
+    this.experts.cancel(undefined, reason);
+    this.experts.dispose();
   }
 
   showError(msg: string) {
@@ -236,6 +299,7 @@ export class RealtimeConversation {
     if (old) this.send({ type: 'conversation.item.delete', item_id: old });
     this.ctxItem = id;
     this.ctxText = ctx.text;
+    this.ctxTurn = ctx.turn;
     this.ctxLast = this.now();
     this.debug.contexts.push({ at: Math.round(this.now() - this.sessionStart), turn: ctx.turn, chars: ctx.text.length, ...(old ? { replaced: old } : {}) });
   }
@@ -271,7 +335,8 @@ export class RealtimeConversation {
       return;
     }
     this.pendingCreate = false;
-    this.send({ type: 'response.create' });
+    // a rejected expert delivery is retried with its marker, so its response can be tracked
+    this.send(this.deliveryPending ? { type: 'response.create', response: { metadata: { expert: this.deliveryIds } } } : { type: 'response.create' });
   }
 
   /** Handle one server event from the Realtime channel. */
@@ -284,8 +349,16 @@ export class RealtimeConversation {
       ...(ev.item?.type ? { item: ev.item.type, id: ev.item.id } : {}),
       ...(ev.error ? { code: ev.error.code, msg: ev.error.message } : {}),
     });
+    this.lastActivity = this.now();
+    this.handleEvent(ev);
+    // a queued expert result may be deliverable now (no-op unless the channel is idle)
+    this.experts.pump();
+  }
+
+  private handleEvent(ev: Json) {
     switch (ev.type) {
       case 'input_audio_buffer.speech_started':
+        this.userSpeaking = true;
         this.userTurn++;
         this.view.listening(true);
         this.view.user(ev.item_id, '', false);
@@ -293,6 +366,10 @@ export class RealtimeConversation {
         void this.refreshContext();
         break;
       case 'input_audio_buffer.speech_stopped':
+        this.userSpeaking = false;
+        // server VAD creates the response for this turn; until it does, the channel is not idle
+        this.awaitingAutoResponse = true;
+        this.speechStoppedAt = this.now();
         this.view.listening(false);
         this.turnStart = this.turnT0 = this.now();
         this.turnMarks = { firstText: 0, firstAudio: 0 };
@@ -315,7 +392,12 @@ export class RealtimeConversation {
 
       case 'response.created':
         this.activeResponse = ev.response?.id ?? 'unknown';
+        this.awaitingAutoResponse = false;
         if (ev.response?.id) this.responseTurn.set(ev.response.id, this.userTurn);
+        if (this.deliveryPending && ev.response?.metadata?.expert) {
+          this.deliveryPending = false;
+          this.deliveryResponseId = ev.response.id ?? 'unknown';
+        }
         break;
 
       case 'response.output_item.added':
@@ -419,6 +501,10 @@ export class RealtimeConversation {
    */
   private async onResponseDone(resp: Json) {
     if (this.activeResponse === resp.id || this.activeResponse === 'unknown') this.activeResponse = null;
+    if (this.deliveryResponseId && (resp.id === this.deliveryResponseId || this.deliveryResponseId === 'unknown')) {
+      this.deliveryResponseId = null;
+      this.experts.delivered(resp.status !== 'completed' && resp.status !== undefined);
+    }
     if (resp.status === 'failed') {
       const d = resp.status_details?.error;
       this.showError(`Response failed: ${d?.message ?? d?.code ?? JSON.stringify(resp.status_details)}`);
@@ -439,7 +525,9 @@ export class RealtimeConversation {
         if (gen !== this.generation) return; // reconnected meanwhile: that conversation is gone
         if (this.userTurn === turnOfResponse) {
           for (const { call } of calls) this.sendOutput(call, call.result!);
-          this.requestResponse();
+          // consult_expert / cancel_expert after a spoken line ("let me think that through"): nothing more to say now
+          const clientOnly = calls.every(({ call }) => CLIENT_TOOLS.includes(call.name) && call.ok);
+          if (!(clientOnly && spokeIn(resp))) this.requestResponse();
         } else {
           this.insertOutputs(calls.map(({ fc, call }) => ({ fc, call, output: call.result! })));
         }
@@ -507,7 +595,10 @@ export class RealtimeConversation {
     this.view.tool(call);
     const t0 = this.now();
     const at = this.turnT0 ? Math.round(t0 - this.turnT0) : undefined;
-    call.promise = this.backend.tool(call.name, args, call.callId, this.sessionId).then(({ ok, result, ms: serverMs }) => {
+    const exec = CLIENT_TOOLS.includes(call.name)
+      ? Promise.resolve(this.clientTool(call.name, args))
+      : this.backend.tool(call.name, args, call.callId, this.sessionId);
+    call.promise = exec.then(({ ok, result, ms: serverMs }) => {
       const ms = Math.round(this.now() - t0);
       call.ok = ok;
       call.ms = ms;
@@ -525,11 +616,117 @@ export class RealtimeConversation {
     });
   }
 
+  // ------------------------------------------------------------------ expert consultations
+
+  /** consult_expert / cancel_expert, answered at once */
+  private clientTool(name: string, args: Json): ToolResponse {
+    if (name === EXPERT_TOOL) {
+      const question = typeof args.question === 'string' ? args.question : '';
+      const r = this.experts.start(question, {
+        excerpt: this.history.slice(-8).map((h) => ({ role: h.role, text: h.text.slice(0, 500) })),
+        sessionId: this.sessionId,
+        turn: this.ctxTurn,
+        context: this.ctxText,
+        userTurn: this.userTurn,
+      });
+      if ('error' in r) return { ok: false, result: r.error };
+      if (r.duplicate) return { ok: true, result: `ALREADY RUNNING: the expert is still working on this question (consultation ${r.c.id}). Do not ask again; keep the conversation going.` };
+      const busy = this.experts.running.length - 1;
+      return {
+        ok: true,
+        result:
+          `STARTED consultation ${r.c.id}: the expert is working on it in the background (usually 20 to 90 seconds${busy ? `; ${busy} other consultation(s) also running` : ''}). ` +
+          "If you have not said so yet, tell the user in one short sentence that you'll get back to them. Do not guess the answer meanwhile; " +
+          'keep helping with anything else. The result will arrive as a system message starting with [Expert result].',
+      };
+    }
+    if (name === CANCEL_EXPERT_TOOL) {
+      const id = typeof args.consultation_id === 'string' && args.consultation_id ? args.consultation_id : undefined;
+      const done = this.experts.cancel(id, 'cancelled at the user\'s request');
+      return {
+        ok: true,
+        result: done.length
+          ? `CANCELLED ${done.map((c) => `${c.id} ("${c.question.slice(0, 80)}")`).join(', ')}. Acknowledge in a few words.`
+          : 'Nothing to cancel: no consultation is running or waiting.',
+      };
+    }
+    return { ok: false, result: `unknown client tool ${name}` };
+  }
+
+  /** Cancel from the UI (panel button): the model is told quietly so it doesn't bring the question up again. */
+  cancelConsultation(id: string) {
+    const done = this.experts.cancel(id, 'cancelled by the user (panel)');
+    if (!done.length) return;
+    this.send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'system',
+        content: [{ type: 'input_text', text: `[Expert consultation ${id} about "${done[0].question.slice(0, 120)}" was cancelled by the user. Do not bring it up unless asked.]` }],
+      },
+    });
+  }
+
+  /** null while the voice channel is busy, else when it went quiet */
+  private idleSince(): number | null {
+    if (!this.host.open || this.host.state !== 'connected') return null;
+    if (this.activeResponse || this.pendingCreate || this.audioPlaying || this.userSpeaking || this.sendingText) return null;
+    if (this.deliveryPending || this.deliveryResponseId) return null;
+    if (this.awaitingAutoResponse && this.now() - this.speechStoppedAt < 3000) return null;
+    for (const c of this.calls.values()) if (!c.outputSent) return null;
+    return this.lastActivity;
+  }
+
+  private expertChanged(c: Consultation) {
+    this.view.expert?.(c);
+    const ms = c.finishedAt !== undefined ? Math.round(c.finishedAt - c.startedAt) : undefined;
+    if (c.status === 'running') this.debug.transcript.push({ role: 'tool', text: `expert ${c.id} started: ${c.question}` });
+    if (c.status === 'ready') {
+      const r = c.result!;
+      this.debug.transcript.push({ role: 'expert', text: `${c.id} ${r.ok ? 'ok' : `FAILED (${r.error})`} after ${ms} ms: ${r.answer}` });
+      this.backend.log({ kind: 'expert', id: c.id, question: c.question, ok: r.ok, ms, rounds: r.rounds, tools: r.tools.length, confidence: r.confidence, error: r.error });
+    }
+    if (c.status === 'cancelled') this.backend.log({ kind: 'expert_cancelled', id: c.id, reason: c.cancelReason });
+  }
+
+  /** Speak finished consultations: fresh snapshot, the results as a system message, then a response. */
+  private deliverExperts(batch: Consultation[]) {
+    const gen = this.generation;
+    void (async () => {
+      const ctx = await Promise.race([
+        this.backend.context().catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 1500)),
+      ]);
+      // the user started talking (or the session changed) meanwhile: try again when it is quiet
+      if (gen !== this.generation || this.idleSince() === null) return this.experts.requeue();
+      if (ctx) this.applyContext(ctx);
+      const ids = batch.map((c) => c.id).join(',');
+      this.send({
+        type: 'conversation.item.create',
+        item: { id: `exp_${ids.replace(/,/g, '_')}_${Date.now().toString(36)}`, type: 'message', role: 'system', content: [{ type: 'input_text', text: deliveryText(batch, ctx, this.now()) }] },
+      });
+      this.deliveryPending = true;
+      this.deliveryIds = ids;
+      this.turnStart = this.turnT0 = 0; // not a user turn: no latency marks
+      this.firstAudioPending = null; // and its audio must not be credited to the previous turn
+      this.send({ type: 'response.create', response: { metadata: { expert: ids } } });
+      // never wedge the queue if the response is lost
+      setTimeout(() => {
+        if (this.experts.delivering === batch) {
+          this.deliveryPending = false;
+          this.deliveryResponseId = null;
+          this.experts.delivered(true);
+        }
+      }, 60_000);
+    })();
+  }
+
   // ------------------------------------------------------------------ text input
 
   async sendText(text: string) {
     if (!text.trim() || this.host.state !== 'connected') return;
     this.userTurn++;
+    this.sendingText = true;
     if (this.activeResponse) this.send({ type: 'response.cancel' });
     const key = `text_${Date.now().toString(36)}`;
     this.view.user(key, text, true);
@@ -544,6 +741,15 @@ export class RealtimeConversation {
     this.firstAudioPending = null;
     this.activeResponse = null; // cancelled (if any); response.done will follow
     this.pendingCreate = false; // this create supersedes any queued one
+    this.sendingText = false;
+    this.lastActivity = this.now();
     this.send({ type: 'response.create' });
   }
+}
+
+/** the response said something (a preamble / "I'll get back to you") */
+function spokeIn(resp: Json): boolean {
+  return (resp.output ?? []).some(
+    (o: Json) => o.type === 'message' && (o.content ?? []).some((p: Json) => String(p.transcript ?? p.text ?? '').trim()),
+  );
 }

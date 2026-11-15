@@ -24,7 +24,7 @@ import {
 } from '../../../shared/assistant/realtime-core.ts';
 import { assistantApi, type MintedSession } from './api.ts';
 
-export type { ConnState, RealtimeView, ToolCall, VoiceDebug } from '../../../shared/assistant/realtime-core.ts';
+export type { ConnState, Consultation, RealtimeView, ToolCall, VoiceDebug } from '../../../shared/assistant/realtime-core.ts';
 
 export interface StartOptions {
   model: string;
@@ -39,6 +39,7 @@ const backend: AssistantBackend = {
   tool: (name, args, callId, sessionId) => assistantApi.tool(name, args, callId, sessionId),
   context: () => assistantApi.context(),
   log: (entry) => assistantApi.log(entry),
+  expert: (req, signal) => assistantApi.expert(req, signal),
 };
 
 export class RealtimeClient implements RealtimeHost {
@@ -106,6 +107,7 @@ export class RealtimeClient implements RealtimeHost {
   stop() {
     this.stopping = true;
     const was = this.state;
+    this.conversation.endSession('session ended');
     this.teardown();
     if (was === 'connected' || was === 'reconnecting') this.view.system('Session ended.');
     this.setState('idle');
@@ -263,5 +265,10 @@ export class RealtimeClient implements RealtimeHost {
 
   sendText(text: string) {
     return this.conversation.sendText(text);
+  }
+
+  /** the panel's cancel button on a "Thinking deeply" chip */
+  cancelConsultation(id: string) {
+    this.conversation.cancelConsultation(id);
   }
 }

@@ -51,3 +51,16 @@ describe('tool chip labels', () => {
     expect(chipLabel('look', '{"targ')).toBe('look around'); // arguments still streaming
   });
 });
+
+describe('expert chip', async () => {
+  const { expertLabel, chipLabel } = await import('../src/assistant/panel.ts');
+  const base = { startedAt: 1000, finishedAt: undefined as number | undefined, result: undefined as any, interrupted: undefined as boolean | undefined };
+  it('shows elapsed time while thinking, then the outcome', () => {
+    expect(expertLabel({ ...base, status: 'running' }, 13_400)).toBe('Thinking deeply… 12 s');
+    expect(expertLabel({ ...base, status: 'ready', finishedAt: 31_000, result: { ok: true } as any }, 40_000)).toBe('Expert answer ready (30 s)');
+    expect(expertLabel({ ...base, status: 'delivered', finishedAt: 31_000, result: { ok: true } as any, interrupted: true }, 40_000)).toBe('Expert answered (30 s), interrupted');
+    expect(expertLabel({ ...base, status: 'delivered', result: { ok: false } as any }, 40_000)).toBe('Expert couldn’t finish');
+    expect(expertLabel({ ...base, status: 'cancelled' }, 40_000)).toBe('Expert cancelled');
+    expect(chipLabel('consult_expert', '{"question":"x"}')).toBe('ask expert');
+  });
+});

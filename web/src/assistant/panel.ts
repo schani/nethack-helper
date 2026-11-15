@@ -4,7 +4,7 @@
  * conversation logic lives in RealtimeClient.
  */
 import { assistantApi, type AssistantConfig } from './api.ts';
-import { RealtimeClient, type ConnState, type RealtimeView, type ToolCall } from './realtime.ts';
+import { RealtimeClient, type ConnState, type Consultation, type RealtimeView, type ToolCall } from './realtime.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -44,8 +44,29 @@ export function chipLabel(name: string, argsJson: string): string {
       return `source /${q(a.pattern)}/`;
     case 'read_nethack_source':
       return `source ${q(a.path)}:${q(a.start_line)}`;
+    case 'consult_expert':
+      return 'ask expert';
+    case 'cancel_expert':
+      return 'cancel expert';
     default:
       return name;
+  }
+}
+
+/** Label of a "Thinking deeply" chip for an expert consultation. */
+export function expertLabel(c: Pick<Consultation, 'status' | 'startedAt' | 'finishedAt' | 'result' | 'interrupted'>, now: number): string {
+  const secs = (to: number) => `${Math.max(0, Math.round((to - c.startedAt) / 1000))} s`;
+  switch (c.status) {
+    case 'running':
+      return `Thinking deeply… ${secs(now)}`;
+    case 'ready':
+      return c.result?.ok ? `Expert answer ready (${secs(c.finishedAt ?? now)})` : 'Expert couldn’t finish';
+    case 'delivering':
+      return c.result?.ok ? `Expert answering (${secs(c.finishedAt ?? now)})` : 'Expert couldn’t finish';
+    case 'delivered':
+      return c.result?.ok ? `Expert answered (${secs(c.finishedAt ?? now)})${c.interrupted ? ', interrupted' : ''}` : 'Expert couldn’t finish';
+    case 'cancelled':
+      return 'Expert cancelled';
   }
 }
 
@@ -80,6 +101,8 @@ export class AssistantPanel implements RealtimeView {
   private chipEls = new Map<string, HTMLDetailsElement>();
   /** chips of the current turn are collected in one row */
   private chipRow: HTMLElement | null = null;
+  private expertEls = new Map<string, { el: HTMLDetailsElement; c: Consultation }>();
+  private expertTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: AssistantPanelOptions) {
     this.opts = opts;
@@ -246,6 +269,63 @@ export class AssistantPanel implements RealtimeView {
     chip.title = `${call.name} ${call.args || ''}${call.ms !== undefined ? `\n${call.ms} ms${call.serverMs !== undefined ? ` (server ${call.serverMs} ms)` : ''}` : ''}${status === 'dropped' ? '\ninterrupted' : ''}`;
     if (call.result !== undefined) (chip.querySelector('pre') as HTMLElement).textContent = call.result;
     this.stickToBottom();
+  }
+
+  /** "Thinking deeply… 12 s" chip with a cancel button; shows the expert's answer and sources when expanded */
+  expert(c: Consultation) {
+    let entry = this.expertEls.get(c.id);
+    if (!entry) {
+      const el = document.createElement('details');
+      el.className = 'as-chip as-expert';
+      el.innerHTML =
+        '<summary><span class="dot"></span><span class="label"></span><button type="button" class="as-x" title="Cancel this consultation" aria-label="Cancel">×</button></summary><pre></pre>';
+      el.querySelector('button')!.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.client.cancelConsultation(c.id);
+      });
+      if (!this.chipRow) {
+        this.chipRow = document.createElement('div');
+        this.chipRow.className = 'as-chips';
+        this.append(this.chipRow);
+      }
+      this.chipRow.appendChild(el);
+      entry = { el, c };
+      this.expertEls.set(c.id, entry);
+    }
+    entry.c = c;
+    this.renderExpert(entry);
+    const running = [...this.expertEls.values()].some((x) => x.c.status === 'running');
+    if (running && !this.expertTimer) {
+      this.expertTimer = setInterval(() => {
+        const live = [...this.expertEls.values()].filter((x) => x.c.status === 'running');
+        for (const x of live) this.renderExpert(x);
+        if (!live.length && this.expertTimer) {
+          clearInterval(this.expertTimer);
+          this.expertTimer = null;
+        }
+      }, 1000);
+    }
+    this.stickToBottom();
+  }
+
+  private renderExpert({ el, c }: { el: HTMLDetailsElement; c: Consultation }) {
+    const r = c.result;
+    const waiting = c.status === 'running' || c.status === 'ready' || c.status === 'delivering';
+    el.dataset.status = waiting ? 'running' : c.status === 'cancelled' ? 'dropped' : r?.ok ? 'ok' : 'fail';
+    (el.querySelector('.label') as HTMLElement).textContent = expertLabel(c, performance.now());
+    (el.querySelector('.as-x') as HTMLElement).hidden = c.status !== 'running' && c.status !== 'ready';
+    el.title = c.question;
+    const lines = [`Q: ${c.question}`];
+    if (r?.ok) {
+      lines.push('', r.answer);
+      if (r.keyFacts.length) lines.push('', ...r.keyFacts.map((f) => `• ${f}`));
+      lines.push('', `confidence ${r.confidence}${r.unknowns.length ? `; unknown: ${r.unknowns.join(', ')}` : ''}`);
+      if (r.tools.length) lines.push(`checked: ${r.tools.map((t) => chipLabel(t.name, JSON.stringify(t.args))).join(', ')}`);
+      if (r.cost !== undefined) lines.push(`${(r.ms / 1000).toFixed(1)} s, ${r.rounds} rounds, $${r.cost.toFixed(3)}`);
+    } else if (r) lines.push('', `failed: ${r.error}`);
+    if (c.status === 'cancelled') lines.push('', `cancelled (${c.cancelReason ?? ''})`);
+    (el.querySelector('pre') as HTMLElement).textContent = lines.join('\n');
   }
 
   // ------------------------------------------------------------------ helpers

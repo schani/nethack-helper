@@ -190,6 +190,11 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     expect(await tool('get_screen')).toMatch(/Legend \(symbol, what it is, where relative to you\):\n@ you/);
     const ctx = (await (await fetch(`${BASE}/api/assistant/context`)).json()) as { text: string };
     expect(ctx.text).toMatch(/HP \d+\/\d+/);
+    // deep-thinking expert route: validated (no API call without a question); config reports it
+    const ex = await fetch(`${BASE}/api/assistant/expert`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(ex.status).toBe(400);
+    const cfg = (await (await fetch(`${BASE}/api/assistant/config`)).json()) as { expert: { model: string } };
+    expect(cfg.expert.model).toBeTruthy();
   });
 
   it('accepts keys: search advances the turn, i opens the inventory menu, Esc closes it', async () => {

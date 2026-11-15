@@ -92,6 +92,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .as-chip[data-status="fail"] .dot, .as-chip[data-status="dropped"] .dot { background: #dc2626; }
 .as-chip[data-status="running"] .dot { animation: as-pulse 1s infinite; }
 .as-chip[open] { flex-basis: 100%; }
+.as-expert summary { max-width: 320px; border-color: #c7b8f0; background: #f6f3ff; }
+.as-expert[data-status="running"] .dot { background: #7c3aed; }
+.as-expert pre { white-space: pre-wrap; }
+.as-x { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 0 0 2px; }
+.as-x:hover { color: #dc2626; }
 .as-chip pre { margin: 4px 0 2px; max-height: 220px; overflow: auto; font: 10.5px/1.35 var(--mono); color: #3d3a33;
   background: #faf9f6; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; white-space: pre; }
 .as-composer { display: flex; gap: 6px; padding: 8px 10px 6px; border-top: 1px solid var(--border); }

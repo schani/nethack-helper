@@ -14,11 +14,14 @@ export interface SessionOptions {
   reasoning: string;
   tools: readonly unknown[];
   promptsDir: string;
+  /** the deep-thinking expert is offered: append expert.md to the instructions */
+  expert?: boolean;
 }
 
 /** instructions.md (+ instructions-mini.md for mini models); re-read on every mint so the prompt can be iterated live. */
-export async function loadInstructions(promptsDir: string, model: string): Promise<string> {
+export async function loadInstructions(promptsDir: string, model: string, expert = false): Promise<string> {
   let instructions = await readFile(path.join(promptsDir, 'instructions.md'), 'utf8');
+  if (expert) instructions += `\n${await readFile(path.join(promptsDir, 'expert.md'), 'utf8')}`;
   // Smaller models embellish tool results more; they get a stricter addendum (kept out of the main prompt so the
   // full model's answers and latency are not constrained by it).
   if (/mini/.test(model)) instructions += await readFile(path.join(promptsDir, 'instructions-mini.md'), 'utf8').catch(() => '');
@@ -27,7 +30,7 @@ export async function loadInstructions(promptsDir: string, model: string): Promi
 
 /** Session config for POST /v1/realtime/client_secrets (GA interface). Ported from voice-proto/server/session.ts. */
 export async function buildSessionConfig(opts: SessionOptions) {
-  const instructions = await loadInstructions(opts.promptsDir, opts.model);
+  const instructions = await loadInstructions(opts.promptsDir, opts.model, opts.expert);
   return {
     type: 'realtime',
     model: opts.model,

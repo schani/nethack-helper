@@ -68,6 +68,7 @@ export async function runCase(c: EvalCase, rep: number, o: RunOptions): Promise<
         rec = await session.ask(turn.user);
       }
       run.cost.realtime += realtimeCost(model, rec.usage);
+      run.cost.expert = (run.cost.expert ?? 0) + (rec.expert ?? []).reduce((a, x) => a + x.cost, 0);
       run.turns.push({ ...rec, checks: gradeTurn(rec, turn.expect, run.snapshot) });
       if (rec.errors.some((e) => /transport lost|timed out/.test(e))) break;
     }

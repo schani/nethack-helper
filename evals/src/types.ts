@@ -89,6 +89,11 @@ export interface Variant {
   knowledge?: 'current' | 'v2';
   /** tools left out of the session (e.g. nethack_lookup for ablations) */
   disableTools?: string[];
+  /** offer the deep-thinking expert (consult_expert); default: production (EXPERT.enabled) */
+  expert?: boolean;
+  /** expert model / effort overrides */
+  expertModel?: string;
+  expertEffort?: string;
 }
 
 export interface CheckResult {
@@ -120,6 +125,6 @@ export interface CaseRun {
   pass: boolean;
   checksPass: boolean;
   error?: string;
-  cost: { realtime: number; judge: number; tts: number };
+  cost: { realtime: number; judge: number; tts: number; expert?: number };
   ms: number;
 }

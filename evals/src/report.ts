@@ -44,6 +44,11 @@ export interface Group {
   toolsPerTurn: number | null;
   errors: number;
   flaky: number;
+  /** fraction of turns that consulted the expert; expert run time and cost per consultation */
+  expertRate: number;
+  expertMs: Stat;
+  expertCost: number | null;
+  expertFailed: number;
 }
 
 export function group(runs: CaseRun[]): Group {
@@ -79,6 +84,10 @@ export function group(runs: CaseRun[]): Group {
     toolsPerTurn: mean(turns.map((t) => t.tools.length)),
     errors: runs.filter((r) => r.error).length,
     flaky: [...byCase.values()].filter((rs) => rs.some((r) => r.pass) && rs.some((r) => !r.pass)).length,
+    expertRate: turns.length ? turns.filter((t) => t.expert?.length).length / turns.length : 0,
+    expertMs: stat(turns.flatMap((t) => (t.expert ?? []).filter((e) => e.status !== 'cancelled').map((e) => e.ms))),
+    expertCost: mean(turns.flatMap((t) => (t.expert ?? []).map((e) => e.cost))),
+    expertFailed: turns.flatMap((t) => (t.expert ?? []).filter((e) => !e.ok)).length,
   };
 }
 
@@ -94,7 +103,7 @@ export interface Summary {
   tags: Record<string, Group>;
   cases: Record<string, { tags: string[]; pass: number; judge: number | null; failures: string[]; issues: string[]; answers: string[] }>;
   tokens: { input: number; cached: number; output: number; audioIn: number; audioOut: number };
-  cost: { realtime: number; judge: number; tts: number; total: number; perCaseRun: number };
+  cost: { realtime: number; judge: number; tts: number; expert?: number; total: number; perCaseRun: number };
   wallMs: number;
 }
 
@@ -125,10 +134,11 @@ export function summarize(meta: Omit<Summary, 'overall' | 'tags' | 'cases' | 'to
     realtime: runs.reduce((a, r) => a + r.cost.realtime, 0),
     judge: runs.reduce((a, r) => a + r.cost.judge, 0),
     tts: runs.reduce((a, r) => a + r.cost.tts, 0),
+    expert: runs.reduce((a, r) => a + (r.cost.expert ?? 0), 0),
     total: 0,
     perCaseRun: 0,
   };
-  cost.total = cost.realtime + cost.judge + cost.tts;
+  cost.total = cost.realtime + cost.judge + cost.tts + cost.expert;
   cost.perCaseRun = runs.length ? cost.total / runs.length : 0;
   return {
     ...meta,
@@ -160,14 +170,16 @@ export function markdown(s: Summary): string {
   L.push(`| flaky cases (mixed results across reps) | ${o.flaky} |`);
   L.push(`| first text ms (median / p90) | ${ms(o.firstText)} |`);
   L.push(`| first audio ms (median / p90) | ${ms(o.firstAudio)} |`);
-  L.push(`| turn total ms (median / p90) | ${ms(o.total)} |`);
+  L.push(`| turn total ms = time to final answer (median / p90) | ${ms(o.total)} |`);
+  L.push(`| expert: call rate (turns) / run time ms median, p90 / cost per call / failed | ${pct(o.expertRate)} / ${ms(o.expertMs ?? stat([]))} / ${o.expertCost == null ? '-' : `$${o.expertCost.toFixed(4)}`} / ${o.expertFailed ?? 0} |`);
   L.push(`| tool rounds / tools per turn | ${num(o.rounds)} / ${num(o.toolsPerTurn)} |`);
   L.push(`| tokens in (cached) / out | ${s.tokens.input} (${s.tokens.cached}) / ${s.tokens.output} |`);
-  L.push(`| cost (realtime + judge + tts) | $${s.cost.total.toFixed(3)} ($${s.cost.realtime.toFixed(3)} + $${s.cost.judge.toFixed(3)} + $${s.cost.tts.toFixed(3)}); $${s.cost.perCaseRun.toFixed(4)} per case run |`);
+  L.push(`| cost (realtime + judge + tts + expert) | $${s.cost.total.toFixed(3)} ($${s.cost.realtime.toFixed(3)} + $${s.cost.judge.toFixed(3)} + $${s.cost.tts.toFixed(3)} + $${(s.cost.expert ?? 0).toFixed(3)}); $${s.cost.perCaseRun.toFixed(4)} per case run |`);
   L.push(`| errors | ${o.errors} |`);
   L.push('');
-  L.push('## Per tag', '', '| tag | cases | pass | judge | first text med | rounds |', '|---|---|---|---|---|---|');
-  for (const [t, g] of Object.entries(s.tags)) L.push(`| ${t} | ${g.cases} | ${pct(g.pass)} | ${num(g.judge.score)} | ${g.firstText.median ?? '-'} | ${num(g.rounds)} |`);
+  L.push('', '## Per tag', '', '| tag | cases | pass | judge | first text med | final answer med | rounds | expert rate |', '|---|---|---|---|---|---|---|---|');
+  for (const [t, g] of Object.entries(s.tags))
+    L.push(`| ${t} | ${g.cases} | ${pct(g.pass)} | ${num(g.judge.score)} | ${g.firstText.median ?? '-'} | ${g.total.median ?? '-'} | ${num(g.rounds)} | ${pct(g.expertRate)} |`);
   L.push('', '## Failing / flaky cases', '');
   for (const [id, c] of Object.entries(s.cases).sort((a, b) => a[1].pass - b[1].pass)) {
     if (c.pass === 1) continue;
@@ -194,7 +206,9 @@ export function compareMarkdown(a: Summary, b: Summary): string {
   row('first text median ms', a.overall.firstText.median, b.overall.firstText.median, (v) => String(v ?? '-'), d(a.overall.firstText.median, b.overall.firstText.median, 1, ' ms'));
   row('first text p90 ms', a.overall.firstText.p90, b.overall.firstText.p90, (v) => String(v ?? '-'), d(a.overall.firstText.p90, b.overall.firstText.p90, 1, ' ms'));
   row('first audio median ms', a.overall.firstAudio.median, b.overall.firstAudio.median, (v) => String(v ?? '-'), d(a.overall.firstAudio.median, b.overall.firstAudio.median, 1, ' ms'));
-  row('turn total median ms', a.overall.total.median, b.overall.total.median, (v) => String(v ?? '-'), d(a.overall.total.median, b.overall.total.median, 1, ' ms'));
+  row('turn total (final answer) median ms', a.overall.total.median, b.overall.total.median, (v) => String(v ?? '-'), d(a.overall.total.median, b.overall.total.median, 1, ' ms'));
+  row('turn total (final answer) p90 ms', a.overall.total.p90, b.overall.total.p90, (v) => String(v ?? '-'), d(a.overall.total.p90, b.overall.total.p90, 1, ' ms'));
+  row('expert call rate (turns)', a.overall.expertRate ?? 0, b.overall.expertRate ?? 0, pct, d(a.overall.expertRate ?? 0, b.overall.expertRate ?? 0));
   row('tool rounds', a.overall.rounds, b.overall.rounds, (v) => num(v), d(a.overall.rounds, b.overall.rounds, 1, '', 2));
   row('cost per case run $', a.cost.perCaseRun, b.cost.perCaseRun, (v) => num(v, 4), d(a.cost.perCaseRun, b.cost.perCaseRun, 1, '', 4));
   L.push('', '## Per tag', '', `| tag | ${String(a.variant.name)} | ${String(b.variant.name)} | delta | judge delta |`, '|---|---|---|---|---|');

@@ -19,6 +19,8 @@ The assistant's rules (from its prompt):
 - Voice: short (simple questions 1-3 sentences; strategy: the single most useful tip then offer more; lists at most 3 items aloud, except that after the user explicitly asked for a list / the full spoiler, about 150 words or stepping through it is fine), no markdown, URLs, file paths, code or raw tool output. A playful aside is fine; rambling is not.
 - Preambles are REQUIRED by design: before a slow knowledge lookup (wiki, web search, source, changelog; not nethack_lookup or game tools, which are instant and need none) the assistant must first say a very short preamble ("Let me check the wiki.", "One sec.", "Checking the 5.0 changelog.") because lookups take seconds. Such a brief preamble is not tool jargon, narration or rambling: never penalize it in any dimension. Only several stacked preambles in one answer are a minor issue (speakability 4). Naming the source ("according to the wiki", "in the 5.0 source") is also fine. The transcript lists a turn's tool calls before the assistant's text, but the preamble was spoken before the lookup ran: do not penalize that ordering.
 
+Deep-thinking expert (only in some runs): the assistant may hand a hard question to a slow reasoning model with consult_expert (it returns at once; the expert works in the background with the same game and knowledge tools and its result is delivered later in the same turn, shown as EXPERT RESULT, after which the assistant speaks it). A short "let me think that through, I'll get back to you" line before the delivered answer is the intended behavior, not a problem; the assistant's final spoken answer is what matters. Claims that match the EXPERT RESULT count as grounded (the expert verified them in the source), but if the expert result is wrong, the spoken answer is wrong.
+
 Tools: game tools (get_status, look, get_screen, get_inventory, list_levels, get_level_map, get_messages, get_discoveries) show what the player sees. Knowledge tools: fetch_wiki_page (NetHack wiki, often describes 3.6; may append matching 5.0 changelog entries), search_nethack_source / read_nethack_source (the 5.0 source and changelog), nethack_lookup (monster/object/role data and effect tables extracted from the 5.0 source: authoritative), web_search. A claim that matches a tool result shown in the transcript is grounded.
 
 Score each dimension 1-5 (5 = flawless, 4 = minor issue a user would not mind, 3 = noticeable problem, 2 = wrong or misleading in part, 1 = wrong / harmful):
@@ -82,6 +84,15 @@ export function transcriptText(turns: TurnRecord[], snapshot?: string): string {
     .map((t, i) => {
       const lines = [`[turn ${i + 1}] USER${t.heard !== undefined ? ` (spoken; transcribed as: "${t.heard}")` : ''}: ${t.input}`];
       for (const x of t.tools) lines.push(`  TOOL ${x.name}(${JSON.stringify(x.args)}) -> ${x.ok ? '' : 'FAILED '}${cap(x.result, TOOL_RESULT_CAP)}`);
+      for (const e of t.expert ?? []) {
+        const checked = e.tools.map((x) => `${x.name}(${JSON.stringify(x.args)})`).join(', ') || 'no tools';
+        lines.push(
+          e.ok
+            ? `  EXPERT RESULT ${e.id} after ${Math.round(e.ms / 1000)} s (it checked: ${checked}): ${e.answer} | key facts: ${e.keyFacts.join('; ')} | confidence ${e.confidence}` +
+                `${e.unknowns.length ? ` | unknowns: ${e.unknowns.join('; ')}` : ''}${e.spoilerDetails ? ` | held-back spoiler details: ${e.spoilerDetails}` : ''}`
+            : `  EXPERT ${e.id} ${e.status === 'cancelled' ? 'CANCELLED' : `FAILED (${e.error ?? 'unknown'})`}`,
+        );
+      }
       lines.push(`ASSISTANT: ${t.messages.join('\n  ') || '(no answer)'}`);
       return lines.join('\n');
     })

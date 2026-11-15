@@ -30,3 +30,25 @@ export function apiKey(): string {
   if (!k) throw new Error('OPENAI_API_KEY is not set');
   return k;
 }
+
+/**
+ * Deep-thinking expert (consult_expert): a slow, strong reasoning model the realtime model consults in the
+ * background (server/src/assistant/expert.ts).  ASSISTANT_EXPERT=0/1 overrides `enabled`.
+ */
+export const EXPERT = {
+  // adopted after evals: deep set 37% -> 74% pass, core set unchanged (never called there); see evals/variants.ts
+  enabled: process.env.ASSISTANT_EXPERT !== undefined ? process.env.ASSISTANT_EXPERT !== '0' : true,
+  model: process.env.EXPERT_MODEL ?? 'gpt-6.1-terra',
+  effort: process.env.EXPERT_EFFORT ?? 'high',
+  /** whole consultation, tool rounds included (ms) */
+  timeoutMs: Number(process.env.EXPERT_TIMEOUT_MS ?? 90_000),
+  /** max tool rounds before it must answer */
+  maxRounds: Number(process.env.EXPERT_MAX_ROUNDS ?? 8),
+};
+
+/** USD per 1M tokens (developers.openai.com/api/docs/pricing, Nov 2026) for expert cost logging. */
+export const EXPERT_PRICES: Record<string, { input: number; cached: number; output: number }> = {
+  'gpt-6.1-terra': { input: 1, cached: 0.05, output: 5 },
+  'gpt-6.1-sol': { input: 2, cached: 0.1, output: 10 },
+  'gpt-5.5': { input: 5, cached: 0.5, output: 30 },
+};

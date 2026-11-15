@@ -1,4 +1,5 @@
 /** HTTP calls to our server's /api/assistant routes (never to OpenAI). */
+import { failure, type ExpertRequest, type ExpertResult } from '../../../shared/assistant/consultations.ts';
 
 export interface AssistantConfig {
   models: string[];
@@ -10,6 +11,7 @@ export interface AssistantConfig {
   tools: string[];
   sourceAvailable: boolean;
   apiKeyConfigured: boolean;
+  expert?: { enabled: boolean; model: string; effort: string; timeoutMs: number };
 }
 
 export interface GameContext {
@@ -70,6 +72,27 @@ export const assistantApi = {
     } catch (e) {
       const err = e as Error;
       return { ok: false, result: err.name === 'TimeoutError' ? `${name} timed out` : `network error: ${err.message}` };
+    }
+  },
+
+  /** deep-thinking expert (20-90 s); aborting the signal cancels it on the server. Never throws. */
+  expert: async (req: ExpertRequest, signal: AbortSignal): Promise<ExpertResult> => {
+    const t0 = performance.now();
+    try {
+      const r = await fetch('/api/assistant/expert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: req.question, excerpt: req.excerpt, consultation_id: req.consultationId, session_id: req.sessionId }),
+        // the server gives up after ~90 s; this only catches a hung connection
+        signal: AbortSignal.any([signal, AbortSignal.timeout(150_000)]),
+      });
+      const j = (await r.json().catch(() => null)) as ExpertResult | null;
+      if (!r.ok || !j) return failure((j as { error?: string } | null)?.error ?? `HTTP ${r.status}`, performance.now() - t0);
+      return j;
+    } catch (e) {
+      const err = e as Error;
+      if (signal.aborted) throw err; // cancelled: the core discards it
+      return failure(err.name === 'TimeoutError' ? 'timed out' : `network error: ${err.message}`, performance.now() - t0);
     }
   },
 
