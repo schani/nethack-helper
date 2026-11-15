@@ -50,7 +50,12 @@ export function makePlayground(opts: { seed: number; rc: string[] }): Playground
   return { dir, home, bin, rc };
 }
 
-export async function startServer(pg: Playground, port: number, player: string): Promise<{ proc: ChildProcess; base: string; log: () => string }> {
+export async function startServer(
+  pg: Playground,
+  port: number,
+  player: string,
+  extraEnv: Record<string, string> = {},
+): Promise<{ proc: ChildProcess; base: string; log: () => string }> {
   let log = '';
   const proc = spawn(process.execPath, ['src/main.ts'], {
     cwd: path.join(ROOT, 'server'),
@@ -66,6 +71,7 @@ export async function startServer(pg: Playground, port: number, player: string):
       NETHACKRC_TEMPLATE: pg.rc,
       ASSISTANT_LOG_DIR: path.join(ROOT, '.cache/assistant-e2e'),
       LOG: '0',
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

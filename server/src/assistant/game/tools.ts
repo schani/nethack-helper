@@ -4,7 +4,7 @@
  */
 import type { GameState } from '../../../../shared/feed-events.ts';
 import { ToolError } from '../knowledge/util.ts';
-import { GameView, type ScreenText } from './view.ts';
+import { GameView, type GameViewOptions, type ScreenText } from './view.ts';
 
 /** What the assistant needs from the game session service (read-only). */
 export interface GameSource {
@@ -78,7 +78,8 @@ export const GAME_TOOL_DEFS = [
     name: 'get_level_map',
     description:
       'The remembered map of one level as text, with its features, objects and monsters (as last seen) and where they are: relative to the ' +
-      'hero on the current level, otherwise as a map region and relative to the up staircase. ' +
+      'hero on the current level; on other levels as a screen region plus rough distances from the staircases where the player arrives ' +
+      '(coming down: the up staircase; coming up: the down staircase). ' +
       DIRECTION_RULE,
     parameters: {
       type: 'object',
@@ -121,9 +122,11 @@ function int(v: unknown, name: string): number | undefined {
 /** Runs game tools against the live game session (or any GameSource). */
 export class GameTools {
   private source: GameSource;
+  private opts: GameViewOptions;
 
-  constructor(source: GameSource) {
+  constructor(source: GameSource, opts: GameViewOptions = {}) {
     this.source = source;
+    this.opts = opts;
   }
 
   has(name: string): boolean {
@@ -131,7 +134,7 @@ export class GameTools {
   }
 
   view(): GameView {
-    return new GameView({ running: this.source.running, state: this.source.state({ allLevels: true }), screen: this.source.screen() });
+    return new GameView({ running: this.source.running, state: this.source.state({ allLevels: true }), screen: this.source.screen() }, this.opts);
   }
 
   run(name: string, args: Record<string, unknown>): string {

@@ -12,6 +12,7 @@ import {
   WEB_SEARCH_MODEL, apiKey,
 } from './config.ts';
 import { GAME_TOOL_DEFS, GameTools, type GameSource } from './game/tools.ts';
+import type { GameViewOptions } from './game/view.ts';
 import { KNOWLEDGE_TOOL_DEFS, KnowledgeService } from './knowledge/index.ts';
 import { ToolError } from './knowledge/util.ts';
 import { JsonlLog } from './log.ts';
@@ -56,6 +57,8 @@ export interface AssistantServiceOptions {
   fetch?: typeof fetch;
   /** per-tool time limit overrides (ms), see TIMEOUTS */
   timeouts?: Record<string, number>;
+  /** game tool output options (eval variants); defaults = production */
+  gameOptions?: GameViewOptions;
 }
 
 export class AssistantService {
@@ -69,7 +72,7 @@ export class AssistantService {
 
   constructor(opts: AssistantServiceOptions) {
     this.paths = opts.paths;
-    this.game = new GameTools(opts.game);
+    this.game = new GameTools(opts.game, opts.gameOptions);
     this.knowledge =
       opts.knowledge ??
       new KnowledgeService({

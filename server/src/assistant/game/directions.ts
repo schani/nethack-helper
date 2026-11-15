@@ -135,3 +135,35 @@ export function mapRegion(x: number, y: number): string {
   if (!h) return `the ${v} part of the map`;
   return `the ${v}-${h} part of the map`;
 }
+
+/** Screen-terms region of the 80x21 map, e.g. "the top-right corner", "the left edge, middle height". */
+export function screenRegion(x: number, y: number): string {
+  const v = y < 7 ? 'top' : y > 13 ? 'bottom' : '';
+  const h = x < 27 ? 'left' : x > 53 ? 'right' : '';
+  if (v && h) return `the ${v}-${h} part of the map`;
+  if (v) return `the ${v} middle of the map`;
+  if (h) return `the ${h} side of the map, middle height`;
+  return 'the middle of the map';
+}
+
+/** distances as a player would say them: exact up to 10, else rounded to 5 */
+const rough = (n: number) => (n <= 10 ? n : Math.round(n / 5) * 5);
+
+/**
+ * Coarse spoken offset for far-away or other-level positions:
+ * "about 55 squares right and 5 up", "3 squares left", "right next to it".
+ */
+export function roughOffset(o: Offset): string {
+  const ax = Math.abs(o.dx);
+  const ay = Math.abs(o.dy);
+  if (!ax && !ay) return 'at the same spot';
+  if (ax <= 1 && ay <= 1) return 'right next to it';
+  const lr = o.dx > 0 ? 'right' : 'left';
+  const ud = o.dy < 0 ? 'up' : 'down';
+  const about = (ax > 10 || ay > 10) ? 'about ' : '';
+  const parts: string[] = [];
+  if (ax) parts.push(`${rough(ax)} square${ax === 1 ? '' : 's'} ${lr}`);
+  // a small vertical part next to a long horizontal one reads as noise: "a little up"
+  if (ay) parts.push(ax > 15 && ay <= 2 ? `a little ${ud}` : ax ? `${rough(ay)} ${ud}` : `${rough(ay)} square${ay === 1 ? '' : 's'} ${ud}`);
+  return about + parts.join(' and ');
+}

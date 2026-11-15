@@ -10,7 +10,7 @@
  * coordinates.
  */
 import type { GameState, InventoryItem, LevelMemory, MapCell } from '../../../../shared/feed-events.ts';
-import { NEIGHBOURS, compass, describeOffset, mapRegion, parseDirection, screenDir, steps, type Offset } from './directions.ts';
+import { NEIGHBOURS, compass, describeOffset, mapRegion, parseDirection, roughOffset, screenDir, screenRegion, steps, type Offset } from './directions.ts';
 
 export interface ScreenText {
   lines: string[];
@@ -21,6 +21,15 @@ export interface GameSnapshotInput {
   running: boolean;
   state: GameState;
   screen: ScreenText;
+}
+
+/** Output-format options (used by eval variants; defaults are the production behaviour). */
+export interface GameViewOptions {
+  /**
+   * Positions on levels the hero is not on: 'landmarks' (default) = screen region + rough offsets from the
+   * staircases where the player arrives; 'region' = map region + exact offset from the up staircase (phase 3).
+   */
+  levelDirections?: 'region' | 'landmarks';
 }
 
 const MAP_COLS = 80;
@@ -41,8 +50,10 @@ export class GameView {
   readonly screen: ScreenText;
   private cellIndex: Map<number, MapCell>;
   private level: LevelMemory | null;
+  readonly opts: GameViewOptions;
 
-  constructor(input: GameSnapshotInput) {
+  constructor(input: GameSnapshotInput, opts: GameViewOptions = {}) {
+    this.opts = opts;
     this.running = input.running;
     this.st = input.state;
     this.screen = input.screen;
@@ -517,8 +528,18 @@ export class GameView {
 
     // notable things with positions
     const up = l.cells.find((c) => /staircase up|ladder up/.test(c.desc));
+    const landmarks = !isCurrent && this.opts.levelDirections !== 'region' ? this.arrivalPoints(l) : null;
     const where = (c: MapCell) => {
       if (isCurrent) return describeOffset(this.offsetOf(c));
+      if (landmarks) {
+        const refs = landmarks
+          .filter((r) => r.cell !== c)
+          .map((r) => {
+            const o = roughOffset({ dx: c.x - r.cell.x, dy: c.y - r.cell.y });
+            return o === 'right next to it' ? `right next to ${r.label}` : `${o} from ${r.label}`;
+          });
+        return [`in ${screenRegion(c.x, c.y)}`, ...refs].join('; ');
+      }
       const parts = [`in ${mapRegion(c.x, c.y)}`];
       if (up && up !== c) parts.push(`${describeOffset({ dx: c.x - up.x, dy: c.y - up.y }).replace(/^adjacent, /, '')} from the up staircase`);
       return parts.join(', ');
@@ -528,12 +549,40 @@ export class GameView {
     const things = notable.filter((c) => !FEATURE.test(c.desc));
     const fmt = (c: MapCell) => `${GameView.cellText(c)}: ${where(c)}`;
     const sections = [head, note, 'Map:', body];
+    if (landmarks?.length) {
+      sections.push(
+        'Positions below are given from the staircases, because that is where the player arrives on this level ' +
+          '(coming down: on its up staircase; coming up: on its down staircase). Speak them that way, e.g. ' +
+          '"from where you arrive coming down, it is about 20 squares to the right and 8 up", and add the screen region.',
+      );
+    }
     const featLines = feats.slice(0, 30).map(fmt);
     const uf = isCurrent ? this.underfoot() : null;
     if (uf) featLines.unshift(`${uf}: under you`);
     sections.push(featLines.length ? `Features:\n${featLines.join('\n')}` : 'Features: none remembered.');
     if (things.length) sections.push(`Objects and monsters as last seen:\n${things.slice(0, 30).map(fmt).join('\n')}${things.length > 30 ? `\n…and ${things.length - 30} more` : ''}`);
     return sections.filter(Boolean).join('\n');
+  }
+
+  /** staircases of a remembered level, most useful arrival point first (relative to where the hero is now) */
+  private arrivalPoints(l: LevelMemory): { cell: MapCell; label: string }[] {
+    const find = (re: RegExp) => l.cells.find((c) => re.test(c.desc));
+    const here = this.level?.info;
+    const there = l.info;
+    const up = find(/^(staircase|ladder) up$/);
+    const down = find(/^(staircase|ladder) down$/);
+    const branch = find(/^branch (staircase|ladder) (up|down)$/);
+    const pts: { cell: MapCell; label: string }[] = [];
+    // coming back from a branch (e.g. the Mines) you arrive on this level's branch staircase
+    if (branch && here && there && here.dnum !== there.dnum) pts.push({ cell: branch, label: `the ${branch.desc} (where you arrive coming back from ${here.dungeon.replace(/^The /, 'the ')})` });
+    const upLabel = 'the up staircase (where you arrive coming down)';
+    const downLabel = 'the down staircase (where you arrive coming up)';
+    const ups = up ? [{ cell: up, label: upLabel }] : branch && /up/.test(branch.desc) && !pts.length ? [{ cell: branch, label: there?.dlevel === 1 ? 'the up staircase (where the game started)' : upLabel }] : [];
+    const downs = down ? [{ cell: down, label: downLabel }] : [];
+    // the hero is deeper: they will come up and arrive on the down staircase
+    const deeper = !!(here && there && here.depth > there.depth);
+    pts.push(...(deeper ? [...downs, ...ups] : [...ups, ...downs]));
+    return pts.slice(0, 2);
   }
 
   // ---------------------------------------------------------------- messages / discoveries

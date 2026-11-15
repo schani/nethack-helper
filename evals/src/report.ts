@@ -1,0 +1,214 @@
+/** Aggregates case runs into summary metrics, writes results JSON + markdown, and compares runs. */
+import type { CaseRun } from './types.ts';
+
+export interface Stat {
+  n: number;
+  median: number | null;
+  p90: number | null;
+  mean: number | null;
+}
+
+export function stat(xs: (number | undefined | null)[]): Stat {
+  const v = xs.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return { n: 0, median: null, p90: null, mean: null };
+  const q = (p: number) => v[Math.min(v.length - 1, Math.floor(p * v.length))];
+  return { n: v.length, median: q(0.5), p90: q(0.9), mean: v.reduce((a, b) => a + b, 0) / v.length };
+}
+
+/** Wilson score interval for k successes out of n */
+export function wilson(k: number, n: number, z = 1.96): [number, number] {
+  if (!n) return [0, 0];
+  const p = k / n;
+  const d = 1 + (z * z) / n;
+  const c = (p + (z * z) / (2 * n)) / d;
+  const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+  return [Math.max(0, c - h), Math.min(1, c + h)];
+}
+
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const judgeScore = (r: CaseRun) => (r.judge ? (r.judge.correctness + r.judge.groundedness + r.judge.spoiler + r.judge.speakability) / 4 : undefined);
+
+export interface Group {
+  runs: number;
+  cases: number;
+  pass: number;
+  passCI: [number, number];
+  /** pass rate of each repetition (spread across reps) */
+  repPass: number[];
+  checks: number;
+  judge: { score: number | null; correctness: number | null; groundedness: number | null; spoiler: number | null; speakability: number | null; pass: number | null };
+  firstText: Stat;
+  firstAudio: Stat;
+  total: Stat;
+  rounds: number | null;
+  toolsPerTurn: number | null;
+  errors: number;
+  flaky: number;
+}
+
+export function group(runs: CaseRun[]): Group {
+  const k = runs.filter((r) => r.pass).length;
+  const reps = [...new Set(runs.map((r) => r.rep))].sort((a, b) => a - b);
+  const turns = runs.flatMap((r) => r.turns);
+  const judged = runs.filter((r) => r.judge);
+  const byCase = new Map<string, CaseRun[]>();
+  for (const r of runs) byCase.set(r.case, [...(byCase.get(r.case) ?? []), r]);
+  return {
+    runs: runs.length,
+    cases: byCase.size,
+    pass: runs.length ? k / runs.length : 0,
+    passCI: wilson(k, runs.length),
+    repPass: reps.map((rep) => {
+      const rs = runs.filter((r) => r.rep === rep);
+      return rs.filter((r) => r.pass).length / rs.length;
+    }),
+    checks: runs.length ? runs.filter((r) => r.checksPass).length / runs.length : 0,
+    judge: {
+      score: mean(judged.map((r) => judgeScore(r)!)),
+      correctness: mean(judged.map((r) => r.judge!.correctness)),
+      groundedness: mean(judged.map((r) => r.judge!.groundedness)),
+      spoiler: mean(judged.map((r) => r.judge!.spoiler)),
+      speakability: mean(judged.map((r) => r.judge!.speakability)),
+      pass: judged.length ? judged.filter((r) => r.judge!.pass).length / judged.length : null,
+    },
+    // latency of the first turn only would hide multi-turn effects; use every turn
+    firstText: stat(turns.map((t) => t.latency.first_text)),
+    firstAudio: stat(turns.map((t) => t.latency.first_audio)),
+    total: stat(turns.map((t) => t.latency.total)),
+    rounds: mean(turns.map((t) => t.rounds)),
+    toolsPerTurn: mean(turns.map((t) => t.tools.length)),
+    errors: runs.filter((r) => r.error).length,
+    flaky: [...byCase.values()].filter((rs) => rs.some((r) => r.pass) && rs.some((r) => !r.pass)).length,
+  };
+}
+
+export interface Summary {
+  id: string;
+  date: string;
+  commit: string;
+  variant: Record<string, unknown>;
+  mode: string;
+  n: number;
+  judgeModel: string | null;
+  overall: Group;
+  tags: Record<string, Group>;
+  cases: Record<string, { tags: string[]; pass: number; judge: number | null; failures: string[]; issues: string[]; answers: string[] }>;
+  tokens: { input: number; cached: number; output: number; audioIn: number; audioOut: number };
+  cost: { realtime: number; judge: number; tts: number; total: number; perCaseRun: number };
+  wallMs: number;
+}
+
+export function summarize(meta: Omit<Summary, 'overall' | 'tags' | 'cases' | 'tokens' | 'cost'>, runs: CaseRun[]): Summary {
+  const tags: Record<string, Group> = {};
+  for (const t of [...new Set(runs.flatMap((r) => r.tags))].sort()) tags[t] = group(runs.filter((r) => r.tags.includes(t)));
+  const cases: Summary['cases'] = {};
+  for (const id of [...new Set(runs.map((r) => r.case))]) {
+    const rs = runs.filter((r) => r.case === id);
+    const failures = new Set<string>();
+    for (const r of rs) {
+      if (r.error) failures.add(`error: ${r.error.split('\n')[0].slice(0, 160)}`);
+      for (const [i, t] of r.turns.entries()) for (const c of t.checks) if (!c.pass) failures.add(`t${i + 1} ${c.name}${c.detail ? ` (${c.detail.slice(0, 120)})` : ''}`);
+      if (r.judge && !r.judge.pass) failures.add(`judge: ${r.judge.rationale.slice(0, 200)}`);
+    }
+    cases[id] = {
+      tags: rs[0].tags,
+      pass: rs.filter((r) => r.pass).length / rs.length,
+      judge: mean(rs.filter((r) => r.judge).map((r) => judgeScore(r)!)),
+      failures: [...failures].slice(0, 8),
+      issues: [...new Set(rs.flatMap((r) => r.judge?.issues ?? []))].slice(0, 6),
+      answers: rs.map((r) => r.turns.map((t) => t.answer).join(' || ').slice(0, 400)),
+    };
+  }
+  const turns = runs.flatMap((r) => r.turns);
+  const sum = (f: (u: any) => number) => turns.reduce((a, t) => a + f(t.usage), 0);
+  const cost = {
+    realtime: runs.reduce((a, r) => a + r.cost.realtime, 0),
+    judge: runs.reduce((a, r) => a + r.cost.judge, 0),
+    tts: runs.reduce((a, r) => a + r.cost.tts, 0),
+    total: 0,
+    perCaseRun: 0,
+  };
+  cost.total = cost.realtime + cost.judge + cost.tts;
+  cost.perCaseRun = runs.length ? cost.total / runs.length : 0;
+  return {
+    ...meta,
+    overall: group(runs),
+    tags,
+    cases,
+    tokens: { input: sum((u) => u.input_tokens), cached: sum((u) => u.cached_text + u.cached_audio), output: sum((u) => u.output_tokens), audioIn: sum((u) => u.input_audio), audioOut: sum((u) => u.output_audio) },
+    cost,
+  };
+}
+
+const pct = (x: number | null | undefined) => (x === null || x === undefined ? '-' : `${Math.round(x * 100)}%`);
+const num = (x: number | null | undefined, d = 2) => (x === null || x === undefined ? '-' : x.toFixed(d));
+const ms = (s: Stat) => (s.median === null ? '-' : `${s.median} / ${s.p90}`);
+
+export function markdown(s: Summary): string {
+  const o = s.overall;
+  const L: string[] = [];
+  L.push(`# Eval run ${s.id}`, '');
+  L.push(`- variant: **${String(s.variant.name)}** (${String(s.variant.description ?? '')})`);
+  L.push(`- config: ${JSON.stringify(Object.fromEntries(Object.entries(s.variant).filter(([k]) => !['name', 'description'].includes(k))))}`);
+  L.push(`- mode ${s.mode}, N=${s.n}, ${o.cases} cases, ${o.runs} case runs, judge ${s.judgeModel ?? 'none'}, commit ${s.commit}, ${s.date}`);
+  L.push('');
+  L.push('| metric | value |', '|---|---|');
+  L.push(`| pass rate | **${pct(o.pass)}** (95% CI ${pct(o.passCI[0])}-${pct(o.passCI[1])}; per rep ${o.repPass.map(pct).join(', ')}) |`);
+  L.push(`| deterministic checks pass | ${pct(o.checks)} |`);
+  L.push(`| judge pass | ${pct(o.judge.pass)} |`);
+  L.push(`| judge score (1-5: correct / grounded / spoiler / speakable) | ${num(o.judge.score)} (${num(o.judge.correctness)} / ${num(o.judge.groundedness)} / ${num(o.judge.spoiler)} / ${num(o.judge.speakability)}) |`);
+  L.push(`| flaky cases (mixed results across reps) | ${o.flaky} |`);
+  L.push(`| first text ms (median / p90) | ${ms(o.firstText)} |`);
+  L.push(`| first audio ms (median / p90) | ${ms(o.firstAudio)} |`);
+  L.push(`| turn total ms (median / p90) | ${ms(o.total)} |`);
+  L.push(`| tool rounds / tools per turn | ${num(o.rounds)} / ${num(o.toolsPerTurn)} |`);
+  L.push(`| tokens in (cached) / out | ${s.tokens.input} (${s.tokens.cached}) / ${s.tokens.output} |`);
+  L.push(`| cost (realtime + judge + tts) | $${s.cost.total.toFixed(3)} ($${s.cost.realtime.toFixed(3)} + $${s.cost.judge.toFixed(3)} + $${s.cost.tts.toFixed(3)}); $${s.cost.perCaseRun.toFixed(4)} per case run |`);
+  L.push(`| errors | ${o.errors} |`);
+  L.push('');
+  L.push('## Per tag', '', '| tag | cases | pass | judge | first text med | rounds |', '|---|---|---|---|---|---|');
+  for (const [t, g] of Object.entries(s.tags)) L.push(`| ${t} | ${g.cases} | ${pct(g.pass)} | ${num(g.judge.score)} | ${g.firstText.median ?? '-'} | ${num(g.rounds)} |`);
+  L.push('', '## Failing / flaky cases', '');
+  for (const [id, c] of Object.entries(s.cases).sort((a, b) => a[1].pass - b[1].pass)) {
+    if (c.pass === 1) continue;
+    L.push(`### ${id} — ${pct(c.pass)} pass, judge ${num(c.judge)} [${c.tags.join(', ')}]`);
+    for (const f of c.failures) L.push(`- ${f}`);
+    L.push(`- answer: ${c.answers[0]}`);
+    L.push('');
+  }
+  return L.join('\n');
+}
+
+export function compareMarkdown(a: Summary, b: Summary): string {
+  const L: string[] = [];
+  const d = (x: number | null, y: number | null, scale = 100, unit = '%', digits = 0) =>
+    x === null || y === null ? '-' : `${y - x >= 0 ? '+' : ''}${((y - x) * scale).toFixed(digits)}${unit}`;
+  L.push(`# ${a.id} (${String(a.variant.name)}) vs ${b.id} (${String(b.variant.name)})`, '');
+  L.push(`| metric | ${String(a.variant.name)} | ${String(b.variant.name)} | delta |`, '|---|---|---|---|');
+  const row = (name: string, x: number | null, y: number | null, fmt: (v: number | null) => string, delta: string) => L.push(`| ${name} | ${fmt(x)} | ${fmt(y)} | ${delta} |`);
+  row('pass rate', a.overall.pass, b.overall.pass, pct, d(a.overall.pass, b.overall.pass));
+  row('checks pass', a.overall.checks, b.overall.checks, pct, d(a.overall.checks, b.overall.checks));
+  row('judge score', a.overall.judge.score, b.overall.judge.score, (v) => num(v), d(a.overall.judge.score, b.overall.judge.score, 1, '', 2));
+  for (const k of ['correctness', 'groundedness', 'spoiler', 'speakability'] as const)
+    row(`  ${k}`, a.overall.judge[k], b.overall.judge[k], (v) => num(v), d(a.overall.judge[k], b.overall.judge[k], 1, '', 2));
+  row('first text median ms', a.overall.firstText.median, b.overall.firstText.median, (v) => String(v ?? '-'), d(a.overall.firstText.median, b.overall.firstText.median, 1, ' ms'));
+  row('first text p90 ms', a.overall.firstText.p90, b.overall.firstText.p90, (v) => String(v ?? '-'), d(a.overall.firstText.p90, b.overall.firstText.p90, 1, ' ms'));
+  row('first audio median ms', a.overall.firstAudio.median, b.overall.firstAudio.median, (v) => String(v ?? '-'), d(a.overall.firstAudio.median, b.overall.firstAudio.median, 1, ' ms'));
+  row('turn total median ms', a.overall.total.median, b.overall.total.median, (v) => String(v ?? '-'), d(a.overall.total.median, b.overall.total.median, 1, ' ms'));
+  row('tool rounds', a.overall.rounds, b.overall.rounds, (v) => num(v), d(a.overall.rounds, b.overall.rounds, 1, '', 2));
+  row('cost per case run $', a.cost.perCaseRun, b.cost.perCaseRun, (v) => num(v, 4), d(a.cost.perCaseRun, b.cost.perCaseRun, 1, '', 4));
+  L.push('', '## Per tag', '', `| tag | ${String(a.variant.name)} | ${String(b.variant.name)} | delta | judge delta |`, '|---|---|---|---|---|');
+  for (const t of [...new Set([...Object.keys(a.tags), ...Object.keys(b.tags)])].sort()) {
+    const x = a.tags[t];
+    const y = b.tags[t];
+    L.push(`| ${t} | ${x ? pct(x.pass) : '-'} | ${y ? pct(y.pass) : '-'} | ${x && y ? d(x.pass, y.pass) : '-'} | ${x && y ? d(x.judge.score, y.judge.score, 1, '', 2) : '-'} |`);
+  }
+  const shared = Object.keys(a.cases).filter((id) => b.cases[id]);
+  const regress = shared.filter((id) => b.cases[id].pass < a.cases[id].pass - 0.01).sort((x, y) => b.cases[x].pass - a.cases[x].pass - (b.cases[y].pass - a.cases[y].pass));
+  const improve = shared.filter((id) => b.cases[id].pass > a.cases[id].pass + 0.01);
+  L.push('', `## Regressions (${regress.length})`, '');
+  for (const id of regress) L.push(`- ${id}: ${pct(a.cases[id].pass)} -> ${pct(b.cases[id].pass)}; ${b.cases[id].failures.slice(0, 2).join(' / ')}`);
+  L.push('', `## Improvements (${improve.length})`, '');
+  for (const id of improve) L.push(`- ${id}: ${pct(a.cases[id].pass)} -> ${pct(b.cases[id].pass)}`);
+  return L.join('\n');
+}

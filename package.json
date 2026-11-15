@@ -11,12 +11,17 @@
     "build": "npm run typecheck -w server && npm run build -w web",
     "start": "npm start -w server",
     "dev:web": "npm run dev -w web",
-    "test": "npm test -w server && npm test -w web",
+    "test": "npm test -w server && npm test -w web && npm run test:evals",
     "smoke": "npm run smoke -w server",
     "test:net": "npm run test:net -w server",
     "e2e:assistant": "node scripts/assistant-e2e/run.ts",
     "e2e:scenario": "node scripts/assistant-e2e/scenario.ts",
-    "setup:nethack-src": "bash scripts/setup-nethack-src.sh"
+    "setup:nethack-src": "bash scripts/setup-nethack-src.sh",
+    "eval": "node evals/src/cli.ts",
+    "eval:compare": "node evals/src/cli.ts compare",
+    "eval:capture": "node evals/fixtures/capture.ts",
+    "test:evals": "vitest run --root evals test",
+    "typecheck:evals": "tsc -p evals/tsconfig.json"
   },
   "engines": {
     "node": ">=24"

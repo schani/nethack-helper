@@ -5,8 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import { GameStateStore } from '../../src/feed/state.ts';
 import { GameTools } from '../../src/assistant/game/tools.ts';
-import { GameView } from '../../src/assistant/game/view.ts';
-import { describeOffset, mapRegion, parseDirection } from '../../src/assistant/game/directions.ts';
+import { GameView, type GameViewOptions } from '../../src/assistant/game/view.ts';
+import { describeOffset, mapRegion, parseDirection, roughOffset, screenRegion } from '../../src/assistant/game/directions.ts';
 import type { FeedEvent, MapCell } from '../../../shared/feed-events.ts';
 
 let seq = 0;
@@ -77,8 +77,8 @@ function makeStore() {
 }
 
 const screen = { lines: ['You feel somewhat dizzy.', '', ' -----------', 'Tester the Evoker  St:9', 'Dlvl:2 $:14 HP:7(12)'] };
-function tools(store = makeStore(), running = true) {
-  return new GameTools({ running, state: (o) => store.snapshot(o), screen: () => screen });
+function tools(opts: GameViewOptions = {}, store = makeStore(), running = true) {
+  return new GameTools({ running, state: (o) => store.snapshot(o), screen: () => screen }, opts);
 }
 
 describe('directions', () => {
@@ -104,6 +104,18 @@ describe('directions', () => {
     expect(mapRegion(5, 2)).toBe('the north-west part of the map');
     expect(mapRegion(40, 10)).toBe('the middle of the map');
     expect(mapRegion(70, 10)).toBe('the east side of the map');
+    expect(screenRegion(66, 1)).toBe('the top-right part of the map');
+    expect(screenRegion(40, 18)).toBe('the bottom middle of the map');
+    expect(screenRegion(5, 10)).toBe('the left side of the map, middle height');
+  });
+
+  it('phrases far offsets roughly, the way a player would say them', () => {
+    expect(roughOffset({ dx: 53, dy: -7 })).toBe('about 55 squares right and 7 up');
+    expect(roughOffset({ dx: -38, dy: -11 })).toBe('about 40 squares left and 10 up');
+    expect(roughOffset({ dx: 40, dy: 1 })).toBe('about 40 squares right and a little down');
+    expect(roughOffset({ dx: 3, dy: 0 })).toBe('3 squares right');
+    expect(roughOffset({ dx: 0, dy: -12 })).toBe('about 10 squares up');
+    expect(roughOffset({ dx: 1, dy: -1 })).toBe('right next to it');
   });
 });
 
@@ -182,10 +194,10 @@ describe('status, screen, inventory, messages', () => {
   it('get_status shows yes/no prompts and menus with their letters', () => {
     const store = makeStore();
     store.apply(ev({ t: 'input', kind: 'yn', prompt: 'Really attack the kitten?', choices: 'yn', default: 'n', turn: 321 }));
-    expect(tools(store).run('get_status', {})).toContain('An answer to the question "Really attack the kitten?" (choices: y, n; default n).');
+    expect(tools({}, store).run('get_status', {})).toContain('An answer to the question "Really attack the kitten?" (choices: y, n; default n).');
     store.apply(ev({ t: 'menu', win: 5, how: 'one', prompt: 'What do you want to eat?', items: [{ text: 'a food ration', ch: 'd', selectable: true }, { text: 'Comestibles', selectable: false }] }));
     store.apply(ev({ t: 'input', kind: 'menu', turn: 321 }));
-    const out = tools(store).run('get_status', {});
+    const out = tools({}, store).run('get_status', {});
     expect(out).toContain('A menu to pick one item from titled "What do you want to eat?"');
     expect(out).toContain('  d - a food ration');
   });
@@ -194,7 +206,7 @@ describe('status, screen, inventory, messages', () => {
     const store = makeStore();
     store.apply(ev({ t: 'text', win: 4, kind: 'text', lines: ['Voluntary challenges:', 'You have never hit with a wielded weapon.'] }));
     store.apply(ev({ t: 'input', kind: 'dismiss', turn: 321 }));
-    expect(tools(store).run('get_status', {})).toContain('  You have never hit with a wielded weapon.');
+    expect(tools({}, store).run('get_status', {})).toContain('  You have never hit with a wielded weapon.');
   });
 
   it('get_screen has the screen text and a legend of every symbol', () => {
@@ -234,13 +246,25 @@ describe('levels', () => {
     expect(out).toContain('      An altar.');
   });
 
-  it('get_level_map for another level uses regions and the up staircase, not the hero', () => {
+  it('get_level_map for another level speaks from the arrival staircases, not the hero', () => {
     const out = t.run('get_level_map', { level: '1' });
     expect(out).toContain('remembered map');
-    expect(out).toContain('_ chaotic altar: in the north-east part of the map, 40 east and 11 north (40 right, 11 up) from the up staircase');
+    // the hero is deeper (Dlvl 2): coming back up they arrive on level 1's down staircase, so that reference comes first
+    expect(out).toContain(
+      '_ chaotic altar: in the top-right part of the map; about 20 squares right and 6 up from the down staircase (where you arrive coming up); ' +
+        'about 40 squares right and 10 up from the up staircase (where you arrive coming down)',
+    );
+    expect(out).toContain('Positions below are given from the staircases');
     // the down stairs the hero left from are remembered, not the hero
-    expect(out).toContain('> staircase down: in the middle of the map');
+    expect(out).toContain('> staircase down: in the middle of the map; about 20 squares right and 5 up from the up staircase');
     expect(out).not.toContain('@');
+  });
+
+  it('get_level_map can still use the phase-3 region format', () => {
+    const old = tools({ levelDirections: 'region' });
+    const out = old.run('get_level_map', { level: '1' });
+    expect(out).toContain('_ chaotic altar: in the north-east part of the map, 40 east and 11 north (40 right, 11 up) from the up staircase');
+    expect(out).toContain('> staircase down: in the middle of the map');
   });
 
   it('get_level_map for the current level is hero-relative', () => {
@@ -262,7 +286,7 @@ describe('availability and live context', () => {
     const store = makeStore();
     store.session.state = 'exited';
     store.session.exitCode = 0;
-    const t = tools(store, false);
+    const t = tools({}, store, false);
     for (const name of ['get_status', 'get_screen', 'look', 'get_inventory']) {
       expect(t.run(name, { target: 'f' })).toMatch(/^The game is not running right now/);
     }

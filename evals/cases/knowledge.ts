@@ -1,0 +1,101 @@
+/** NetHack knowledge: stable mechanics (answer from memory, briefly) and 5.0-specific changes (check sources). */
+import type { EvalCase } from '../src/types.ts';
+
+const KNOWLEDGE_TOOLS = ['fetch_wiki_page', 'search_nethack_source', 'web_search', 'read_nethack_source'];
+
+export const cases: EvalCase[] = [
+  {
+    id: 'know-lichen',
+    tags: ['knowledge', 'concise'],
+    fixture: 'start-pet-adjacent',
+    audio: true,
+    turns: [{ user: 'Is it safe to eat a lichen corpse?', expect: { mustAny: [/yes|safe/i], maxWords: 45 } }],
+    truth: 'Yes: lichen corpses are safe and never rot (they never become tainted), so they are good emergency food.',
+    rubric: 'Simple stable knowledge: should answer directly and briefly; tool use is unnecessary but not wrong.',
+  },
+  {
+    id: 'know-floating-eye',
+    tags: ['knowledge', 'concise'],
+    fixture: 'start-pet-adjacent',
+    turns: [{ user: 'Can I just hit a floating eye with my staff?', expect: { mustAny: [/paraly/i], maxWords: 60 } }],
+    truth: 'Do not melee a floating eye: its passive gaze paralyzes you for a long time (often fatal) unless you are blind, have free action (only a brief stiffening) or reflection. Kill it from range (force bolt works) or leave it alone. Eating its corpse grants telepathy.',
+    rubric: 'Core advice: never melee it (paralysis); use force bolt / ranged or be blind. Do not penalize omitting details.',
+  },
+  {
+    id: 'know-cockatrice-corpse',
+    tags: ['knowledge', 'concise'],
+    fixture: 'not-running',
+    turns: [{ user: 'What happens if I eat a cockatrice corpse?', expect: { mustAny: [/ston|petrif|stone/i], maxWords: 60 } }],
+    truth: 'You turn to stone (die) unless you cure it (e.g. eat a lizard corpse or acidic corpse, or pray / quaff acid) — basically never eat it. Also touching it barehanded petrifies you.',
+  },
+  {
+    id: 'know-pray-how',
+    tags: ['knowledge', 'spoiler', 'concise'],
+    fixture: 'start-pet-adjacent',
+    turns: [{ user: 'How do I pray?', expect: { mustAny: [/#\s*pray|pound pray|hash pray|# (then|and) type pray|extended command[^.]*pray|alt\s*[-+]\s*p|meta\s*[-+]\s*p|M-p/i], mustNot: [/spoiler/i], maxWords: 70 } }],
+    truth: 'Use the #pray extended command (or Alt/Meta-p). Praying works roughly once every ~1000 turns and only when you are in trouble; too soon angers your god. Not a spoiler.',
+    rubric: 'Controls are not spoilers: an unnecessary spoiler warning is a minor issue (spoiler 4). Exact prayer timeout numbers unprompted would be a spoiler.',
+  },
+  {
+    id: 'v5-new-monsters',
+    tags: ['knowledge', 'v5'],
+    fixture: 'not-running',
+    turns: [{ user: 'What new monsters were added in 5.0?', expect: { mustAny: [/genetic engineer/i], must: [/displacer/i, /gold dragon/i], maxWords: 80 } }],
+    truth: 'New monsters in 5.0 (from 3.6): displacer beast (f), genetic engineer (Q), gold dragon and baby gold dragon (D).',
+  },
+  {
+    id: 'v5-genetic-engineer',
+    tags: ['knowledge', 'v5'],
+    fixture: 'start-pet-adjacent',
+    audio: true,
+    turns: [{ user: 'What does a genetic engineer do?', expect: { tools: { any: KNOWLEDGE_TOOLS }, mustAny: [/polymorph/i], maxWords: 80 } }],
+    truth: 'Genetic engineer: new in 5.0, a Q (like the quantum mechanic), level 12; its claw hit (1d4) polymorphs you; it can teleport; poison resistant, eating its corpse is poisonous / may polymorph.',
+  },
+  {
+    id: 'v5-valkyrie-spear',
+    tags: ['knowledge', 'v5'],
+    fixture: 'unid-items',
+    turns: [{ user: "Why am I holding a spear? I thought Valkyries start with a long sword.", expect: { tools: { any: [...KNOWLEDGE_TOOLS, 'get_inventory'] }, mustAny: [/5\.0|five|changed|new version|3\.7/i], maxWords: 80 } }],
+    truth: 'In NetHack 5.0 Valkyries start with a spear instead of a long sword (doc/fixes5-0-0.txt: "valkyries start with a spear instead of a long sword"). The hero wields a blessed +1 spear.',
+    rubric: 'Must confirm the 5.0 change; claiming it is a bug, a cursed swap, or random is wrong.',
+  },
+  {
+    id: 'v5-new-amulets',
+    tags: ['knowledge', 'v5'],
+    fixture: 'not-running',
+    turns: [{ user: 'Are there any new amulets in 5.0?', expect: { tools: { any: KNOWLEDGE_TOOLS }, must: [/flying/i, /guarding/i], maxWords: 80 } }],
+    truth: 'Yes: amulet of flying and amulet of guarding are new object types in 5.0 (also new: helm of caution, gold dragon scales/scale mail).',
+  },
+  {
+    id: 'v5-elbereth-changed',
+    tags: ['knowledge', 'v5', 'hallucination'],
+    fixture: 'not-running',
+    turns: [{ user: 'Did Elbereth change in 5.0?', expect: { tools: { any: KNOWLEDGE_TOOLS }, maxWords: 90 } }],
+    truth: 'No major change in 5.0 compared to 3.6 (the big nerf — it erases when you attack while standing on it, and @ and minotaurs ignore it — was in 3.6.0). The 5.0 changelog only has minor fixes (e.g. Sokoban prize guarding, monster placement avoiding Elbereth squares).',
+    rubric: 'Inventing a major 5.0 Elbereth change is a groundedness failure. "No big change; minor fixes" is correct.',
+  },
+  {
+    id: 'v5-excalibur-valk',
+    tags: ['knowledge', 'v5', 'spoiler'],
+    fixture: 'unid-items',
+    turns: [{ user: 'Can I get Excalibur with this character?', expect: { maxWords: 100 } }],
+    truth: 'Excalibur: dip a long sword into a fountain at experience level 5 or higher; only lawful characters get it (non-lawful: the sword gets cursed). This hero is a NEUTRAL Valkyrie and in 5.0 Valkyries start with a spear, not a long sword. So no (not without changing alignment, which is impractical).',
+    rubric: 'Excalibur via fountain dipping is widely known and not a hard spoiler. Pass requires saying the neutral alignment prevents it. Telling a neutral Valkyrie to just dip her long sword is wrong.',
+  },
+  {
+    id: 'know-news-patch',
+    tags: ['knowledge', 'web'],
+    fixture: 'not-running',
+    turns: [{ user: 'Has there been a patch release since 5.0.0 came out?', expect: { tools: { any: ['web_search'] }, maxWords: 80 } }],
+    truth: 'Time-sensitive: must come from web_search; the answer must match what the search result says (the judge checks against the tool output).',
+    rubric: 'Grade groundedness against the web_search result in the transcript. Answering from memory without searching is a failure.',
+  },
+  {
+    id: 'know-sokoban-rules',
+    tags: ['knowledge', 'spoiler'],
+    fixture: 'sokoban-arrival',
+    turns: [{ user: "What are the rules here? I've never done Sokoban.", expect: { mustNot: [/first,? push|push (it|the boulder) (up|down|left|right|north|south|east|west) (once|twice|\d)/i], maxWords: 100 } }],
+    truth: 'Sokoban basics (not spoilers): push boulders into the holes/pits to cross; boulders cannot be pushed diagonally; breaking boulders, squeezing past, reading earth etc. gives a luck penalty; the prize is at the top level. The level solution is a spoiler.',
+    rubric: 'Explaining the rules is fine without warning; giving the actual solution moves unprompted is a spoiler failure.',
+  },
+];

@@ -93,6 +93,7 @@ export class GameDriver {
       target ??= cells.find((c) => want.test(c.desc)) ?? (st.underfoot && want.test(st.underfoot.desc) ? st.underfoot : undefined);
       if (!target) throw new Error(`nothing matching ${re} on the map`);
       if (target.x === hero.x && target.y === hero.y) return;
+      const tgt = target;
       const hostile = cells.find(
         (c) => /^[A-Za-z]$/.test(c.ch) && !/tame|peaceful/.test(c.desc) && Math.max(Math.abs(c.x - hero.x), Math.abs(c.y - hero.y)) === 1,
       );
@@ -105,7 +106,7 @@ export class GameDriver {
       const boulder =
         stuck &&
         cells.find(
-          (c) => c.desc === 'boulder' && Math.abs(c.x - hero.x) + Math.abs(c.y - hero.y) === 1 && Math.sign(target.x - hero.x) === c.x - hero.x && (c.y === hero.y || Math.sign(target.y - hero.y) === c.y - hero.y),
+          (c) => c.desc === 'boulder' && Math.abs(c.x - hero.x) + Math.abs(c.y - hero.y) === 1 && Math.sign(tgt.x - hero.x) === c.x - hero.x && (c.y === hero.y || Math.sign(tgt.y - hero.y) === c.y - hero.y),
         );
       if (boulder) {
         const blocked = /cannot move it|in vain|won't fit|there's no room/i.test(st.messages.slice(-3).map((m) => m.text).join(' '));
