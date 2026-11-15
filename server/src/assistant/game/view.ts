@@ -129,6 +129,14 @@ export class GameView {
     return `${u.ch && u.ch !== ' ' ? u.ch + ' ' : ''}${u.desc}`;
   }
 
+  /** Objects the game last listed on the hero's square (the map shows only the top one). */
+  pileHere(): string | null {
+    const p = this.st.pile;
+    const h = this.st.hero;
+    if (!p || !h || p.x !== h.x || p.y !== h.y || p.level !== this.st.currentLevel || !p.items.length) return null;
+    return p.items.join('; ');
+  }
+
   // ---------------------------------------------------------------- status
 
   private statusLines(): string[] {
@@ -159,6 +167,8 @@ export class GameView {
     if (f.score) out.push(`Score: ${f.score}.`);
     const uf = this.underfoot();
     if (uf) out.push(`Standing on: ${uf}.`);
+    const pile = this.pileHere();
+    if (pile) out.push(`Objects here (as the game last listed them): ${pile}.`);
     return out;
   }
 
@@ -187,17 +197,19 @@ export class GameView {
         if (!m) return 'A menu selection.';
         const how = m.how === 'none' ? 'a list to read (no selection)' : m.how === 'one' ? 'a menu to pick one item from' : 'a menu to pick items from';
         let s = `${how}${m.prompt ? ` titled "${m.prompt}"` : ''}${m.pages && m.pages > 1 ? `, ${m.pages} pages` : ''}.`;
-        if (detail) {
-          const items = m.items.slice(0, 60).map((it) => (it.ch && it.selectable ? `  ${it.ch} - ${it.text}${it.selected ? ' (selected)' : ''}` : `  ${it.text}`));
-          s += `\nMenu contents:\n${items.join('\n')}${m.items.length > 60 ? `\n  …and ${m.items.length - 60} more lines` : ''}`;
+        {
+          const max = detail ? 60 : 15;
+          const items = m.items.slice(0, max).map((it) => (it.ch && it.selectable ? `  ${it.ch} - ${it.text}${it.selected ? ' (selected)' : ''}` : `  ${it.text}`));
+          s += `\nMenu contents:\n${items.join('\n')}${m.items.length > max ? `\n  …and ${m.items.length - max} more lines` : ''}`;
         }
         return s.charAt(0).toUpperCase() + s.slice(1);
       }
       case 'dismiss': {
         const t = st.lastText;
         let s = 'The player to dismiss a text window (Enter or Esc).';
-        if (detail && t?.lines.length) {
-          s += `\nText window contents:\n${t.lines.slice(0, 60).map((l) => `  ${l}`).join('\n')}${t.lines.length > 60 ? `\n  …and ${t.lines.length - 60} more lines` : ''}`;
+        const max = detail ? 60 : 12;
+        if (t?.lines.length) {
+          s += `\nText window contents:\n${t.lines.slice(0, max).map((l) => `  ${l}`).join('\n')}${t.lines.length > max ? `\n  …and ${t.lines.length - max} more lines` : ''}`;
         }
         return s;
       }
@@ -301,6 +313,8 @@ export class GameView {
     const hero = this.cell(this.hero().x, this.hero().y);
     const parts = [`You are ${hero?.desc ? `the @ (${hero.desc})` : 'the @'}.`];
     parts.push(uf ? `Under you the map remembers: ${uf}.` : 'Nothing special is remembered under you (or it is plain floor).');
+    const pile = this.pileHere();
+    if (pile) parts.push(`Objects here, as the game last listed them (the map shows only the top one): ${pile}.`);
     const msgs = this.recentMessages(4).filter((m) => /here|you see|there is|there are|you are standing|underfoot/i.test(m));
     if (msgs.length) parts.push(`Recent messages about this square: ${msgs.map((m) => `"${m}"`).join(' ')}`);
     return parts.join(' ');
@@ -630,6 +644,8 @@ export class GameView {
     if (this.level && st.hero) {
       const uf = this.underfoot();
       if (uf) parts.push(`Standing on: ${uf}.`);
+      const pile = this.pileHere();
+      if (pile) parts.push(`Objects here: ${pile}.`);
       const near = this.level.cells
         .filter((c) => !this.isHero(c) && !BORING.test(c.desc) && steps(this.offsetOf(c)) <= 6)
         .sort((a, b) => steps(this.offsetOf(a)) - steps(this.offsetOf(b)))

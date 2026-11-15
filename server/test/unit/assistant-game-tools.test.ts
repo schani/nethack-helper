@@ -327,3 +327,34 @@ describe('identification hints (from the visible item name only)', () => {
     expect(tools().run('get_inventory', {})).toContain('p - a murky potion  [type not identified: only its appearance is known]');
   });
 });
+
+describe('objects piled under the hero', () => {
+  function pileStore() {
+    const store = makeStore();
+    store.apply(ev({ t: 'text', win: 5, kind: 'menu_text', lines: ['Things that are here:', 'a lichen corpse', 'a scroll labeled VAS CORP BET MANI'] }));
+    store.apply(ev({ t: 'input', kind: 'dismiss', turn: 321, ux: 10, uy: 10 }));
+    return store;
+  }
+
+  it('lists every object the game showed, not just the top one', () => {
+    const t = tools({}, pileStore());
+    const here = t.run('look', { target: 'here' });
+    expect(here).toContain('a lichen corpse; a scroll labeled VAS CORP BET MANI');
+    expect(t.run('get_status', {})).toContain('Objects here (as the game last listed them): a lichen corpse; a scroll labeled VAS CORP BET MANI.');
+  });
+
+  it('puts an open text window into the live snapshot', () => {
+    const snap = tools({}, pileStore()).snapshot().text;
+    expect(snap).toContain('Text window contents:');
+    expect(snap).toContain('a scroll labeled VAS CORP BET MANI');
+  });
+
+  it('forgets the listing after picking something up or moving away', () => {
+    const picked = pileStore();
+    picked.apply(ev({ t: 'inventory', items: [] }));
+    expect(tools({}, picked).run('look', { target: 'here' })).not.toContain('VAS CORP');
+    const moved = pileStore();
+    moved.apply(ev({ t: 'input', kind: 'command', turn: 322, ux: 11, uy: 10 }));
+    expect(tools({}, moved).run('look', { target: 'here' })).not.toContain('VAS CORP');
+  });
+});

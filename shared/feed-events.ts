@@ -420,6 +420,8 @@ export interface GameState {
   overview: string[] | null;
   /** remembered map feature/object under the hero (null: unknown) */
   underfoot: Omit<UnderfootEvent, 't' | 'seq'> | null;
+  /** objects last listed at a spot ("Things that are here" / "You see here") */
+  pile: { level: string; x: number; y: number; turn: number; items: string[] } | null;
 }
 
 export interface SessionInfo {

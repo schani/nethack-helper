@@ -96,6 +96,7 @@ export class GameStateStore {
   private discoveries: string[] | null = null;
   private overview: string[] | null = null;
   private underfoot: GameState['underfoot'] = null;
+  private pile: GameState['pile'] = null;
   private game: GameIdentity | null = null;
   private memoryRestored = false;
   /** bumped on every change; lets callers cheaply detect updates */
@@ -125,6 +126,7 @@ export class GameStateStore {
     this.discoveries = null;
     this.overview = null;
     this.underfoot = null;
+    this.pile = null;
     this.processMessages = 0;
     this.version++;
   }
@@ -272,9 +274,15 @@ export class GameStateStore {
       case 'msg':
         this.pushMessage({ seq: ev.seq, turn: ev.turn, text: ev.text, ...(ev.source ? { source: ev.source } : {}) });
         this.memoryVersion++;
+        {
+          const m = /^You (?:see|feel) here (.+?)\.?$/.exec(ev.text.trim());
+          if (m) this.setPile([m[1]]);
+        }
         break;
       case 'inventory':
         this.inventory = ev.items;
+        // picking up / dropping changes what lies here; the old listing is stale
+        this.pile = null;
         break;
       case 'input': {
         const { t: _t, ...rest } = ev;
@@ -296,6 +304,7 @@ export class GameStateStore {
       case 'text': {
         const { t: _t, ...rest } = ev;
         this.lastText = rest;
+        if (/^Things that (?:are|you feel) here:/.test(ev.lines[0] ?? '')) this.setPile(ev.lines.slice(1).filter((l) => l.trim()));
         break;
       }
       case 'display_file':
@@ -318,6 +327,11 @@ export class GameStateStore {
         break;
       }
     }
+  }
+
+  private setPile(items: string[]) {
+    if (!this.hero || !this.currentLevel) return;
+    this.pile = { level: this.currentLevel, x: this.hero.x, y: this.hero.y, turn: this.turn, items };
   }
 
   /**
@@ -408,6 +422,7 @@ export class GameStateStore {
       discoveries: this.discoveries,
       overview: this.overview,
       underfoot: this.underfoot,
+      pile: this.pile,
     };
   }
 }
