@@ -1,7 +1,7 @@
 /** NetHack knowledge: stable mechanics (answer from memory, briefly) and 5.0-specific changes (check sources). */
 import type { EvalCase } from '../src/types.ts';
 
-const KNOWLEDGE_TOOLS = ['fetch_wiki_page', 'search_nethack_source', 'web_search', 'read_nethack_source'];
+const KNOWLEDGE_TOOLS = ['fetch_wiki_page', 'search_nethack_source', 'web_search', 'read_nethack_source', 'nethack_lookup'];
 
 export const cases: EvalCase[] = [
   {
@@ -33,7 +33,7 @@ export const cases: EvalCase[] = [
     tags: ['knowledge', 'spoiler', 'concise'],
     fixture: 'start-pet-adjacent',
     turns: [{ user: 'How do I pray?', expect: { mustAny: [/#\s*pray|pound pray|hash pray|# (then|and) type pray|extended command[^.]*pray|alt\s*[-+]\s*p|meta\s*[-+]\s*p|M-p/i], mustNot: [/spoiler/i], maxWords: 70 } }],
-    truth: 'Use the #pray extended command (or Alt/Meta-p). Praying works roughly once every ~1000 turns and only when you are in trouble; too soon angers your god. Not a spoiler.',
+    truth: 'Use the #pray extended command (or Alt/Meta-p). Praying only helps when you are in trouble and your prayer timeout is low enough; a safe rule of thumb is about once every 1000 turns (the timeout after a prayer is random, typically a few hundred turns); too soon angers your god. Not a spoiler.',
     rubric: 'Controls are not spoilers: an unnecessary spoiler warning is a minor issue (spoiler 4). Exact prayer timeout numbers unprompted would be a spoiler.',
   },
   {
@@ -49,14 +49,14 @@ export const cases: EvalCase[] = [
     fixture: 'start-pet-adjacent',
     audio: true,
     turns: [{ user: 'What does a genetic engineer do?', expect: { tools: { any: KNOWLEDGE_TOOLS }, mustAny: [/polymorph/i], maxWords: 80 } }],
-    truth: 'Genetic engineer: new in 5.0, a Q (like the quantum mechanic), level 12; its claw hit (1d4) polymorphs you; it can teleport; poison resistant, eating its corpse is poisonous / may polymorph.',
+    truth: 'Genetic engineer (include/monsters.h): new in 5.0, a Q (like the quantum mechanic), level 12, speed 12, AC 3; its claw hit (1d4) polymorphs you (magic resistance blocks it, unchanging prevents the change) or a monster; it can teleport, and it teleports away after polymorphing someone (doc/fixes5-0-0.txt: "\'port away after polymorphing someone so that they don\'t just repeat that"; src/mhitm.c mon_poly). Poison resistant; its corpse is poisonous and eating it polymorphs you.',
   },
   {
     id: 'v5-valkyrie-spear',
     tags: ['knowledge', 'v5'],
     fixture: 'unid-items',
-    turns: [{ user: "Why am I holding a spear? I thought Valkyries start with a long sword.", expect: { tools: { any: [...KNOWLEDGE_TOOLS, 'get_inventory'] }, mustAny: [/5\.0|five|changed|new version|3\.7/i], maxWords: 80 } }],
-    truth: 'In NetHack 5.0 Valkyries start with a spear instead of a long sword (doc/fixes5-0-0.txt: "valkyries start with a spear instead of a long sword"). The hero wields a blessed +1 spear.',
+    turns: [{ user: "Why am I holding a spear? I thought Valkyries start with a long sword.", expect: { tools: { any: [...KNOWLEDGE_TOOLS, 'get_inventory'] }, mustAny: [/5\.0|five|changed|change|new version|newer version|3\.7|current|nowadays|now start|no longer|used to/i], maxWords: 80 } }],
+    truth: 'In NetHack 5.0 Valkyries start with a spear instead of a long sword (doc/fixes5-0-0.txt: "valkyries start with a spear instead of a long sword"; src/u_init.c Valkyrie[]: +1 spear, +0 dagger, +3 small shield, food ration). The hero wields a blessed +1 spear.',
     rubric: 'Must confirm the 5.0 change; claiming it is a bug, a cursed swap, or random is wrong.',
   },
   {
@@ -71,15 +71,15 @@ export const cases: EvalCase[] = [
     tags: ['knowledge', 'v5', 'hallucination'],
     fixture: 'not-running',
     turns: [{ user: 'Did Elbereth change in 5.0?', expect: { tools: { any: KNOWLEDGE_TOOLS }, maxWords: 90 } }],
-    truth: 'No major change in 5.0 compared to 3.6 (the big nerf — it erases when you attack while standing on it, and @ and minotaurs ignore it — was in 3.6.0). The 5.0 changelog only has minor fixes (e.g. Sokoban prize guarding, monster placement avoiding Elbereth squares).',
-    rubric: 'Inventing a major 5.0 Elbereth change is a groundedness failure. "No big change; minor fixes" is correct.',
+    truth: 'No major change in 5.0 compared to 3.6 (the big nerf — it erases when you attack while standing on it, and @ and minotaurs ignore it — was in 3.6.0). Small 5.0 changes: unique monsters now ignore it too (src/monmove.c onscary(): humans and uniques resist magical scaring; doc/fixes5-0-0.txt "tone down scare monster by excluding humans and uniques"), new monsters avoid being created on Elbereth squares, and minor fixes (e.g. Sokoban prize guarding).',
+    rubric: 'Inventing a major 5.0 Elbereth change is a groundedness failure. "No big change; minor changes such as uniques ignoring it" is correct; mentioning that uniques now ignore it is correct, not an invention.',
   },
   {
     id: 'v5-excalibur-valk',
     tags: ['knowledge', 'v5', 'spoiler'],
     fixture: 'unid-items',
     turns: [{ user: 'Can I get Excalibur with this character?', expect: { maxWords: 100 } }],
-    truth: 'Excalibur: dip a long sword into a fountain at experience level 5 or higher; only lawful characters get it (non-lawful: the sword gets cursed). This hero is a NEUTRAL Valkyrie and in 5.0 Valkyries start with a spear, not a long sword. So no (not without changing alignment, which is impractical).',
+    truth: 'Excalibur: dip a long sword into a fountain at experience level 5 or higher (a 1 in 30 chance per dip, 1 in 6 for Knights); only lawful characters get it (non-lawful: the sword gets cursed and the fountain disappears; src/fountain.c dipfountain()). This hero is a NEUTRAL Valkyrie and in 5.0 Valkyries start with a spear, not a long sword. So no (not without changing alignment, which is impractical).',
     rubric: 'Excalibur via fountain dipping is widely known and not a hard spoiler. Pass requires saying the neutral alignment prevents it. Telling a neutral Valkyrie to just dip her long sword is wrong.',
   },
   {

@@ -16,6 +16,11 @@ export interface Expect {
     first?: string[];
     /** no tool calls at all */
     noTools?: boolean;
+    /**
+     * `any` / `all` also pass without the tool call when the live-state snapshot the assistant was given matches
+     * this regex (the fact was already in its context, so answering from the snapshot is grounded).
+     */
+    orSnapshot?: RegExp;
   };
   /** regexes that must all match the answer */
   must?: RegExp[];
@@ -53,7 +58,7 @@ export interface EvalCase {
   audio?: boolean;
   /** fault injection */
   faults?: {
-    /** per-tool time limits (ms), e.g. { fetch_wiki_page: 1 } forces a timeout */
+    /** per-tool time limits (ms), e.g. { fetch_wiki_page: 1 } forces a timeout (<= 1 ms: fails without running the tool) */
     timeouts?: Record<string, number>;
     /** game state reads throw this error (game tools fail) */
     gameError?: string;
@@ -80,6 +85,10 @@ export interface Variant {
   game?: Json;
   /** 'none': no live-context snapshots */
   snapshot?: 'default' | 'none';
+  /** 'v2': the frozen v2 knowledge tools (plain-text wiki, smart-case source search, no changelog; evals/src/legacy) */
+  knowledge?: 'current' | 'v2';
+  /** tools left out of the session (e.g. nethack_lookup for ablations) */
+  disableTools?: string[];
 }
 
 export interface CheckResult {

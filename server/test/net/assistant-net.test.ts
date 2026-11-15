@@ -25,7 +25,13 @@ describe('wiki tool', { timeout: 30_000 }, () => {
     const r = await runTool('fetch_wiki_page', { title: 'Genetic engineer' });
     expect(r).toMatch(/^Wiki: Genetic engineer/);
     expect(r).toMatch(/monster infobox/);
-    expect(r.length).toBeLessThan(5200);
+    expect(r.length).toBeLessThan(9000);
+    expect(r).toMatch(/NetHack 5\.0 changelog[\s\S]*'port away after polymorphing/);
+  });
+  it('renders tables as pipe rows', async () => {
+    const r = await runTool('fetch_wiki_page', { title: 'Fountain', section: 'Quaffing' });
+    expect(r).toMatch(/Probability \| Message \| Effect/);
+    expect(r).toMatch(/water moccasin/);
   });
   it('approximate title resolves to the closest page in one call', async () => {
     const r = await runTool('fetch_wiki_page', { title: 'genetic enginer' });

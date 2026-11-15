@@ -41,6 +41,14 @@ describe('gradeTurn', () => {
     expect(failed(gradeTurn(turn('ok'), { tools: { first: ['look'] } }))).toEqual(['first call is look']);
   });
 
+  it('tools.orSnapshot accepts an answer grounded in the live-state snapshot', () => {
+    const e = { tools: { any: ['get_status'], orSnapshot: /AC 9\b/ } };
+    expect(failed(gradeTurn(turn('Your AC is 9.'), e, 'HP 11/11, Pw 9/9, AC 9, not hungry'))).toEqual([]);
+    expect(failed(gradeTurn(turn('Your AC is 9.'), e, 'HP 11/11, AC 6'))).toEqual(['calls one of get_status']);
+    expect(failed(gradeTurn(turn('Your AC is 9.'), e))).toEqual(['calls one of get_status']);
+    expect(failed(gradeTurn(turn('Your AC is 9.', ['get_status']), e))).toEqual([]);
+  });
+
   it('applies must / mustAny / mustNot regexes', () => {
     const t = turn("I can't tell what the fizzy potion is.");
     expect(failed(gradeTurn(t, { must: [/fizzy/], mustAny: [/can.t tell/, /unknown/], mustNot: [/potion of/] }))).toEqual([]);

@@ -63,14 +63,38 @@ const PHASE3 = {
 };
 const V2_EDITS = [EDITS.facts, EDITS.otherLevelDirections, EDITS.aroundMe, EDITS.quietTools, EDITS.concise];
 
+/**
+ * v3 ablations. v3 = v2 + knowledge tools (wiki tables, 5.0 changelog appended, case-insensitive source search with whole
+ * changelog entries, nethack_lookup) + prompt fixes (P9). evals/prompts/v2 is the frozen v2 production prompt.
+ * prompt-only runs the v3 prompt on the frozen v2 knowledge tools, so its nethack_lookup references are edited out.
+ */
+const NO_LOOKUP_EDITS = [
+  {
+    find: `- A named monster, item, artifact, role or race, what a fountain, sink, throne or altar does, or how shop prices work: nethack_lookup first. It is instant, needs no preamble, and has the exact 5.0 data (stats, attacks, starting inventory, effect tables); a name that is not in the game comes back as not in NetHack 5.0. Add fetch_wiki_page (in parallel) only for strategy or explanations.
+- A game concept, level, spell or strategy topic (Elbereth, Sokoban, prayer): fetch_wiki_page with that name. One wiki page usually answers it; it includes tables and the matching 5.0 changelog entries.`,
+    replace:
+      '- A named monster, item, artifact, role, spell, level, or game concept: fetch_wiki_page with that name. One wiki page usually answers it. If you also want 5.0 confirmation, call search_nethack_source in the same turn, in parallel.',
+  },
+  { find: 'Game tools and nethack_lookup are instant', replace: 'Game tools are instant' },
+  { find: 'check it (nethack_lookup, the changelog)', replace: 'check it (the 5.0 changelog)' },
+  { find: 'trust nethack_lookup and the 5.0 source and changelog first', replace: 'trust the 5.0 source and changelog first' },
+  { find: 'fetch_wiki_page and nethack_lookup resolve approximate names themselves', replace: 'fetch_wiki_page resolves approximate titles itself' },
+  { find: '; and lines that nethack_lookup marks SPOILER-LEVEL.', replace: '.' },
+  { find: 'for example look plus nethack_lookup for the monster it shows.', replace: 'for example look plus fetch_wiki_page for the monster it shows.' },
+];
+
 export const VARIANTS: Record<string, Variant> = Object.fromEntries(
   [
     // ---- current production (server/prompts, default tool formats): use these for new experiments
-    v('baseline', 'current production config (= v2 since the eval experiments)'),
+    v('baseline', 'current production config (v3: v2 + knowledge tools P1-P3 + prompt fixes P9)'),
     v('mini', 'production on gpt-realtime-2.1-mini (production prompt + mini addendum)', { model: 'gpt-realtime-2.1-mini' }),
     v('reasoning-minimal', 'production with reasoning effort minimal', { reasoning: 'minimal' }),
     v('reasoning-medium', 'production with reasoning effort medium', { reasoning: 'medium' }),
     v('no-snapshot', 'production without live-context snapshots (tools only)', { snapshot: 'none' }),
+    // ---- v3 ablations (production = v3)
+    v('v2-frozen', 'the v2 production config: frozen v2 prompt and v2 knowledge tools (no lookup, no wiki tables/changelog)', { promptsDir: 'evals/prompts/v2', knowledge: 'v2' }),
+    v('tools-only', 'v3 knowledge tools (wiki tables + changelog, source search, nethack_lookup) with the frozen v2 prompt', { promptsDir: 'evals/prompts/v2' }),
+    v('prompt-only', 'v3 prompt (lookup references edited out) with the frozen v2 knowledge tools', { knowledge: 'v2', promptEdits: NO_LOOKUP_EDITS }),
     // ---- experiment history, reproducible against the frozen phase-3 config
     v('phase3', 'phase-3 production config (the original eval baseline)', { ...PHASE3 }),
     v('level-landmarks', 'phase3 + get_level_map: other-level positions as screen region + rough offsets from the arrival staircases', {

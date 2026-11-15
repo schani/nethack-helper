@@ -1,6 +1,7 @@
 // Knowledge services: NetHack wiki, web search, and the 5.0.0 source tree.
 // Tool definitions and behaviour are ported from voice-proto/server/tools.ts.
-import { ToolError } from "./util.ts";
+import { ToolError, str } from "./util.ts";
+import { nethackLookup } from "./lookup/index.ts";
 import { webSearch } from "./web-search.ts";
 import { fetchWikiPage } from "./wiki.ts";
 import { readNethackSource, searchNethackSource, sourceAvailable } from "./source.ts";
@@ -27,15 +28,42 @@ export const KNOWLEDGE_TOOL_DEFS = [
   },
   {
     type: "function",
+    name: "nethack_lookup",
+    description:
+      "Instant offline facts extracted from the NetHack 5.0 source (no preamble needed): monster stats (level, speed, AC, " +
+      "magic resistance, attacks with damage, resistances, what the corpse gives, traits), objects (damage, AC, weight, material, " +
+      "what it grants, whether its appearance is randomized), artifacts, a role's exact starting inventory and intrinsics by level, " +
+      "race differences, the effect tables of fountains (quaff/dip), sinks, thrones and altars, and price identification (shop " +
+      "price formulas and the base price groups). USE IT FIRST for any named " +
+      "monster, item, artifact, role or race, and for 5.0 numbers; use fetch_wiki_page afterwards only for strategy or explanations. " +
+      "A name that is not in the game comes back as \"not in NetHack 5.0\" with the closest real names. Lines after SPOILER-LEVEL " +
+      "are spoilers: use them only if the player asked for spoilers or agreed.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Name as the player would say it, e.g. 'genetic engineer', 'speed boots', 'Valkyrie', 'Excalibur', 'fountain', 'fizzy potion'." },
+        kind: {
+          type: "string",
+          enum: ["monster", "object", "artifact", "appearance", "role", "race", "feature", "mechanic"],
+          description: "Optional: restrict to one kind (e.g. 'role' for 'wizard' the role rather than the monster).",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
     name: "fetch_wiki_page",
     description:
-      "Fetch a NetHack wiki (nethackwiki.com) page: infobox stats (monsters/items), intro and sections, plus the list of " +
-      "section headings. Fast (well under a second). BEST FIRST CALL for any named monster, item, artifact, role, " +
-      "spell, dungeon level or game concept: use the wiki-style name, e.g. 'Genetic engineer', 'Displacer beast', " +
-      "'Elbereth', 'Excalibur', 'Sokoban'. Misspelled or approximate titles are resolved automatically to the closest " +
-      "page. Sokoban step-by-step solutions: title 'Sokoban Level 1a' or '1b' (first level you enter), then 2a/2b, " +
-      "3a/3b, 4a/4b (top); these return a numbered, voice-ready push list. Many wiki pages still describe 3.6; the page " +
-      "often has 3.7/5.0 notes, otherwise confirm version-specific details in the source.",
+      "Fetch a NetHack wiki (nethackwiki.com) page: infobox, intro and sections with tables as 'a | b | c' rows (effect and " +
+      "price tables), the list of section headings, and the 5.0 changelog entries that mention the page's subject. Fast " +
+      "(well under a second). Use it for strategy, explanations and game concepts (dungeon levels, Elbereth, Sokoban, price " +
+      "identification, prayer...) and for monsters/items when nethack_lookup's data is not enough; use the wiki-style name, " +
+      "e.g. 'Genetic engineer', 'Elbereth', 'Sokoban'. Misspelled or approximate titles are resolved automatically to the " +
+      "closest page. Sokoban step-by-step solutions: title 'Sokoban Level 1a' or '1b' (first level you enter), then 2a/2b, " +
+      "3a/3b, 4a/4b (top); these return a numbered, voice-ready push list. Many wiki pages still describe 3.6: where the " +
+      "appended 5.0 changelog entries or nethack_lookup disagree with the page, they win.",
     parameters: {
       type: "object",
       properties: {
@@ -62,12 +90,12 @@ export const KNOWLEDGE_TOOL_DEFS = [
     type: "function",
     name: "search_nethack_source",
     description:
-      "Ripgrep (regex, smart-case) over the official NetHack 5.0.0 source tree. Use it to confirm version-specific " +
+      "Ripgrep (regex, case-insensitive unless case_sensitive is set) over the official NetHack 5.0.0 source tree. Use it to confirm version-specific " +
       "details and for 'what changed in 5.0' questions. Returns up to ~40 matching lines as " +
       "path:line: text. Key places: include/monsters.h and include/objects.h (monster/object definitions and stats), " +
       "src/*.c (game logic), dat/*.lua (special level layouts such as Sokoban soko*.lua, quest levels, Gehennom), " +
       "dat/*.txt (rumors, oracles, data), doc/fixes5-0-0.txt (THE changelog of what changed from 3.6 to 5.0 - search it " +
-      "for 'what changed' questions), doc/Guidebook.txt (player manual). Use path_glob to narrow (space-separated globs, directories or files), e.g. 'doc/fixes5-0-0.txt', " +
+      "for 'what changed' questions; hits there come back as whole changelog entries), doc/Guidebook.txt (player manual). Use path_glob to narrow (space-separated globs, directories or files), e.g. 'doc/fixes5-0-0.txt', " +
       "'src/*.c', 'dat/soko*.lua', 'include/'. Results are spoilers. Note: '$NHDT-Date' stamps and file dates are " +
       "commit times, NOT release dates.",
     parameters: {
@@ -78,6 +106,7 @@ export const KNOWLEDGE_TOOL_DEFS = [
           type: "string",
           description: "Optional space-separated globs or directory/file paths relative to the source root, e.g. 'src/*.c include/' or 'doc/fixes5-0-0.txt'.",
         },
+        case_sensitive: { type: "boolean", description: "Match case exactly (default false: case-insensitive)." },
       },
       required: ["pattern"],
       additionalProperties: false,
@@ -135,8 +164,10 @@ export class KnowledgeService {
     switch (name) {
       case "web_search":
         return webSearch(args, { apiKey: o.apiKey, model: o.webSearchModel, timeoutMs: o.timeouts.web_search }, signal);
+      case "nethack_lookup":
+        return nethackLookup({ name: str(args.name, "name")!, kind: str(args.kind, "kind", false) }, { srcDir: (await this.sourceAvailable()) ? o.srcDir : undefined });
       case "fetch_wiki_page":
-        return fetchWikiPage(args, o.timeouts.fetch_wiki_page, signal);
+        return fetchWikiPage(args, o.timeouts.fetch_wiki_page, signal, { srcDir: (await this.sourceAvailable()) ? o.srcDir : undefined });
       case "search_nethack_source":
         if (!(await this.sourceAvailable())) throw new ToolError("the NetHack source is not installed on the server (run scripts/setup-nethack-src.sh)");
         return searchNethackSource(o.srcDir, args, o.timeouts.search_nethack_source, signal);

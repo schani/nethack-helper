@@ -6,7 +6,9 @@
  *                   [--knowledge cache|live|offline] [--id run-id] [--dry-run] [--no-live] [--live-only] [--set core]
  *   npm run eval -- --list                          cases and tag counts
  *   npm run eval:compare -- <run-id-a> <run-id-b>   side-by-side report (also written to .cache/evals/compare-a-vs-b.md)
- *   npm run eval -- rejudge <run-id> [--judge gpt-5.4-mini] [--limit n]   re-grade a run with another judge, report agreement
+ *   npm run eval -- rejudge <run-id> [--judge gpt-5.4-mini] [--limit n] [--only case#rep,..] [--apply new-id]
+ *                                                   re-grade a run with another judge (or the current judge/cases), report agreement;
+ *                                                   --apply writes a re-graded copy (judge + deterministic checks) as run new-id
  *
  * Results: .cache/evals/<run-id>/{results.json,summary.json,report.md}.  Audio mode without --cases/--tags runs
  * the cases marked `audio: true` (TTS question audio, real VAD/transcription, first-audio latency).
@@ -92,11 +94,14 @@ if (argv[0] === 'rejudge') {
           cost += responsesCost(model, j.usage);
           out.push({ case: r.case, rep: r.rep, orig: r.judge!, re: j.scores });
           if (applyTo) {
+            // re-grade with the current case expectations too (deterministic checks, no API calls)
             r.snapshot = snapshot ?? null;
+            r.turns.forEach((t, i) => (t.checks = gradeTurn(t, c.turns[i]?.expect, r.snapshot)));
+            r.checksPass = r.turns.length === c.turns.length && r.turns.every((t) => t.checks.every((x) => x.pass));
             r.judge = j.scores;
             r.judgeUsage = j.usage;
             r.cost.judge = responsesCost(model, j.usage);
-            r.pass = r.checksPass && j.scores.pass;
+            r.pass = r.checksPass && j.scores.pass && !r.error;
           }
         } catch (e) {
           console.error(`${r.case}#${r.rep}: ${(e as Error).message}`);
@@ -142,7 +147,7 @@ if (argv[0] === 'regrade') {
     for (const r of runs) {
       const c = cases.find((x) => x.id === r.case);
       if (!c) continue;
-      r.turns.forEach((t, i) => (t.checks = gradeTurn(t, c.turns[i]?.expect)));
+      r.turns.forEach((t, i) => (t.checks = gradeTurn(t, c.turns[i]?.expect, r.snapshot)));
       const checksPass = r.turns.length === c.turns.length && r.turns.every((t) => t.checks.every((x) => x.pass));
       const pass = checksPass && (!r.judge || r.judge.pass) && !r.error;
       if (pass !== r.pass) changed++;
@@ -252,7 +257,7 @@ fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null
 const md = markdown(summary);
 fs.writeFileSync(path.join(outDir, 'report.md'), md + '\n');
 console.log(`\n${md.split('\n## Failing')[0]}`);
-const k = knowledgeFor(knowledge);
+const k = knowledgeFor(knowledge, variant.knowledge === 'v2');
 console.log(`knowledge cache: ${k.hits} hits, ${k.misses} misses`);
 console.log(`results: ${path.relative(ROOT, outDir)}/ (report.md, summary.json, results.json); ${Math.round((Date.now() - t0) / 1000)} s`);
 process.exit(0);

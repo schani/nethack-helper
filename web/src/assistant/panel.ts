@@ -34,6 +34,8 @@ export function chipLabel(name: string, argsJson: string): string {
       return 'messages';
     case 'get_discoveries':
       return 'discoveries';
+    case 'nethack_lookup':
+      return `lookup ${q(a.name)}`;
     case 'fetch_wiki_page':
       return `wiki ${q(a.title)}${a.section ? ` § ${q(a.section)}` : ''}`;
     case 'web_search':

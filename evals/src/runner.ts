@@ -22,8 +22,13 @@ export interface RunOptions {
   apiKey: string;
 }
 
-let knowledgeService: CachedKnowledge | null = null;
-export const knowledgeFor = (mode: KnowledgeMode) => (knowledgeService ??= new CachedKnowledge(mode));
+const knowledgeServices = new Map<string, CachedKnowledge>();
+export const knowledgeFor = (mode: KnowledgeMode, legacy = false) => {
+  const key = `${mode}-${legacy}`;
+  let k = knowledgeServices.get(key);
+  if (!k) knowledgeServices.set(key, (k = new CachedKnowledge(mode, { legacy })));
+  return k;
+};
 
 /** Run one repetition of one case. Never throws (failures are recorded in the result). */
 export async function runCase(c: EvalCase, rep: number, o: RunOptions): Promise<CaseRun> {
@@ -46,7 +51,7 @@ export async function runCase(c: EvalCase, rep: number, o: RunOptions): Promise<
       initialContext = o.variant.snapshot === 'none' ? null : await backend.context();
     } else {
       fx = loadFixture(c.fixture ?? 'start-pet-adjacent');
-      const b = fixtureBackend(fx, c, o.variant, knowledgeFor(o.knowledge), path.join(o.outDir, 'logs'));
+      const b = fixtureBackend(fx, c, o.variant, knowledgeFor(o.knowledge, o.variant.knowledge === 'v2'), path.join(o.outDir, 'logs'));
       backend = b.backend;
       initialContext = b.initialContext;
     }
@@ -63,7 +68,7 @@ export async function runCase(c: EvalCase, rep: number, o: RunOptions): Promise<
         rec = await session.ask(turn.user);
       }
       run.cost.realtime += realtimeCost(model, rec.usage);
-      run.turns.push({ ...rec, checks: gradeTurn(rec, turn.expect) });
+      run.turns.push({ ...rec, checks: gradeTurn(rec, turn.expect, run.snapshot) });
       if (rec.errors.some((e) => /transport lost|timed out/.test(e))) break;
     }
     run.checksPass = run.turns.length === c.turns.length && run.turns.every((t) => t.checks.every((x) => x.pass));

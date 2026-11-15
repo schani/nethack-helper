@@ -19,6 +19,7 @@ export const TIMEOUTS: Record<string, number> = {
   fetch_wiki_page: 10_000,
   search_nethack_source: 8_000,
   read_nethack_source: 3_000,
+  nethack_lookup: 3_000,
   // game tools read in-memory state; anything slower than this is a bug
   game: 2_000,
   mint: 10_000,

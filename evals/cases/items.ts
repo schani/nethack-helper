@@ -39,7 +39,7 @@ export const cases: EvalCase[] = [
       { user: 'Yes, spoilers are fine. How does the price trick work here?', expect: { mustNot: NO_IDENTITY, mustAny: [/price|base|charisma|zorkmid|333/i], maxWords: 130 } },
     ],
     truth:
-      'Price identification: shop prices are a base price times modifiers; potions are grouped by base price, so the price narrows the type down to a group. The sell price is 333 zorkmids; with the Valkyrie\'s Charisma 8 there is a one third surcharge, so the base would be 250, though a random 1/3 surcharge can also apply (so base could be 200 or 250...). Checking what the shopkeeper offers when you try to sell is the other half. The exact group membership is spoiler detail the user consented to.',
+      'Price identification: shop prices are a base price times modifiers; potions are grouped by base price, so the price narrows the type down to a group. The asking price is 333 zorkmids. The Valkyrie has Charisma 8 (shown on the status line / get_status), which means a 4/3 price multiplier; some unidentified items (by object id, 1 in 4) get another 4/3 surcharge (src/shk.c get_cost). Base 250 x 4/3 = 333, while any surcharged price would be 250 x 16/9 = 444 or 200 x 16/9 = 356: so 333 means base 250 without the extra surcharge, and the 250 zorkmid potions are acid and oil (include/objects.h). Checking what the shopkeeper offers when you try to sell one is the other half of the method. The exact group membership is spoiler detail the user consented to.',
     rubric: 'Turn 1: must not explain the method yet; offers with a spoiler warning. Turn 2: consented, so it should explain concretely (base price groups, charisma modifier, sell offers) without asking again. Do not penalize omitting the exact potion list; penalize wrong statements (e.g. claiming the price uniquely identifies the potion).',
   },
   {
@@ -70,6 +70,7 @@ export const cases: EvalCase[] = [
     fixture: 'unid-items',
     turns: [{ user: 'What have I discovered so far?', expect: { tools: { any: ['get_discoveries'] }, mustNot: NO_IDENTITY, maxWords: 100 } }],
     truth: 'Discoveries show the Valkyrie\'s known items plus the player-named type: murky potion called "maybe healing". The wished potions/scrolls/ring/wand/amulet are unidentified.',
+    rubric: 'A short spoken summary is expected: that most entries are role-known weapon/armor types, the player-named murky potion ("maybe healing"), and the unidentified appearances seen. Naming every label or every role-known item is not required.',
   },
   {
     id: 'hidden-unseen-level',
@@ -89,7 +90,7 @@ export const cases: EvalCase[] = [
     id: 'hidden-pet-location-unseen',
     tags: ['hidden-info', 'hallucination'],
     fixture: 'hungry-conditions',
-    turns: [{ user: 'Where is my kitten right now?', expect: { tools: { any: ['look', 'get_screen', 'get_messages'] }, maxWords: 80 } }],
+    turns: [{ user: 'Where is my kitten right now?', expect: { tools: { any: ['look', 'get_screen', 'get_messages'], orSnapshot: /conditions: Blind/ }, maxWords: 80 } }],
     truth: 'The hero is blind (just put on a blindfold: "You can\'t see any more."), so the kitten is not shown on the map; its location is unknown. Nothing in the recent messages says where it is.',
     rubric: 'Must not claim a specific current position for the kitten. Mentioning blindness as the reason is ideal.',
   },
@@ -97,7 +98,7 @@ export const cases: EvalCase[] = [
     id: 'inv-encumbrance-check',
     tags: ['inventory', 'state', 'concise'],
     fixture: 'unid-items',
-    turns: [{ user: 'Am I carrying too much?', expect: { tools: { any: ['get_status', 'get_inventory'] }, mustAny: [/no\b|not|unencumbered|fine|light/i], maxWords: 40 } }],
+    turns: [{ user: 'Am I carrying too much?', expect: { tools: { any: ['get_status', 'get_inventory'], orSnapshot: /unencumbered/ }, mustAny: [/no\b|not|unencumbered|fine|light/i], maxWords: 40 } }],
     truth: 'Unencumbered.',
   },
 ];

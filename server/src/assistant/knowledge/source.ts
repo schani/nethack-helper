@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { realpath, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ToolError, clip, str, withTimeout } from "./util.ts";
+import { entryAt, loadChangelog } from "./changelog.ts";
 
 export function sourceAvailable(srcDir: string): Promise<boolean> {
   return stat(join(srcDir, "src")).then(() => true, () => false);
@@ -56,8 +57,9 @@ async function safePath(srcDir: string, p: string): Promise<string> {
 export async function searchNethackSource(srcDir: string, args: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal): Promise<string> {
   const pattern = str(args.pattern, "pattern")!;
   const glob = str(args.path_glob, "path_glob", false);
+  const caseSensitive = args.case_sensitive === true;
   const sig = withTimeout(timeoutMs, signal);
-  const base = ["--line-number", "--with-filename", "--no-heading", "--color", "never", "--smart-case", "--max-columns", "200", "--max-columns-preview", "--max-count", glob ? "30" : "8", "--sort", "path"];
+  const base = ["--line-number", "--with-filename", "--no-heading", "--color", "never", caseSensitive ? "--case-sensitive" : "--ignore-case", "--max-columns", "200", "--max-columns-preview", "--max-count", glob ? "30" : "8", "--sort", "path"];
   const target = ".";
   const globArgs: string[] = [];
   // path_glob may hold several space/comma separated entries; directories and plain files become globs too.
@@ -90,7 +92,7 @@ export async function searchNethackSource(srcDir: string, args: Record<string, u
   }
   if (r.code === 2 && !r.lines.length) throw new ToolError(`search error: ${clip(r.stderr.trim(), 200)}`);
   if (!r.lines.length) return `No matches for /${pattern}/${glob ? ` in ${glob}` : ""}.${skipped.length ? ` (skipped nonexistent: ${skipped.join(", ")})` : ""}`;
-  let out = r.lines.map((l) => l.replace(/^\.\//, "")).join("\n");
+  let out = (await expandChangelogHits(srcDir, r.lines.map((l) => l.replace(/^\.\//, "")))).join("\n");
   out = clip(out, MAX_SEARCH_CHARS);
   const note = [
     literal ? "(pattern was invalid regex; searched literally)" : "",
@@ -98,6 +100,32 @@ export async function searchNethackSource(srcDir: string, args: Record<string, u
     r.truncated ? `(showing first ${MAX_MATCH_LINES} matching lines; max ${glob ? 30 : 8} per file; narrow with path_glob or a more specific pattern)` : "",
   ].filter(Boolean).join(" ");
   return `NetHack 5.0.0 source matches (path:line: text):\n${out}${note ? "\n" + note : ""}`;
+}
+
+/**
+ * Changelog hits (doc/fixes*.txt) become whole entries: "path:line: entry text with its wrapped continuation lines
+ * joined"; several hits inside one entry are merged. Other lines are returned unchanged.
+ */
+export async function expandChangelogHits(srcDir: string, lines: string[]): Promise<string[]> {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const l of lines) {
+    const m = /^(doc\/fixes[\w.-]*\.txt):(\d+):/.exec(l);
+    if (!m) {
+      out.push(l);
+      continue;
+    }
+    const e = entryAt(await loadChangelog(srcDir, m[1]), Number(m[2]));
+    if (!e) {
+      out.push(l);
+      continue;
+    }
+    const key = `${m[1]}:${e.line}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(`${key}: ${e.text.length > 600 ? e.text.slice(0, 600) + "…" : e.text}`);
+  }
+  return out;
 }
 
 export async function readNethackSource(srcDir: string, args: Record<string, unknown>): Promise<string> {

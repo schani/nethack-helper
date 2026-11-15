@@ -1,13 +1,15 @@
-// fetch_wiki_page: nethackwiki.com MediaWiki API (TextExtracts + wikitext infobox).
-// Ported from voice-proto/server/tools.ts (keep behaviour in sync).
+// fetch_wiki_page: nethackwiki.com MediaWiki parse API (rendered page -> compact text with tables as pipe rows,
+// wikitext infobox), plus the matching NetHack 5.0 changelog entries (the wiki mostly describes 3.6).
 import { ToolError, clip, str, withTimeout } from './util.ts';
 import { SOKOBAN_LEVEL_TITLE, formatSokobanSolution } from './sokoban.ts';
+import { wikiHtmlToText } from './wiki-html.ts';
+import { changelogFor } from './changelog.ts';
 
 const WIKI_API = "https://nethackwiki.com/api.php";
 const WIKI_UA = "nethack-web/0.3 (NetHack voice assistant)";
-const WIKI_MAX = 3500;
+const WIKI_MAX = 5000;
 
-async function wikiGet(params: Record<string, string>, signal: AbortSignal): Promise<any> {
+export async function wikiGet(params: Record<string, string>, signal: AbortSignal): Promise<any> {
   const url = `${WIKI_API}?${new URLSearchParams({ format: "json", formatversion: "2", ...params })}`;
   const res = await fetch(url, { signal, headers: { "User-Agent": WIKI_UA } });
   if (!res.ok) throw new ToolError(`wiki request failed (${res.status})`);
@@ -70,7 +72,7 @@ export function parseInfobox(wikitext: string): string {
   return kv.length ? clip(`[${kind} infobox] ${kv.join("; ")}`, 900) : "";
 }
 
-interface Section { heading: string; level: number; text: string }
+export interface Section { heading: string; level: number; text: string }
 
 export function splitSections(extract: string): Section[] {
   const sections: Section[] = [{ heading: "(intro)", level: 1, text: "" }];
@@ -83,11 +85,11 @@ export function splitSections(extract: string): Section[] {
   return sections;
 }
 
-function terms(s: string): string[] {
+export function terms(s: string): string[] {
   return s.toLowerCase().split(/[^a-z0-9']+/).filter((t) => t.length > 2);
 }
 
-async function resolveTitle(title: string, signal: AbortSignal): Promise<{ title: string | null; suggestions: string[] }> {
+export async function resolveTitle(title: string, signal: AbortSignal): Promise<{ title: string | null; suggestions: string[] }> {
   const os: any = await wikiGet({ action: "opensearch", search: title, limit: "8", namespace: "0" }, signal);
   let suggestions: string[] = os?.[1] ?? [];
   if (!suggestions.length) {
@@ -104,25 +106,40 @@ async function resolveTitle(title: string, signal: AbortSignal): Promise<{ title
   return { title: exact ?? null, suggestions };
 }
 
-export async function fetchWikiPage(args: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+export interface WikiOptions {
+  /** NetHack 5.0 source tree: matching changelog entries are appended to the page (omitted when unset) */
+  srcDir?: string;
+}
+
+interface LoadedPage { title: string; text: string; wikitext: string }
+
+/** One parse API call: rendered HTML (templates expanded) -> compact text, plus the raw wikitext (infobox, Sokoban maps). */
+async function loadPage(title: string, signal: AbortSignal): Promise<LoadedPage | null> {
+  const j: any = await wikiGet(
+    { action: "parse", page: title, prop: "text|wikitext", redirects: "1", disableeditsection: "1", disabletoc: "1", disablelimitreport: "1" },
+    signal,
+  );
+  if (j?.error || !j?.parse) {
+    if (j?.error && j.error.code !== "missingtitle" && j.error.code !== "invalidtitle") throw new ToolError(`wiki error: ${j.error.info ?? j.error.code}`);
+    return null;
+  }
+  return { title: j.parse.title, text: wikiHtmlToText(j.parse.text ?? ""), wikitext: j.parse.wikitext ?? "" };
+}
+
+/** Sections left out of the default (whole page) view; they stay listed under "Sections:" and can be requested. */
+const LOW_VALUE_SECTION = /^(?:glyphs?(?: and tiles)?|tiles?|history|etymology|origins?|trivia|see also|references|external links|notes and references|encyclop[a]?edia entry|(?:in )?(?:other )?variants?|in other games|gallery|.*\b(?:slash'?em|unnethack|dnethack|xnethack|evilhack|splicehack|fiqhack|nethack4|grunthack|sporkhack|hack'?em|variant)s?\b.*)$/i;
+
+export async function fetchWikiPage(args: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal, opts: WikiOptions = {}): Promise<string> {
   let title = str(args.title, "title")!.replace(/_/g, " ");
   const section = str(args.section, "section", false);
   const focus = str(args.focus, "focus", false);
   const flip = str(args.flip, "flip", false);
   const sig = withTimeout(timeoutMs, signal);
 
-  // Sokoban level pages need the full wikitext (the solution maps); others only the lead section (infobox).
-  const load = (t: string) =>
-    Promise.all([
-      wikiGet({ action: "query", prop: "extracts", explaintext: "1", exsectionformat: "wiki", redirects: "1", titles: t }, sig),
-      wikiGet({ action: "parse", page: t, prop: "wikitext", redirects: "1", ...(SOKOBAN_LEVEL_TITLE.test(t.trim()) ? {} : { section: "0" }) }, sig).catch(() => null),
-    ]);
-
-  let [ex, wt] = await load(title);
-  let page = ex?.query?.pages?.[0];
+  let page = await loadPage(title, sig);
   let suggestions: string[] = [];
   let resolvedNote = "";
-  if (!page || page.missing || !page.extract) {
+  if (!page || page.text.trim().length < 20) {
     // Resolve in the same call (saves the model a round trip): exact case-insensitive match, else the top search hit.
     const r = await resolveTitle(title, sig);
     suggestions = r.suggestions;
@@ -130,35 +147,32 @@ export async function fetchWikiPage(args: Record<string, unknown>, timeoutMs: nu
     if (!pick) return `No wiki page found for "${title}". Use web_search instead.`;
     if (!r.title) resolvedNote = `(No page titled "${title}"; showing the closest match "${pick}". If that is not what was meant, use one of the other matches or web_search.)`;
     const asked = title;
-    title = pick;
-    [ex, wt] = await load(title);
-    page = ex?.query?.pages?.[0];
-    if (!page || page.missing || !page.extract) return `Wiki page "${asked}" could not be loaded. Use web_search instead.`;
+    page = await loadPage(pick, sig);
+    if (!page || !page.text.trim()) return `Wiki page "${asked}" could not be loaded. Use web_search instead.`;
   }
   title = page.title;
   const url = `https://nethackwiki.com/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
-  const sections = splitSections(page.extract);
-  const infobox = wt?.parse?.wikitext ? parseInfobox(wt.parse.wikitext) : "";
+  const sections = splitSections(page.text);
+  const infobox = page.wikitext ? parseInfobox(page.wikitext) : "";
   const headings = sections.slice(1).map((s) => s.heading);
-
-  let body = "";
-  if (/^#?REDIRECT/i.test(page.extract.trim()) || page.extract.trim().length < 40) {
-    body = page.extract.trim();
-  }
-  const intro = sections[0].text;
   const header = `Wiki: ${title} (${url})` + (resolvedNote ? `\n${resolvedNote}` : "") +
     (suggestions.length > 1 ? `\nOther matches: ${suggestions.filter((s) => s !== title).slice(0, 6).join("; ")}` : "");
   const toc = headings.length ? `\nSections: ${headings.join(" | ")}` : "";
+  const intro = sections[0].text;
 
   // Sokoban level pages: return the solution as a voice-ready step list instead of ASCII maps.
   const wantsSolution = !section || /strateg|solution|solv|step|walkthrough/i.test(section);
-  if (SOKOBAN_LEVEL_TITLE.test(title) && wantsSolution && wt?.parse?.wikitext) {
-    const solution = formatSokobanSolution(wt.parse.wikitext, title, flip);
-    if (solution) return clip([header, clip(intro, 400), solution].join("\n"), 8000);
+  if (SOKOBAN_LEVEL_TITLE.test(title) && wantsSolution && page.wikitext) {
+    const solution = formatSokobanSolution(page.wikitext, title, flip);
+    if (solution) return clip([header, clip(intro.split(/\n{2,}/)[0], 400), solution].join("\n"), 8000);
   }
+
+  let body = "";
+  if (page.text.trim().length < 40) body = page.text.trim();
   if (/^sokoban$/i.test(title)) {
     body += "(Step-by-step solutions are on the level pages: fetch 'Sokoban Level 1a' or 'Sokoban Level 1b' for the first level, then 2a/2b, 3a/3b, 4a/4b.)\n";
   }
+  const render = (s: Section) => (s.heading === "(intro)" ? s.text : `== ${s.heading} ==\n${s.text}`);
 
   if (section) {
     const want = section.toLowerCase();
@@ -170,16 +184,17 @@ export async function fetchWikiPage(args: Record<string, unknown>, timeoutMs: nu
       const lvl = sections[idx].level;
       const parts = [sections[idx]];
       for (let i = idx + 1; i < sections.length && sections[i].level > lvl; i++) parts.push(sections[i]);
-      body += parts.map((s) => `== ${s.heading} ==\n${s.text}`).join("\n");
+      body += parts.map(render).join("\n\n");
     } else {
       body += `(No section matching "${section}".)\n${intro}`;
     }
   } else if (focus) {
     const ft = terms(focus).filter((t) => !["nethack", "the", "and", "what", "changed", "change", "changes"].includes(t));
+    // blocks: paragraphs, whole tables and whole lists (separated by blank lines)
     const paras: { sec: string; text: string; score: number; i: number }[] = [];
     let i = 0;
     for (const s of sections.slice(1)) { // the intro is always included below
-      for (const p of s.text.split(/\n+/)) {
+      for (const p of s.text.split(/\n{2,}/)) {
         if (!p.trim()) continue;
         const lower = (s.heading + " " + p).toLowerCase();
         const score = ft.reduce((n, t) => n + (lower.includes(t) ? 1 : 0), 0);
@@ -200,14 +215,26 @@ export async function fetchWikiPage(args: Record<string, unknown>, timeoutMs: nu
     for (const p of chosen) {
       if (p.sec !== lastSec && p.sec !== "(intro)") body += `== ${p.sec} ==\n`;
       lastSec = p.sec;
-      body += p.text + "\n";
+      body += p.text + "\n\n";
     }
     if (!chosen.length) body += `(No paragraphs mention "${focus}".)`;
   } else {
-    body += sections.map((s) => (s.heading === "(intro)" ? s.text : `== ${s.heading} ==\n${s.text}`)).join("\n");
+    // whole page: skip low-value sections (and their subsections)
+    const kept: Section[] = [];
+    let skipBelow = 0;
+    for (const s of sections) {
+      if (skipBelow && s.level > skipBelow) continue;
+      skipBelow = 0;
+      if (s.heading !== "(intro)" && LOW_VALUE_SECTION.test(s.heading)) {
+        skipBelow = s.level;
+        continue;
+      }
+      kept.push(s);
+    }
+    body += kept.map(render).join("\n\n");
   }
 
-  const out = [header, infobox, clip(body.trim(), WIKI_MAX)].filter(Boolean).join("\n") + toc;
-  return clip(out, WIKI_MAX + 1500);
+  const changes = opts.srcDir && !SOKOBAN_LEVEL_TITLE.test(title) ? await changelogFor(opts.srcDir, title).catch(() => "") : "";
+  const out = [header, infobox, clip(body.trim().replace(/\n{3,}/g, "\n\n"), WIKI_MAX)].filter(Boolean).join("\n") + toc;
+  return clip(out, WIKI_MAX + 1500) + (changes ? `\n\n${changes}` : "");
 }
-

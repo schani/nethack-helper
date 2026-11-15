@@ -41,7 +41,7 @@ export const cases: EvalCase[] = [
     fixture: 'fountain-adjacent',
     turns: [{ user: 'What does this fountain do?', expect: { tools: { first: LOOK_FIRST }, mustAny: [/quaff|drink|dip/i], maxWords: 90 } }],
     truth: 'A fountain is adjacent up-left (north-west). You can quaff (drink) from it or dip items into it; effects are random, mostly minor, some dangerous (water moccasins, water demon), rarely a wish. The full list of effects/odds is spoiler-level.',
-    rubric: 'Must look first (the prompt requires look for "this"), give the gist, and offer the full list of effects with a spoiler warning rather than reciting it.',
+    rubric: 'Must look first (the prompt requires look for "this"), give the gist, and offer the full list of effects with a spoiler warning rather than reciting it. Saying where the fountain is or mentioning dipping is a plus, not required.',
   },
   {
     id: 'look-sink-not-fountain',
@@ -84,7 +84,7 @@ export const cases: EvalCase[] = [
     id: 'look-under-me',
     tags: ['look'],
     fixture: 'shop',
-    turns: [{ user: 'What am I standing on?', expect: { tools: { any: ['look', 'get_status', 'get_screen'] }, must: [/fizzy potion/i, /333/], maxWords: 50 } }],
+    turns: [{ user: 'What am I standing on?', expect: { tools: { any: ['look', 'get_status', 'get_screen'], orSnapshot: /Standing on: ! a fizzy potion/ }, must: [/fizzy potion/i, /333/], maxWords: 50 } }],
     truth: 'A fizzy potion for sale at 333 zorkmids (unidentified).',
   },
   {

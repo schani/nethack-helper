@@ -17,6 +17,9 @@ import { loadConfig } from '../../server/src/config.ts';
 import type { AssistantBackend, GameContext } from '../../shared/assistant/realtime-core.ts';
 import { FixtureGameSource, type Fixture } from './fixtures.ts';
 import type { EvalCase, Json, Variant } from './types.ts';
+import { fetchWikiPage as fetchWikiPageV2 } from './legacy/wiki-v2.ts';
+import { searchNethackSource as searchNethackSourceV2 } from './legacy/source-v2.ts';
+import { V2_TOOL_DESCRIPTIONS } from './legacy/tools-v2.ts';
 
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 export const CACHE_DIR = path.join(ROOT, '.cache/evals');
@@ -29,13 +32,20 @@ export type KnowledgeMode = 'cache' | 'live' | 'offline';
  * are repeatable and cheap (web_search costs money and the wiki changes). 'live' bypasses the cache,
  * 'offline' never hits the network (cache misses become tool errors).
  */
+/** Bump when fetch_wiki_page output changes, so cached results of the old format are not reused (v2 keys had no salt). */
+const WIKI_FORMAT = 'wiki-html-1';
+/** Local, deterministic tools: never cached (their output changes with the code, not with the outside world). */
+const LOCAL_TOOLS = new Set(['search_nethack_source', 'read_nethack_source', 'nethack_lookup']);
+
 export class CachedKnowledge extends KnowledgeService {
   private mode: KnowledgeMode;
   private dir: string;
+  private legacy: boolean;
   hits = 0;
   misses = 0;
 
-  constructor(mode: KnowledgeMode, dir = path.join(CACHE_DIR, 'knowledge')) {
+  constructor(mode: KnowledgeMode, opts: { legacy?: boolean; dir?: string } = {}) {
+    const dir = opts.dir ?? path.join(CACHE_DIR, 'knowledge');
     super({
       srcDir: serverCfg.assistant.nethackSrcDir,
       apiKey,
@@ -44,16 +54,27 @@ export class CachedKnowledge extends KnowledgeService {
     });
     this.mode = mode;
     this.dir = dir;
+    this.legacy = !!opts.legacy;
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  static key(name: string, args: Record<string, unknown>): string {
+  static key(name: string, args: Record<string, unknown>, salt = ''): string {
     const sorted = JSON.stringify(Object.keys(args).sort().map((k) => [k, args[k]]));
-    return createHash('sha1').update(`${name}\n${sorted}`).digest('hex').slice(0, 20);
+    return createHash('sha1').update(`${salt}${name}\n${sorted}`).digest('hex').slice(0, 20);
+  }
+
+  /** the production tools, or the frozen v2 ones */
+  private async exec(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+    if (this.legacy && name === 'fetch_wiki_page') return fetchWikiPageV2(args, TIMEOUTS.fetch_wiki_page, signal);
+    if (this.legacy && name === 'search_nethack_source') return searchNethackSourceV2(serverCfg.assistant.nethackSrcDir, args, TIMEOUTS.search_nethack_source, signal);
+    if (this.legacy && name === 'nethack_lookup') throw new ToolError(`unknown tool '${name}'`);
+    return super.run(name, args, signal);
   }
 
   async run(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
-    const file = path.join(this.dir, `${name}-${CachedKnowledge.key(name, args)}.json`);
+    if (LOCAL_TOOLS.has(name)) return this.exec(name, args, signal);
+    const salt = !this.legacy && name === 'fetch_wiki_page' ? `${WIKI_FORMAT}\n` : '';
+    const file = path.join(this.dir, `${name}-${CachedKnowledge.key(name, args, salt)}.json`);
     if (this.mode !== 'live' && fs.existsSync(file)) {
       this.hits++;
       const c = JSON.parse(fs.readFileSync(file, 'utf8')) as { ok: boolean; result: string };
@@ -63,7 +84,7 @@ export class CachedKnowledge extends KnowledgeService {
     if (this.mode === 'offline') throw new ToolError(`${name} is unavailable (offline eval run, not cached)`);
     this.misses++;
     try {
-      const result = await super.run(name, args, signal);
+      const result = await this.exec(name, args, signal);
       fs.writeFileSync(file, JSON.stringify({ name, args, ok: true, result }));
       return result;
     } catch (e) {
@@ -98,7 +119,10 @@ export function resolvedVariant(v: Variant) {
 /** The production session config (same function as /api/assistant/session) with the variant's overrides. */
 export async function sessionFor(v: Variant): Promise<Json> {
   const r = resolvedVariant(v);
-  const tools = TOOL_DEFS.map((t) => (v.tools?.[t.name]?.description ? { ...t, description: v.tools[t.name].description! } : t));
+  const descriptions = { ...(v.knowledge === 'v2' ? V2_TOOL_DESCRIPTIONS : {}), ...Object.fromEntries(Object.entries(v.tools ?? {}).map(([k, x]) => [k, x.description])) };
+  const tools = TOOL_DEFS.filter((t) => !v.disableTools?.includes(t.name) && !(v.knowledge === 'v2' && t.name === 'nethack_lookup')).map((t) =>
+    descriptions[t.name] ? { ...t, description: descriptions[t.name]! } : t,
+  );
   let s: Json = await buildSessionConfig({ model: r.model, voice: r.voice, reasoning: r.reasoning, tools, promptsDir: r.promptsDir });
   for (const e of v.promptEdits ?? []) {
     if (!s.instructions.includes(e.find)) throw new Error(`variant ${v.name}: prompt edit target not found: ${e.find.slice(0, 80)}`);
@@ -129,6 +153,9 @@ export function fixtureBackend(fx: Fixture, c: EvalCase, v: Variant, knowledge: 
   const none = v.snapshot === 'none';
   const backend: AssistantBackend = {
     tool: async (name, args, callId, sessionId) => {
+      // a fault time limit <= 1 ms always fails, also for tools that answer synchronously (nethack_lookup)
+      const limit = c.faults?.timeouts?.[name];
+      if (limit !== undefined && limit <= 1) return { ok: false, result: `${name} timed out after 0.0 s`, ms: 1 };
       const r = await service.runTool(name, args, { callId, sessionId });
       return { ok: r.ok, result: r.result, ms: r.ms };
     },

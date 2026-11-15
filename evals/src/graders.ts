@@ -20,7 +20,8 @@ export function wordCount(text: string): number {
 
 const names = (t: TurnRecord) => t.tools.map((x) => x.name);
 
-export function gradeTurn(turn: TurnRecord, expect: Expect = {}): CheckResult[] {
+/** `snapshot`: the live-state snapshot the assistant had (for `tools.orSnapshot`) */
+export function gradeTurn(turn: TurnRecord, expect: Expect = {}, snapshot?: string | null): CheckResult[] {
   const out: CheckResult[] = [];
   const answer = turn.answer;
   const called = names(turn);
@@ -30,8 +31,9 @@ export function gradeTurn(turn: TurnRecord, expect: Expect = {}): CheckResult[] 
   add('tool calls paired', !turn.unpaired.length, turn.unpaired.join(', '));
 
   const t = expect.tools ?? {};
-  if (t.any?.length) add(`calls one of ${t.any.join('/')}`, called.some((n) => t.any!.includes(n)), `called: ${called.join(', ') || 'none'}`);
-  for (const n of t.all ?? []) add(`calls ${n}`, called.includes(n), `called: ${called.join(', ') || 'none'}`);
+  const inSnapshot = !!t.orSnapshot && !!snapshot && t.orSnapshot.test(snapshot);
+  if (t.any?.length) add(`calls one of ${t.any.join('/')}`, inSnapshot || called.some((n) => t.any!.includes(n)), `called: ${called.join(', ') || 'none'}`);
+  for (const n of t.all ?? []) add(`calls ${n}`, inSnapshot || called.includes(n), `called: ${called.join(', ') || 'none'}`);
   for (const n of t.none ?? []) add(`does not call ${n}`, !called.includes(n), `called: ${called.join(', ')}`);
   if (t.first?.length) add(`first call is ${t.first.join('/')}`, !!called.length && t.first.includes(called[0]), `called: ${called.join(', ') || 'none'}`);
   if (t.noTools) add('no tool calls', !called.length, `called: ${called.join(', ')}`);
