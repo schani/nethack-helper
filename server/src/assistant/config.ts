@@ -39,7 +39,7 @@ export const EXPERT = {
   // adopted after evals: deep set 37% -> 74% pass, core set unchanged (never called there); see evals/variants.ts
   enabled: process.env.ASSISTANT_EXPERT !== undefined ? process.env.ASSISTANT_EXPERT !== '0' : true,
   model: process.env.EXPERT_MODEL ?? 'gpt-6.1-terra',
-  effort: process.env.EXPERT_EFFORT ?? 'high',
+  effort: process.env.EXPERT_EFFORT ?? 'medium',
   /** whole consultation, tool rounds included (ms) */
   timeoutMs: Number(process.env.EXPERT_TIMEOUT_MS ?? 90_000),
   /** max tool rounds before it must answer */
