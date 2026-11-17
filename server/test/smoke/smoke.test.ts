@@ -157,9 +157,13 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
   it('feeds discoveries / overview / underfoot and serves the assistant game tools', async () => {
     const st = await waitFor(async () => {
       const s = await getState();
-      return s.discoveries && s.overview && s.underfoot ? s : null;
-    }, 'discoveries, overview and underfoot from the feed');
-    expect(st.feed.schema).toBe(3);
+      return s.discoveries && s.overview && s.underfoot && s.keybindings ? s : null;
+    }, 'discoveries, overview, underfoot and keybindings from the feed');
+    expect(st.feed.schema).toBe(4);
+    // the game's own binding table: vi-keys (number_pad:0 in nethackrc), kick on ^D, no internal commands
+    expect(st.keybindings).toMatchObject({ number_pad: false, dirs: 'hykulnjb><', debug: false });
+    expect(st.keybindings!.commands.find((c) => c.name === 'kick')?.keys).toEqual([4]);
+    expect(st.keybindings!.commands.find((c) => c.name === 'movenorth')?.keys).toEqual(['k'.charCodeAt(0)]);
     // a Valkyrie knows her starting weapons and armor ("* " = known without being seen)
     expect(st.discoveries!.join('\n')).toMatch(/Discoveries|small shield/);
     expect(st.overview!.join('\n')).toMatch(/The Dungeons of Doom:/);
@@ -186,6 +190,7 @@ describe('smoke: server + nethack + feed', { timeout: 120000 }, () => {
     const adj = await tool('look', { target: 'adjacent' });
     expect(adj).toMatch(/^Squares adjacent to you:\nnorth \(up\): /);
     expect(await tool('get_inventory')).toMatch(/Wielded: \w/);
+    expect(await tool('get_keybindings', { query: 'kick' })).toMatch(/kick something: Ctrl\+D/);
     expect(await tool('list_levels')).toMatch(/Dungeon level 1 \(Dlvl:1, depth 1\) <- you are here/);
     expect(await tool('get_screen')).toMatch(/Legend \(symbol, what it is, where relative to you\):\n@ you/);
     const ctx = (await (await fetch(`${BASE}/api/assistant/context`)).json()) as { text: string };

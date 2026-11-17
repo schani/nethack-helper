@@ -189,6 +189,8 @@ function normalize(fx: Fixture): Fixture {
     ns.game.name = NAME;
   }
   ns.session.player = NAME;
+  // debug-mode commands are not bound in a normal game
+  if (ns.keybindings) ns.keybindings = { ...ns.keybindings, debug: false, commands: ns.keybindings.commands.filter((c) => c.kind !== 'debug') };
   // the title on the status line is "<Name> the <rank>"
   if (ns.status?.fields?.title) ns.status.fields.title = String(ns.status.fields.title).replace(/^\S+(?= the )/, NAME);
   // wizard-mode prompts and wizard-only messages are not part of a normal game

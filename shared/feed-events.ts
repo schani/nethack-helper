@@ -24,7 +24,7 @@
  *    describing a cell does not mark objects as seen, consume the RNG, etc.
  */
 
-export const FEED_SCHEMA_VERSION = 3;
+export const FEED_SCHEMA_VERSION = 4;
 
 interface EventBase {
   /** event type */
@@ -309,6 +309,50 @@ export interface UnderfootEvent extends EventBase {
   look: string;
 }
 
+/** One command in the key binding table (see KeyBindingsEvent). */
+export interface KeyCommand {
+  /** extended command name (typed as #name) */
+  name: string;
+  /** NetHack's own one-line description */
+  desc: string;
+  /** move: movement (walk/run/rush per direction); prefix: g/G/F/m-style prefixes;
+   *  general: takes no game time (info, options, save…); game: everything else; debug: wizard mode only */
+  kind: 'move' | 'prefix' | 'general' | 'game' | 'debug';
+  /** `#` + a unique prefix completes it */
+  autocomplete?: boolean;
+  /** recognized but not available in this build */
+  unavailable?: boolean;
+  /** parameter of a BIND=key:command:param binding (then `keys` holds that one key) */
+  param?: string;
+  /** key codes that invoke it right now (0..255; < 32 = Ctrl+key, >= 128 = Meta/Alt+key);
+   *  empty: only reachable as #name */
+  keys: number[];
+}
+
+/**
+ * The command keys exactly as this game has them bound right now, read from
+ * NetHack's own binding table (gc.Cmd: defaults, number_pad and its modes,
+ * BIND= lines, rest_on_space), the table `?` → "Full list of keyboard
+ * commands" prints.  Sent when the game starts and whenever it changes
+ * (e.g. number_pad toggled in the options).
+ */
+export interface KeyBindingsEvent extends EventBase {
+  t: 'keybindings';
+  number_pad: boolean;
+  num_pad_mode: number;
+  rest_on_space: boolean;
+  /** debug (wizard) mode: debug commands are included */
+  debug: boolean;
+  /** movement keys in NetHack direction order: W NW N NE E SE S SW, up, down */
+  dirs: string;
+  /** key that starts an extended command (normally '#') */
+  extcmd_key: number;
+  /** every user command (debug ones only in debug mode), with its keys */
+  commands: KeyCommand[];
+  /** special keys used inside prompts (direction / map-position pickers, count prefix) */
+  special: Array<{ name: string; desc: string; key: number }>;
+}
+
 /** Tombstone time: the hero died / quit / escaped (how = NetHack death code). */
 export interface GameOverEvent extends EventBase {
   t: 'gameover';
@@ -326,14 +370,14 @@ export type FeedEvent =
   | HelloEvent | GameEvent | LevelEvent | MapClearEvent | MapEvent | StatusEvent
   | MsgEvent | InventoryEvent | InputEvent | AnswerEvent | MenuEvent
   | MenuDoneEvent | TextEvent | DisplayFileEvent | GameOverEvent | ExitEvent
-  | DiscoveriesEvent | OverviewEvent | UnderfootEvent;
+  | DiscoveriesEvent | OverviewEvent | UnderfootEvent | KeyBindingsEvent;
 
 export type FeedEventType = FeedEvent['t'];
 
 export const FEED_EVENT_TYPES: readonly FeedEventType[] = [
   'hello', 'game', 'level', 'map_clear', 'map', 'status', 'msg', 'inventory',
   'input', 'answer', 'menu', 'menu_done', 'text', 'display_file',
-  'gameover', 'exit', 'discoveries', 'overview', 'underfoot',
+  'gameover', 'exit', 'discoveries', 'overview', 'underfoot', 'keybindings',
 ];
 
 /* ------------------------------------------------------------------ */
@@ -420,6 +464,9 @@ export interface GameState {
   overview: string[] | null;
   /** remembered map feature/object under the hero (null: unknown) */
   underfoot: Omit<UnderfootEvent, 't' | 'seq'> | null;
+  /** the game's current key bindings (null until the feed reports them; omitted from the
+   *  throttled websocket state) */
+  keybindings?: Omit<KeyBindingsEvent, 't' | 'seq'> | null;
   /** objects last listed at a spot ("Things that are here" / "You see here") */
   pile: { level: string; x: number; y: number; turn: number; items: string[] } | null;
 }

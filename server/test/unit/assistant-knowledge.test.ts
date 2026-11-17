@@ -55,7 +55,7 @@ describe('tool definitions', () => {
       names.add(t.name);
     }
     expect(names.size).toBe(TOOL_DEFS.length);
-    expect(TOOL_DEFS.length).toBe(KNOWLEDGE_TOOL_DEFS.length + 8);
+    expect(TOOL_DEFS.length).toBe(KNOWLEDGE_TOOL_DEFS.length + 9);
   });
 });
 

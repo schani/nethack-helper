@@ -166,6 +166,26 @@ describe('cases and knowledge cache', () => {
     }
   });
 
+  it('keys cases accept the actual binding and reject guessed ones', () => {
+    const verdict = (id: string, answer: string) => {
+      const c = ALL_CASES.find((x) => x.id === id)!;
+      return gradeTurn(turn(answer, ['get_keybindings']), c.turns[0].expect).every((x) => x.pass);
+    };
+    expect(verdict('keys-kick', 'Control D, then pick a direction.')).toBe(true);
+    expect(verdict('keys-kick', 'Press Ctrl+D, then a direction.')).toBe(true);
+    expect(verdict('keys-kick', 'Usually you press the letter k. Check help with ? if unsure.')).toBe(false);
+    expect(verdict('keys-kick', "Press k, then a direction.")).toBe(false);
+    expect(verdict('keys-pray', 'Alt P, or type #pray and Enter.')).toBe(true);
+    expect(verdict('keys-pray', 'Press Control P.')).toBe(false);
+    expect(verdict('keys-pickup', 'Comma.')).toBe(true);
+    expect(verdict('keys-pickup', 'Press g to pick things up.')).toBe(false);
+    expect(verdict('keys-farlook', 'Press semicolon, move the cursor onto it, then press period.')).toBe(true);
+    expect(verdict('keys-farlook', 'Use the colon key.')).toBe(false);
+    expect(verdict('keys-discoveries', 'Backslash.')).toBe(true);
+    expect(verdict('keys-discoveries', 'Press the slash key.')).toBe(false);
+    expect(verdict('keys-discoveries', 'Press forward slash.')).toBe(false);
+  });
+
   it('cache keys do not depend on argument order', () => {
     expect(CachedKnowledge.key('fetch_wiki_page', { title: 'Fountain', section: 'Quaffing' })).toBe(CachedKnowledge.key('fetch_wiki_page', { section: 'Quaffing', title: 'Fountain' }));
     expect(CachedKnowledge.key('fetch_wiki_page', { title: 'Fountain' })).not.toBe(CachedKnowledge.key('fetch_wiki_page', { title: 'Sink' }));

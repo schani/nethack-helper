@@ -33,6 +33,22 @@ describe('translateKey', () => {
     expect(translateKey(k('ArrowLeft'), 'extcmd')).toBe('');
   });
 
+  it('lets every Ctrl+letter through to xterm.js (which sends the control character)', () => {
+    // the assistant's get_keybindings recommends e.g. Ctrl+D (#kick), Ctrl+X, Ctrl+O, Ctrl+P, Ctrl+A;
+    // null = xterm.js encodes Ctrl+<letter> as 0x01..0x1a
+    for (const ch of 'abcdefghijklmnopqrstuvwxyz') {
+      expect(translateKey(k(ch, `Key${ch.toUpperCase()}`, { ctrlKey: true }), 'command')).toBeNull();
+      expect(translateMeta(k(ch, `Key${ch.toUpperCase()}`, { ctrlKey: true }), 'command')).toBeNull();
+    }
+  });
+
+  it('sends Ctrl+_ (#retravel) itself', () => {
+    expect(translateKey(k('_', 'Minus', { ctrlKey: true, shiftKey: true }), 'command')).toBe('\x1f');
+    expect(translateKey(k('_', 'Minus', { ctrlKey: true }), 'command')).toBe('\x1f');
+    expect(translateKey(k('', 'Minus', { ctrlKey: true, shiftKey: true }), 'command')).toBe('\x1f');
+    expect(translateKey(k('-', 'Minus', { ctrlKey: true }), 'command')).toBeNull();
+  });
+
   it('pages menus with arrows', () => {
     expect(translateKey(k('ArrowDown'), 'menu')).toBe('>');
     expect(translateKey(k('PageUp'), 'menu')).toBe('<');

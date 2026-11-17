@@ -32,6 +32,7 @@
 
 #include "hack.h"
 #include "dungeon.h"
+#include "func_tab.h"
 #ifdef TTY_GRAPHICS
 #include "wintty.h"
 #endif
@@ -47,7 +48,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define FEED_SCHEMA_VERSION 3
+#define FEED_SCHEMA_VERSION 4
 
 /* ------------------------------------------------------------------ */
 /* prototypes                                                          */
@@ -1305,6 +1306,233 @@ emit_extras(void)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* key bindings                                                        */
+
+/* The command keys as currently bound (default table, number_pad and its
+   modes, BIND= lines, rest_on_space), read straight from gc.Cmd: the same
+   table rhack()/parse() dispatch on and dokeylist() ('?' "Full list of
+   keyboard commands") prints.  Plain memory reads, no side effects, so
+   this runs in the game process.  Sent when anything in it changes. */
+
+/* special (non-command) keys worth telling the player about; the key
+   itself always comes from gc.Cmd.spkeys[] */
+static const struct {
+    int nhkf;
+    const char *name, *desc;
+    boolean numpad_only;
+} feed_spkeys[] = {
+    { NHKF_ESC, "escape", "cancel the current prompt or a pending prefix",
+      FALSE },
+    { NHKF_COUNT, "count",
+      "prefix: type a count before a command (e.g. n20s searches 20 times)",
+      TRUE },
+    { NHKF_GETDIR_SELF, "getdir.self",
+      "at an 'In what direction?' prompt: yourself / here", FALSE },
+    { NHKF_GETDIR_SELF2, "getdir.self2",
+      "at an 'In what direction?' prompt: yourself / here", FALSE },
+    { NHKF_GETPOS_SELF, "getpos.self",
+      "when picking a map position: move the cursor onto yourself", FALSE },
+    { NHKF_GETPOS_PICK, "getpos.pick",
+      "when picking a map position: select the spot under the cursor",
+      FALSE },
+    { NHKF_GETPOS_PICK_Q, "getpos.pick.quick",
+      "when picking a map position: select it (brief description)", FALSE },
+    { NHKF_GETPOS_PICK_V, "getpos.pick.verbose",
+      "when picking a map position: select it (full description)", FALSE },
+    { NHKF_GETPOS_MON_NEXT, "getpos.mon.next",
+      "when picking a map position: jump the cursor to the next monster",
+      FALSE },
+    { NHKF_GETPOS_OBJ_NEXT, "getpos.obj.next",
+      "when picking a map position: jump the cursor to the next object",
+      FALSE },
+    { NHKF_GETPOS_DOOR_NEXT, "getpos.door.next",
+      "when picking a map position: jump the cursor to the next door",
+      FALSE },
+    { NHKF_GETPOS_INTERESTING_NEXT, "getpos.all.next",
+      "when picking a map position: jump the cursor to the next interesting "
+      "thing", FALSE },
+    { NHKF_GETPOS_HELP, "getpos.help",
+      "when picking a map position: help on the cursor keys", FALSE },
+};
+
+static unsigned long sent_keys_sig = 0;
+static boolean sent_keys = FALSE;
+
+static boolean
+keybind_usable(const struct Cmd_bind *b)
+{
+    uchar k = b->key;
+
+    if (!k || !b->cmd || !b->cmd->ef_txt)
+        return FALSE;
+    /* without number_pad, parse() reads leading digits as a count before
+       it looks at the binding table */
+    if (!gc.Cmd.num_pad && k >= '0' && k <= '9')
+        return FALSE;
+    if ((b->cmd->flags & INTERNALCMD) != 0)
+        return FALSE;
+    return TRUE;
+}
+
+static unsigned long
+keys_signature(void)
+{
+    unsigned long h = 5381UL;
+    const struct Cmd_bind *b;
+    const char *p;
+    int i;
+
+    for (b = gc.Cmd.cmdbinds; b; b = b->next) {
+        h = h * 33UL + (unsigned long) b->key;
+        h = h * 33UL + (unsigned long) (size_t) b->cmd;
+        if ((p = b->param) != 0)
+            while (*p)
+                h = h * 33UL + (unsigned char) *p++;
+    }
+    for (i = 0; i < NUM_NHKF; i++)
+        h = h * 33UL + (unsigned char) gc.Cmd.spkeys[i];
+    h = h * 33UL + (unsigned long) gc.Cmd.num_pad;
+    h = h * 33UL + (unsigned long) iflags.num_pad_mode;
+    h = h * 33UL + (unsigned long) flags.rest_on_space;
+    h = h * 33UL + (unsigned long) wizard;
+    if ((p = gc.Cmd.dirchars) != 0)
+        while (*p)
+            h = h * 33UL + (unsigned char) *p++;
+    return h;
+}
+
+static const char *
+keycmd_kind(unsigned flgs)
+{
+    return (flgs & WIZMODECMD) ? "debug"
+           : (flgs & MOVEMENTCMD) ? "move"
+           : (flgs & PREFIXCMD) ? "prefix"
+           : (flgs & GENERALCMD) ? "general"
+           : "game";
+}
+
+/* one entry of "commands"; keys bound with a parameter (BIND=k:cmd:param)
+   are separate entries with "param" */
+static void
+emit_keycmd(const struct ext_func_tab *ec, const char *param, int onlykey)
+{
+    const struct Cmd_bind *b;
+    boolean first = TRUE;
+
+    jchar('{');
+    jkey("name");
+    jstr(ec->ef_txt);
+    jkv_str("desc", ec->ef_desc ? ec->ef_desc : "");
+    jkv_str("kind", keycmd_kind(ec->flags));
+    if ((ec->flags & AUTOCOMPLETE) != 0)
+        jkv_bool("autocomplete", TRUE);
+    if ((ec->flags & CMD_NOT_AVAILABLE) != 0)
+        jkv_bool("unavailable", TRUE);
+    if (param)
+        jkv_str("param", param);
+    jchar(',');
+    jkey("keys");
+    jchar('[');
+    if (onlykey) {
+        jint((long) onlykey);
+    } else {
+        for (b = gc.Cmd.cmdbinds; b; b = b->next)
+            if (b->cmd == ec && !b->param && keybind_usable(b)) {
+                if (!first)
+                    jchar(',');
+                first = FALSE;
+                jint((long) b->key);
+            }
+    }
+    jchar(']');
+    jchar('}');
+}
+
+static void
+emit_keybindings(void)
+{
+    const struct ext_func_tab *ec;
+    const struct Cmd_bind *b;
+    const char *dirs = gc.Cmd.dirchars;
+    unsigned long sig;
+    boolean first = TRUE;
+    int i, ncmds;
+
+    if (feed_fd < 0 || !gc.Cmd.cmdbinds || !dirs)
+        return;
+    sig = keys_signature();
+    if (sent_keys && sig == sent_keys_sig)
+        return;
+    if (!ev_begin("keybindings"))
+        return;
+    sent_keys = TRUE;
+    sent_keys_sig = sig;
+    jkv_bool("number_pad", gc.Cmd.num_pad);
+    jkv_int("num_pad_mode", (long) iflags.num_pad_mode);
+    jkv_bool("rest_on_space", flags.rest_on_space);
+    jkv_bool("debug", wizard);
+    /* movement keys W NW N NE E SE S SW, up, down (DIR_xxx order) */
+    jkv_str("dirs", dirs);
+    jkv_int("extcmd_key", (long) (uchar) gc.Cmd.extcmd_char);
+    jchar(',');
+    jkey("commands");
+    jchar('[');
+    for (ncmds = 0; extcmdlist[ncmds].ef_txt; ncmds++)
+        continue;
+    for (ec = extcmdlist; ec->ef_txt; ec++) {
+        if ((ec->flags & INTERNALCMD) != 0 || !ec->ef_desc)
+            continue;
+        if ((ec->flags & WIZMODECMD) != 0 && !wizard)
+            continue;
+        if (!first)
+            jchar(',');
+        first = FALSE;
+        emit_keycmd(ec, (const char *) 0, 0);
+    }
+    for (b = gc.Cmd.cmdbinds; b; b = b->next) {
+        boolean listed = (b->cmd >= extcmdlist && b->cmd < extcmdlist + ncmds);
+
+        if (!keybind_usable(b) || !b->cmd->ef_desc)
+            continue;
+        if ((b->cmd->flags & WIZMODECMD) != 0 && !wizard)
+            continue;
+        /* parameterized bindings, and commands that are not in the
+           extended command table (rest_on_space's <space>) */
+        if (b->param || !listed) {
+            if (!first)
+                jchar(',');
+            first = FALSE;
+            emit_keycmd(b->cmd, b->param, (int) b->key);
+        }
+    }
+    jchar(']');
+    jchar(',');
+    jkey("special");
+    jchar('[');
+    first = TRUE;
+    for (i = 0; i < SIZE(feed_spkeys); i++) {
+        uchar k = (uchar) gc.Cmd.spkeys[feed_spkeys[i].nhkf];
+
+        if (!k || (feed_spkeys[i].numpad_only && !gc.Cmd.num_pad))
+            continue;
+        /* 's' is only "self" at direction prompts with number_pad */
+        if (feed_spkeys[i].nhkf == NHKF_GETDIR_SELF2 && !gc.Cmd.num_pad)
+            continue;
+        if (!first)
+            jchar(',');
+        first = FALSE;
+        jchar('{');
+        jkey("name");
+        jstr(feed_spkeys[i].name);
+        jkv_str("desc", feed_spkeys[i].desc);
+        jkv_int("key", (long) k);
+        jchar('}');
+    }
+    jchar(']');
+    ev_end();
+}
+
 /* bring the consumer up to date before the game blocks for input */
 static void
 feed_flush(void)
@@ -1316,6 +1544,7 @@ feed_flush(void)
     emit_map();
     emit_inventory();
     emit_extras();
+    emit_keybindings();
 }
 
 static unsigned long last_input_seq = 0;

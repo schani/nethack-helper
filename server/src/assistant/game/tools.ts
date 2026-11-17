@@ -4,6 +4,7 @@
  */
 import type { GameState } from '../../../../shared/feed-events.ts';
 import { ToolError } from '../knowledge/util.ts';
+import { KeyBindingsView } from './keybindings.ts';
 import { GameView, type GameViewOptions, type ScreenText } from './view.ts';
 
 /** What the assistant needs from the game session service (read-only). */
@@ -108,6 +109,22 @@ export const GAME_TOOL_DEFS = [
       '("called"), and the appearances seen. Use it before talking about which items the player has identified.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    type: 'function',
+    name: 'get_keybindings',
+    description:
+      "This game's actual key bindings, read from the running game (they depend on its options, e.g. number_pad): which key or #command " +
+      'does an action. With a query ("kick", "pray", "pick up", "look at something far away", "discoveries", "move diagonally") it returns ' +
+      'the best matching commands with their exact keys (Ctrl+D, Alt+p, capital letters = Shift) and #extended command names; without a ' +
+      'query a compact list of everything. Includes how to type the key in the browser client. Call it for every "how do I…" / "which key…" question.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The action, in a few words ("kick", "pick up", "look far away"). Omit for the full list.' },
+      },
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 export const GAME_TOOL_NAMES: readonly string[] = GAME_TOOL_DEFS.map((t) => t.name);
@@ -158,6 +175,13 @@ export class GameTools {
         return v.getMessages(int(args.n, 'n') ?? 10);
       case 'get_discoveries':
         return v.getDiscoveries();
+      case 'get_keybindings': {
+        const kb = v.st.keybindings;
+        if (!kb) return v.unavailable() ?? 'The key bindings are not available yet (the game reports them once it has started).';
+        const kv = new KeyBindingsView(kb);
+        const q = typeof args.query === 'string' ? args.query.trim() : '';
+        return q ? kv.search(q) : kv.summary();
+      }
       default:
         throw new ToolError(`unknown tool '${name}'`);
     }

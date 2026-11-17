@@ -96,6 +96,7 @@ export class GameStateStore {
   private discoveries: string[] | null = null;
   private overview: string[] | null = null;
   private underfoot: GameState['underfoot'] = null;
+  private keybindings: GameState['keybindings'] = null;
   private pile: GameState['pile'] = null;
   private game: GameIdentity | null = null;
   private memoryRestored = false;
@@ -126,6 +127,7 @@ export class GameStateStore {
     this.discoveries = null;
     this.overview = null;
     this.underfoot = null;
+    this.keybindings = null;
     this.pile = null;
     this.processMessages = 0;
     this.version++;
@@ -326,6 +328,11 @@ export class GameStateStore {
         this.underfoot = rest;
         break;
       }
+      case 'keybindings': {
+        const { t: _t, seq: _s, ...rest } = ev;
+        this.keybindings = rest;
+        break;
+      }
     }
   }
 
@@ -392,7 +399,8 @@ export class GameStateStore {
     };
   }
 
-  snapshot(opts: { allLevels?: boolean } = {}): GameState {
+  /** `keybindings: false` leaves the (large, rarely changing) key binding table out */
+  snapshot(opts: { allLevels?: boolean; keybindings?: boolean } = {}): GameState {
     const allLevels = opts.allLevels ?? true;
     const levels: Record<string, LevelMemory> = {};
     for (const [key, l] of this.levels) {
@@ -422,6 +430,7 @@ export class GameStateStore {
       discoveries: this.discoveries,
       overview: this.overview,
       underfoot: this.underfoot,
+      ...(opts.keybindings === false ? {} : { keybindings: this.keybindings }),
       pile: this.pile,
     };
   }

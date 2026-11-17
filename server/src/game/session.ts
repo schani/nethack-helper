@@ -196,7 +196,7 @@ export class GameSession {
   subscribe(sub: SessionSubscriber): () => void {
     this.mirror.barrier(() => {
       sub.snapshot(this.mirror.serialize(), this.cfg.cols, this.cfg.rows, this.info());
-      sub.state(this.store.snapshot({ allLevels: false }));
+      sub.state(this.store.snapshot({ allLevels: false, keybindings: false }));
       this.subscribers.add(sub);
     });
     return () => {
@@ -210,7 +210,7 @@ export class GameSession {
     return () => this.feedListeners.delete(fn);
   }
 
-  state(opts?: { allLevels?: boolean }): GameState {
+  state(opts?: { allLevels?: boolean; keybindings?: boolean }): GameState {
     return this.store.snapshot(opts);
   }
 
@@ -269,7 +269,7 @@ export class GameSession {
     if (this.stateTimer || this.subscribers.size === 0) return;
     this.stateTimer = setTimeout(() => {
       this.stateTimer = null;
-      const st = this.store.snapshot({ allLevels: false });
+      const st = this.store.snapshot({ allLevels: false, keybindings: false });
       for (const sub of this.subscribers) sub.state(st);
     }, STATE_THROTTLE_MS);
   }
