@@ -1,4 +1,5 @@
 /** Aggregates case runs into summary metrics, writes results JSON + markdown, and compares runs. */
+import { wordCount } from './graders.ts';
 import type { CaseRun } from './types.ts';
 
 export interface Stat {
@@ -40,6 +41,9 @@ export interface Group {
   firstText: Stat;
   firstAudio: Stat;
   total: Stat;
+  /** spoken words per turn: the final answer (last message) and everything said (preambles included) */
+  words: Stat;
+  wordsAll: Stat;
   rounds: number | null;
   toolsPerTurn: number | null;
   errors: number;
@@ -80,6 +84,8 @@ export function group(runs: CaseRun[]): Group {
     firstText: stat(turns.map((t) => t.latency.first_text)),
     firstAudio: stat(turns.map((t) => t.latency.first_audio)),
     total: stat(turns.map((t) => t.latency.total)),
+    words: stat(turns.map((t) => wordCount(t.messages?.at(-1) ?? t.answer))),
+    wordsAll: stat(turns.map((t) => wordCount(t.answer))),
     rounds: mean(turns.map((t) => t.rounds)),
     toolsPerTurn: mean(turns.map((t) => t.tools.length)),
     errors: runs.filter((r) => r.error).length,
@@ -153,6 +159,7 @@ export function summarize(meta: Omit<Summary, 'overall' | 'tags' | 'cases' | 'to
 const pct = (x: number | null | undefined) => (x === null || x === undefined ? '-' : `${Math.round(x * 100)}%`);
 const num = (x: number | null | undefined, d = 2) => (x === null || x === undefined ? '-' : x.toFixed(d));
 const ms = (s: Stat) => (s.median === null ? '-' : `${s.median} / ${s.p90}`);
+const words = (s: Stat | undefined) => (!s || s.median === null ? '-' : `${num(s.mean, 1)} / ${s.median} / ${s.p90}`);
 
 export function markdown(s: Summary): string {
   const o = s.overall;
@@ -172,6 +179,8 @@ export function markdown(s: Summary): string {
   L.push(`| first audio ms (median / p90) | ${ms(o.firstAudio)} |`);
   L.push(`| turn total ms = time to final answer (median / p90) | ${ms(o.total)} |`);
   L.push(`| expert: call rate (turns) / run time ms median, p90 / cost per call / failed | ${pct(o.expertRate)} / ${ms(o.expertMs ?? stat([]))} / ${o.expertCost == null ? '-' : `$${o.expertCost.toFixed(4)}`} / ${o.expertFailed ?? 0} |`);
+  L.push(`| words per turn, final answer (mean / median / p90) | ${words(o.words)} |`);
+  L.push(`| words per turn incl. preambles (mean / median / p90) | ${words(o.wordsAll)} |`);
   L.push(`| tool rounds / tools per turn | ${num(o.rounds)} / ${num(o.toolsPerTurn)} |`);
   L.push(`| tokens in (cached) / out | ${s.tokens.input} (${s.tokens.cached}) / ${s.tokens.output} |`);
   L.push(`| cost (realtime + judge + tts + expert) | $${s.cost.total.toFixed(3)} ($${s.cost.realtime.toFixed(3)} + $${s.cost.judge.toFixed(3)} + $${s.cost.tts.toFixed(3)} + $${(s.cost.expert ?? 0).toFixed(3)}); $${s.cost.perCaseRun.toFixed(4)} per case run |`);
@@ -208,6 +217,9 @@ export function compareMarkdown(a: Summary, b: Summary): string {
   row('first audio median ms', a.overall.firstAudio.median, b.overall.firstAudio.median, (v) => String(v ?? '-'), d(a.overall.firstAudio.median, b.overall.firstAudio.median, 1, ' ms'));
   row('turn total (final answer) median ms', a.overall.total.median, b.overall.total.median, (v) => String(v ?? '-'), d(a.overall.total.median, b.overall.total.median, 1, ' ms'));
   row('turn total (final answer) p90 ms', a.overall.total.p90, b.overall.total.p90, (v) => String(v ?? '-'), d(a.overall.total.p90, b.overall.total.p90, 1, ' ms'));
+  for (const [k, label] of [['words', 'words, final answer'], ['wordsAll', 'words incl. preambles']] as const)
+    for (const q of ['mean', 'median', 'p90'] as const)
+      row(`${label} ${q}`, a.overall[k]?.[q] ?? null, b.overall[k]?.[q] ?? null, (v) => num(v, q === 'mean' ? 1 : 0), d(a.overall[k]?.[q] ?? null, b.overall[k]?.[q] ?? null, 1, '', 1));
   row('expert call rate (turns)', a.overall.expertRate ?? 0, b.overall.expertRate ?? 0, pct, d(a.overall.expertRate ?? 0, b.overall.expertRate ?? 0));
   row('tool rounds', a.overall.rounds, b.overall.rounds, (v) => num(v), d(a.overall.rounds, b.overall.rounds, 1, '', 2));
   row('cost per case run $', a.cost.perCaseRun, b.cost.perCaseRun, (v) => num(v, 4), d(a.cost.perCaseRun, b.cost.perCaseRun, 1, '', 4));

@@ -86,12 +86,14 @@ const NO_LOOKUP_EDITS = [
 export const VARIANTS: Record<string, Variant> = Object.fromEntries(
   [
     // ---- current production (server/prompts, default tool formats): use these for new experiments
-    v('baseline', 'current production config (v4: v3 + get_keybindings + concise style; deep-thinking expert enabled)'),
+    v('baseline', 'current production config (v5: v4 + much terser spoken answers; deep-thinking expert enabled)'),
     v('mini', 'production on gpt-realtime-2.1-mini (production prompt + mini addendum)', { model: 'gpt-realtime-2.1-mini' }),
     v('reasoning-minimal', 'production with reasoning effort minimal', { reasoning: 'minimal' }),
     v('reasoning-medium', 'production with reasoning effort medium', { reasoning: 'medium' }),
     v('no-snapshot', 'production without live-context snapshots (tools only)', { snapshot: 'none' }),
     // ---- v4 = v3 + get_keybindings (the game's actual key bindings) + concise style rewrite
+    // ---- v5 = v4 + much terser spoken answers (style section with good/bad pairs, 2-4 word preambles, no add-ons)
+    v('v4-prompt', 'the v4 production prompt (frozen in evals/prompts/v4: ~40-word answers, 3-6 word preambles) on current tools', { promptsDir: 'evals/prompts/v4' }),
     v('v3-prompt', 'the v3 production prompt (frozen in evals/prompts/v3: no get_keybindings rule, old verbosity section) on current tools', { promptsDir: 'evals/prompts/v3' }),
     // ---- deep-thinking expert (consult_expert -> gpt-6.1-terra, reasoning high, in the background)
     // runs: deep-noexp / deep-exp2 (tags deep, N=3: 37% -> 74%), core-noexp / core-exp (core, N=2: 82% -> 82%, expert never called)

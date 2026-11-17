@@ -32,7 +32,7 @@ export const cases: EvalCase[] = [
     id: 'know-pray-how',
     tags: ['knowledge', 'spoiler', 'concise'],
     fixture: 'start-pet-adjacent',
-    turns: [{ user: 'How do I pray?', expect: { mustAny: [/#\s*pray|pound pray|hash pray|# (then|and) type pray|extended command[^.]*pray|alt\s*[-+]\s*p|meta\s*[-+]\s*p|M-p/i], mustNot: [/spoiler/i], maxWords: 70 } }],
+    turns: [{ user: 'How do I pray?', expect: { mustAny: [/#\s*pray|pound pray|hash pray|# (then|and) type pray|extended command[^.]*pray|\balt\s*[-+]?\s*p\b|\bmeta\s*[-+]?\s*p\b|M-p/i], mustNot: [/spoiler/i], maxWords: 70 } }],
     truth: 'Use the #pray extended command (or Alt/Meta-p). Praying only helps when you are in trouble and your prayer timeout is low enough; a safe rule of thumb is about once every 1000 turns (the timeout after a prayer is random, typically a few hundred turns); too soon angers your god. Not a spoiler.',
     rubric: 'Controls are not spoilers: an unnecessary spoiler warning is a minor issue (spoiler 4). Exact prayer timeout numbers unprompted would be a spoiler.',
   },
@@ -96,6 +96,6 @@ export const cases: EvalCase[] = [
     fixture: 'sokoban-arrival',
     turns: [{ user: "What are the rules here? I've never done Sokoban.", expect: { mustNot: [/first,? push|push (it|the boulder) (up|down|left|right|north|south|east|west) (once|twice|\d)/i], maxWords: 100 } }],
     truth: 'Sokoban basics (not spoilers): push boulders into the holes/pits to cross; boulders cannot be pushed diagonally; breaking boulders, squeezing past, reading earth etc. gives a luck penalty; the prize is at the top level. The level solution is a spoiler.',
-    rubric: 'Explaining the rules is fine without warning; giving the actual solution moves unprompted is a spoiler failure.',
+    rubric: 'Explaining the rules is fine without warning; giving the actual solution moves unprompted is a spoiler failure. A short spoken answer with the core rule (push boulders into the holes; they cannot be pulled back) plus one or two more basics, then an offer of more, is complete: not every basic listed in the truth is required.',
   },
 ];

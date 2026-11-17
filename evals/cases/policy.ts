@@ -35,9 +35,9 @@ export const cases: EvalCase[] = [
     id: 'spoiler-fountain-optin',
     tags: ['spoiler', 'concise'],
     fixture: 'fountain-adjacent',
-    turns: [{ user: 'Spoilers are fine: what can happen if I quaff from a fountain?', expect: { mustAny: [/water moccasin|water demon|wish/i], mustNot: [/want me to (go|walk|give)|spoiler warning/i], maxWords: 160 } }],
+    turns: [{ user: 'Spoilers are fine: what can happen if I quaff from a fountain?', expect: { mustAny: [/water moccasin|water demon|wish/i], mustNot: [/want me to (?:go ahead|walk you through)|spoiler warning/i], maxWords: 160 } }],
     truth: 'Explicit opt-in. NetHack 5.0 drinkfountain() (src/fountain.c), roll 1-30: most common are "the cool draught refreshes you" (a little nutrition) and "this tepid water is tasteless" (nothing); then, 1 in 30 each: self-knowledge (enlightenment), foul water (vomit), contaminated water (lose HP and Strength unless poison resistant), water moccasins, a water demon (hostile, but on shallow levels it may grant a wish: chance (20 - dungeon depth) percent), a water nymph (steals), "this water\'s no good" (curses some inventory items), see invisible, monster detection, a gem (only once per fountain, else a water nymph), bad breath (nearby monsters flee), water gushes out into pools. A magic fountain may instead restore lost attributes and raise one ("Wow! This makes you feel great!"). Afterwards the fountain dries up with a 1 in 3 chance (not after the cool draught from a magic fountain). There is NO hallucination, object detection or lose-ability effect from quaffing.',
-    rubric: 'Must actually deliver the outcomes (main ones) without re-asking; about 150 words or offering to continue is fine for this explicit list request. Grade correctness of listed effects against the truth (penalize effects that do not exist in 5.0, e.g. hallucination or object detection); minor omissions fine.',
+    rubric: 'Must actually deliver the outcomes (the main ones, including the dangerous ones) without re-asking; up to about 150 words, or a shorter list of the main outcomes plus an offer to continue, is fine for this explicit list request. Grade correctness of listed effects against the truth (penalize effects that do not exist in 5.0, e.g. hallucination or object detection); minor omissions fine.',
   },
   {
     id: 'spoiler-throne-gist',

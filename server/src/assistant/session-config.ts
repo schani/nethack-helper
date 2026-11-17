@@ -49,7 +49,9 @@ export async function buildSessionConfig(opts: SessionOptions) {
     tool_choice: 'auto',
     // Let the model issue independent lookups (e.g. look + wiki) in one response; the client runs them concurrently.
     parallel_tool_calls: true,
-    max_output_tokens: 2048,
+    // Safety net only (answer length is set by the prompt): audio costs about 8 output tokens per spoken word, so this
+    // allows about 150 words (a long list after a spoiler opt-in is about 100) and only stops runaway monologues.
+    max_output_tokens: 1536,
     // Live game snapshots are added as system items over a long session; keep most of the conversation when the
     // context fills up instead of truncating a little on every turn (fewer prompt-cache busts).
     truncation: { type: 'retention_ratio', retention_ratio: 0.7 },

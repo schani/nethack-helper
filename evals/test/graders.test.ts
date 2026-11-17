@@ -127,8 +127,17 @@ describe('report', () => {
     expect(g.flaky).toBe(1);
     expect(g.cases).toBe(2);
     expect(g.firstText.median).toBe(1100);
+    expect(g.words.median).toBe(1);
     expect(g.passCI[0]).toBeLessThan(0.75);
     expect(g.passCI[1]).toBeGreaterThan(0.75);
+  });
+
+  it('counts final-answer words apart from preambles', () => {
+    const r = run('a', 0, true);
+    r.turns[0] = { ...r.turns[0], messages: ['One sec.', 'Control D, then a direction.'], answer: 'One sec. Control D, then a direction.' };
+    const g = group([r]);
+    expect(g.words.median).toBe(5);
+    expect(g.wordsAll.median).toBe(7);
   });
 
   it('stat and wilson behave on edge cases', () => {
@@ -177,6 +186,8 @@ describe('cases and knowledge cache', () => {
     expect(verdict('keys-kick', "Press k, then a direction.")).toBe(false);
     expect(verdict('keys-pray', 'Alt P, or type #pray and Enter.')).toBe(true);
     expect(verdict('keys-pray', 'Press Control P.')).toBe(false);
+    expect(verdict('know-pray-how', 'Alt p; only when you’re in real trouble.')).toBe(true);
+    expect(verdict('know-pray-how', 'Alt+P, or #pray.')).toBe(true);
     expect(verdict('keys-pickup', 'Comma.')).toBe(true);
     expect(verdict('keys-pickup', 'Press g to pick things up.')).toBe(false);
     expect(verdict('keys-farlook', 'Press semicolon, move the cursor onto it, then press period.')).toBe(true);
