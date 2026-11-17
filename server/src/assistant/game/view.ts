@@ -315,8 +315,6 @@ export class GameView {
     parts.push(uf ? `Under you the map remembers: ${uf}.` : 'Nothing special is remembered under you (or it is plain floor).');
     const pile = this.pileHere();
     if (pile) parts.push(`Objects here, as the game last listed them (the map shows only the top one): ${pile}.`);
-    const msgs = this.recentMessages(4).filter((m) => /here|you see|there is|there are|you are standing|underfoot/i.test(m));
-    if (msgs.length) parts.push(`Recent messages about this square: ${msgs.map((m) => `"${m}"`).join(' ')}`);
     return parts.join(' ');
   }
 
@@ -609,7 +607,7 @@ export class GameView {
     const count = Math.max(1, Math.min(50, Math.floor(n) || 10));
     const msgs = this.st.messages.slice(-count);
     if (!msgs.length) return this.unavailable() ?? 'No messages yet.';
-    return `Last ${msgs.length} game messages, oldest first:\n${msgs.map((m) => `turn ${m.turn}: ${m.text}${m.source === 'history' ? ' (from before the game was restored)' : ''}`).join('\n')}`;
+    return `Last ${msgs.length} game messages, oldest first:\n${msgs.map((m) => `turn ${m.turn}: ${explainMessage(m.text)}${m.source === 'history' ? ' (from before the game was restored)' : ''}`).join('\n')}`;
   }
 
   getDiscoveries(): string {
@@ -653,10 +651,21 @@ export class GameView {
         .map((c) => `${GameView.cellText(c)} (${describeOffset(this.offsetOf(c)).replace(/ \(.*\)$/, '')})`);
       parts.push(`Nearby: ${near.length ? near.join('; ') : 'nothing notable'}.`);
     }
-    const msgs = st.messages.slice(-4).map((m) => `"${m.text}"`);
+    const msgs = st.messages.slice(-4).map((m) => `"${explainMessage(m.text)}"`);
     if (msgs.length) parts.push(`Last messages: ${msgs.join(' ')}`);
     return `[Live game state, refreshed automatically; use the game tools for details]\n${parts.join('\n')}`;
   }
+}
+
+/**
+ * Spell out NetHack message conventions a model easily misreads, e.g.
+ * "f - 8 rocks." means the rocks went into the inventory as item f.
+ */
+export function explainMessage(text: string): string {
+  const inv = /^([a-zA-Z$#]) - (.+?)\.?$/.exec(text.trim());
+  if (inv) return `${text} [now in your inventory as item ${inv[1]}]`;
+  if (/^You (?:see|feel) here /.test(text)) return `${text} [on the floor where you stood then]`;
+  return text;
 }
 
 /**

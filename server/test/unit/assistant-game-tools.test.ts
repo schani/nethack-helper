@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { GameStateStore } from '../../src/feed/state.ts';
 import { GameTools } from '../../src/assistant/game/tools.ts';
-import { GameView, type GameViewOptions } from '../../src/assistant/game/view.ts';
+import { GameView, explainMessage, type GameViewOptions } from '../../src/assistant/game/view.ts';
 import { describeOffset, mapRegion, parseDirection, roughOffset, screenRegion } from '../../src/assistant/game/directions.ts';
 import type { FeedEvent, MapCell } from '../../../shared/feed-events.ts';
 
@@ -356,5 +356,25 @@ describe('objects piled under the hero', () => {
     const moved = pileStore();
     moved.apply(ev({ t: 'input', kind: 'command', turn: 322, ux: 11, uy: 10 }));
     expect(tools({}, moved).run('look', { target: 'here' })).not.toContain('VAS CORP');
+  });
+});
+
+describe('message conventions', () => {
+  it('spells out inventory and floor messages', () => {
+    expect(explainMessage('f - 8 rocks.')).toBe('f - 8 rocks. [now in your inventory as item f]');
+    expect(explainMessage('$ - 2 gold pieces (3 in total).')).toContain('[now in your inventory as item $]');
+    expect(explainMessage('You see here 8 rocks.')).toContain('[on the floor where you stood then]');
+    expect(explainMessage('The jackal bites!')).toBe('The jackal bites!');
+  });
+
+  it('look here does not resurrect old floor messages after picking up and moving on', () => {
+    const store = makeStore();
+    store.apply(ev({ t: 'msg', text: 'You see here 8 rocks.', turn: 322 }));
+    store.apply(ev({ t: 'msg', text: 'f - 8 rocks.', turn: 323 }));
+    store.apply(ev({ t: 'inventory', items: [] }));
+    store.apply(ev({ t: 'input', kind: 'command', turn: 330, ux: 11, uy: 10 }));
+    const here = tools({}, store).run('look', { target: 'here' });
+    expect(here).not.toContain('rocks');
+    expect(tools({}, store).run('get_messages', { n: 2 })).toContain('f - 8 rocks. [now in your inventory as item f]');
   });
 });
