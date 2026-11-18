@@ -20,6 +20,22 @@ export function wordCount(text: string): number {
 
 const names = (t: TurnRecord) => t.tools.map((x) => x.name);
 
+/** game tools whose output the thinker is given up front (server/src/assistant/service.ts situation()) */
+export const THINKER_SITUATION_TOOLS = ['get_status', 'get_inventory', 'look', 'get_messages'];
+
+/**
+ * Tools whose information reached the answer: the assistant's own calls plus, for a turn that consulted the thinker
+ * successfully, the thinker's calls and the game reads it was given up front (the thinker reads them for the answer).
+ */
+export function effectiveTools(t: TurnRecord): string[] {
+  const out = names(t);
+  for (const e of t.expert ?? []) {
+    if (!e.ok) continue;
+    out.push(...e.tools.map((x) => x.name), ...THINKER_SITUATION_TOOLS);
+  }
+  return [...new Set(out)];
+}
+
 /** `snapshot`: the live-state snapshot the assistant had (for `tools.orSnapshot`) */
 export function gradeTurn(turn: TurnRecord, expect: Expect = {}, snapshot?: string | null): CheckResult[] {
   const out: CheckResult[] = [];
@@ -32,8 +48,10 @@ export function gradeTurn(turn: TurnRecord, expect: Expect = {}, snapshot?: stri
 
   const t = expect.tools ?? {};
   const inSnapshot = !!t.orSnapshot && !!snapshot && t.orSnapshot.test(snapshot);
-  if (t.any?.length) add(`calls one of ${t.any.join('/')}`, inSnapshot || called.some((n) => t.any!.includes(n)), `called: ${called.join(', ') || 'none'}`);
-  for (const n of t.all ?? []) add(`calls ${n}`, inSnapshot || called.includes(n), `called: ${called.join(', ') || 'none'}`);
+  // "information came from these tools" checks credit the thinker's reads; none / first / noTools are about the assistant itself
+  const used = effectiveTools(turn);
+  if (t.any?.length) add(`calls one of ${t.any.join('/')}`, inSnapshot || used.some((n) => t.any!.includes(n)), `called: ${used.join(', ') || 'none'}`);
+  for (const n of t.all ?? []) add(`calls ${n}`, inSnapshot || used.includes(n), `called: ${used.join(', ') || 'none'}`);
   for (const n of t.none ?? []) add(`does not call ${n}`, !called.includes(n), `called: ${called.join(', ')}`);
   if (t.first?.length) add(`first call is ${t.first.join('/')}`, !!called.length && t.first.includes(called[0]), `called: ${called.join(', ') || 'none'}`);
   if (t.noTools) add('no tool calls', !called.length, `called: ${called.join(', ')}`);

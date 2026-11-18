@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { AssistantError, type AssistantService } from '../assistant/service.ts';
+import { depthOf } from '../../../shared/assistant/consultations.ts';
 
 /**
  * Assistant routes.  Talk only to the AssistantService.
@@ -9,7 +10,7 @@ import { AssistantError, type AssistantService } from '../assistant/service.ts';
  *   POST /api/assistant/tools/:name   run a tool call: { args, call_id, session_id } -> { ok, result, ms }
  *   GET  /api/assistant/context       compact live game snapshot { text, turn }
  *   POST /api/assistant/transcript    append a transcript/event line to the log
- *   POST /api/assistant/expert        deep-thinking expert: { question, excerpt, consultation_id, session_id } -> ExpertResult
+ *   POST /api/assistant/expert        the thinker: { question, depth: quick|deep, excerpt, consultation_id, session_id } -> ExpertResult
  *                                     (20-90 s; closing the request cancels it)
  */
 export function registerAssistantRoutes(app: FastifyInstance, assistant: AssistantService) {
@@ -39,7 +40,7 @@ export function registerAssistantRoutes(app: FastifyInstance, assistant: Assista
     },
   );
 
-  app.post<{ Body: { question?: unknown; excerpt?: unknown; consultation_id?: unknown; session_id?: unknown } }>(
+  app.post<{ Body: { question?: unknown; depth?: unknown; excerpt?: unknown; consultation_id?: unknown; session_id?: unknown } }>(
     '/api/assistant/expert',
     async (req, reply) => {
       const b = req.body ?? {};
@@ -55,10 +56,16 @@ export function registerAssistantRoutes(app: FastifyInstance, assistant: Assista
         if (!reply.raw.writableFinished) ac.abort();
       });
       const r = await assistant.consultExpert(
-        { question, excerpt, consultationId: typeof b.consultation_id === 'string' ? b.consultation_id : '', sessionId: typeof b.session_id === 'string' ? b.session_id : undefined },
+        {
+          question,
+          depth: depthOf(b.depth),
+          excerpt,
+          consultationId: typeof b.consultation_id === 'string' ? b.consultation_id : '',
+          sessionId: typeof b.session_id === 'string' ? b.session_id : undefined,
+        },
         ac.signal,
       );
-      req.log.info({ expert: true, ok: r.ok, ms: r.ms, rounds: r.rounds, cost: r.cost }, 'assistant expert consultation');
+      req.log.info({ expert: true, depth: r.depth, cached: r.cached, ok: r.ok, ms: r.ms, rounds: r.rounds, cost: r.cost }, 'assistant thinker consultation');
       return r;
     },
   );

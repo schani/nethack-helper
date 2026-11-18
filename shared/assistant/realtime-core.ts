@@ -16,16 +16,16 @@
  *  - Text turns, latency marks (first text / first audio), the recap used
  *    after a reconnect, and the debug record (window.voiceDebug in the browser).
  *
- *  - Deep-thinking expert: consult_expert / cancel_expert are answered here
- *    (not by the server's tool endpoint); the slow expert runs in the
- *    background and its result is spoken when the channel is idle
- *    (see consultations.ts).
+ *  - Thinker ("expert" in the code): ask_thinker / cancel_thinker are answered
+ *    here (not by the server's tool endpoint); the thinker runs in the
+ *    background (quick: seconds, deep: up to a minute or more) and its
+ *    result is spoken when the channel is idle (see consultations.ts).
  *
  * The host owns the transport (connect, reconnect, audio) and tells the core
  * when a session is attached / detached.  No DOM or Node APIs here.
  */
 import {
-  CLIENT_TOOLS, CANCEL_EXPERT_TOOL, Consultations, EXPERT_TOOL, deliveryText,
+  CLIENT_TOOLS, CANCEL_EXPERT_TOOL, Consultations, EXPERT_TOOL, deliveryText, depthOf,
   type Consultation, type ExpertRequest, type ExpertResult,
 } from './consultations.ts';
 
@@ -84,7 +84,7 @@ export interface AssistantBackend {
   tool(name: string, args: Record<string, unknown>, callId: string, sessionId?: string): Promise<ToolResponse>;
   context(): Promise<GameContext>;
   log(entry: Record<string, unknown>): void;
-  /** the deep-thinking expert (absent: consult_expert reports it is unavailable); resolves with ok:false on failure */
+  /** the thinker (absent: ask_thinker reports it is unavailable); resolves with ok:false on failure */
   expert?(req: ExpertRequest, signal: AbortSignal): Promise<ExpertResult>;
 }
 
@@ -551,7 +551,7 @@ export class RealtimeConversation {
         if (gen !== this.generation) return; // reconnected meanwhile: that conversation is gone
         if (this.userTurn === turnOfResponse) {
           for (const { call } of calls) this.sendOutput(call, call.result!);
-          // consult_expert / cancel_expert after a spoken line ("let me think that through"): nothing more to say now
+          // ask_thinker / cancel_thinker after a spoken line ("Checking."): nothing more to say now
           const clientOnly = calls.every(({ call }) => CLIENT_TOOLS.includes(call.name) && call.ok);
           if (!(clientOnly && spokeIn(resp))) this.requestResponse();
         } else {
@@ -644,11 +644,13 @@ export class RealtimeConversation {
 
   // ------------------------------------------------------------------ expert consultations
 
-  /** consult_expert / cancel_expert, answered at once */
+  /** ask_thinker / cancel_thinker, answered at once */
   private clientTool(name: string, args: Json): ToolResponse {
     if (name === EXPERT_TOOL) {
       const question = typeof args.question === 'string' ? args.question : '';
+      const depth = depthOf(args.depth);
       const r = this.experts.start(question, {
+        depth,
         excerpt: this.history.slice(-8).map((h) => ({ role: h.role, text: h.text.slice(0, 500) })),
         sessionId: this.sessionId,
         turn: this.ctxTurn,
@@ -656,14 +658,17 @@ export class RealtimeConversation {
         userTurn: this.userTurn,
       });
       if ('error' in r) return { ok: false, result: r.error };
-      if (r.duplicate) return { ok: true, result: `ALREADY RUNNING: the expert is still working on this question (consultation ${r.c.id}). Do not ask again; keep the conversation going.` };
+      if (r.duplicate) return { ok: true, result: `ALREADY RUNNING: the thinker is still working on this question (consultation ${r.c.id}). Do not ask again; keep the conversation going.` };
       const busy = this.experts.running.length - 1;
+      const quick = depth === 'quick';
       return {
         ok: true,
         result:
-          `STARTED consultation ${r.c.id}: the expert is working on it in the background (usually 20 to 90 seconds${busy ? `; ${busy} other consultation(s) also running` : ''}). ` +
-          "If you have not said so yet, tell the user in one short sentence that you'll get back to them. Do not guess the answer meanwhile; " +
-          'keep helping with anything else. The result will arrive as a system message starting with [Expert result].',
+          `STARTED consultation ${r.c.id}: the thinker is working on it in the background (usually ${quick ? '5 to 15' : '20 to 90'} seconds${busy ? `; ${busy} other consultation(s) also running` : ''}). ` +
+          (quick
+            ? 'If you have not said anything yet, say only a one to three word line such as "Checking." and nothing else. '
+            : "If you have not said so yet, tell the user in one short sentence that you'll get back to them. ") +
+          'Do not answer or guess meanwhile; keep helping with anything else. The result will arrive as a system message starting with [Thinker result].',
       };
     }
     if (name === CANCEL_EXPERT_TOOL) {
@@ -673,7 +678,7 @@ export class RealtimeConversation {
         ok: true,
         result: done.length
           ? `CANCELLED ${done.map((c) => `${c.id} ("${c.question.slice(0, 80)}")`).join(', ')}. Acknowledge in a few words.`
-          : 'Nothing to cancel: no consultation is running or waiting.',
+          : 'Nothing to cancel: no thinker consultation is running or waiting.',
       };
     }
     return { ok: false, result: `unknown client tool ${name}` };
@@ -688,7 +693,7 @@ export class RealtimeConversation {
       item: {
         type: 'message',
         role: 'system',
-        content: [{ type: 'input_text', text: `[Expert consultation ${id} about "${done[0].question.slice(0, 120)}" was cancelled by the user. Do not bring it up unless asked.]` }],
+        content: [{ type: 'input_text', text: `[Thinker consultation ${id} about "${done[0].question.slice(0, 120)}" was cancelled by the user. Do not bring it up unless asked.]` }],
       },
     });
   }
@@ -706,11 +711,11 @@ export class RealtimeConversation {
   private expertChanged(c: Consultation) {
     this.view.expert?.(c);
     const ms = c.finishedAt !== undefined ? Math.round(c.finishedAt - c.startedAt) : undefined;
-    if (c.status === 'running') this.debug.transcript.push({ role: 'tool', text: `expert ${c.id} started: ${c.question}` });
+    if (c.status === 'running') this.debug.transcript.push({ role: 'tool', text: `thinker ${c.id} (${c.depth}) started: ${c.question}` });
     if (c.status === 'ready') {
       const r = c.result!;
       this.debug.transcript.push({ role: 'expert', text: `${c.id} ${r.ok ? 'ok' : `FAILED (${r.error})`} after ${ms} ms: ${r.answer}` });
-      this.backend.log({ kind: 'expert', id: c.id, question: c.question, ok: r.ok, ms, rounds: r.rounds, tools: r.tools.length, confidence: r.confidence, error: r.error });
+      this.backend.log({ kind: 'expert', id: c.id, depth: c.depth, question: c.question, ok: r.ok, ms, rounds: r.rounds, tools: r.tools.length, confidence: r.confidence, cached: r.cached, error: r.error });
     }
     if (c.status === 'cancelled') this.backend.log({ kind: 'expert_cancelled', id: c.id, reason: c.cancelReason });
   }

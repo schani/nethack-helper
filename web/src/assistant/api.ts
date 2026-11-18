@@ -11,7 +11,7 @@ export interface AssistantConfig {
   tools: string[];
   sourceAvailable: boolean;
   apiKeyConfigured: boolean;
-  expert?: { enabled: boolean; model: string; effort: string; timeoutMs: number };
+  expert?: { enabled: boolean; model: string; effort: string; timeoutMs: number; quick?: { effort: string; timeoutMs: number; softMs: number; maxRounds: number } };
 }
 
 export interface GameContext {
@@ -75,14 +75,14 @@ export const assistantApi = {
     }
   },
 
-  /** deep-thinking expert (20-90 s); aborting the signal cancels it on the server. Never throws. */
+  /** the thinker (quick: seconds, deep: 20-90 s); aborting the signal cancels it on the server. Never throws. */
   expert: async (req: ExpertRequest, signal: AbortSignal): Promise<ExpertResult> => {
     const t0 = performance.now();
     try {
       const r = await fetch('/api/assistant/expert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: req.question, excerpt: req.excerpt, consultation_id: req.consultationId, session_id: req.sessionId }),
+        body: JSON.stringify({ question: req.question, depth: req.depth, excerpt: req.excerpt, consultation_id: req.consultationId, session_id: req.sessionId }),
         // the server gives up after ~90 s; this only catches a hung connection
         signal: AbortSignal.any([signal, AbortSignal.timeout(150_000)]),
       });

@@ -71,7 +71,11 @@ export interface TurnRecord {
   /** model responses in this turn; rounds = responses that called tools */
   responses: number;
   rounds: number;
-  latency: { first_text?: number; first_audio?: number; total: number };
+  /**
+   * first_text / first_audio: the first thing said (a preamble like "Checking." counts); final_text: when the last
+   * message of the turn (the answer, e.g. a delivered thinker result) started; total: when the turn was over
+   */
+  latency: { first_text?: number; first_audio?: number; final_text?: number; total: number };
   usage: Usage;
   errors: string[];
   unpaired: string[];
@@ -84,6 +88,12 @@ export interface TurnRecord {
 export interface ExpertRecord {
   id: string;
   question: string;
+  depth?: string;
+  cached?: boolean;
+  /** consultation start, result ready, and spoken (ms after the turn started) */
+  startedAt?: number;
+  finishedAt?: number;
+  deliveredAt?: number;
   status: string;
   ok: boolean;
   error?: string;
@@ -151,6 +161,8 @@ export class NodeRealtimeSession implements RealtimeHost {
     lastDoneAt: number;
     finalSeen: boolean;
     audioStarted: Set<string>;
+    /** response id -> time of its first text / transcript delta */
+    firstDelta: Map<string, number>;
   } | null = null;
   private listeners = new Set<(ev: Json) => void>();
   sessionId?: string;
@@ -230,6 +242,9 @@ export class NodeRealtimeSession implements RealtimeHost {
       t.audioStarted.add(ev.response_id);
       this.conversation.onEvent({ type: 'output_audio_buffer.started', response_id: ev.response_id });
     }
+    if ((ev.type === 'response.output_text.delta' || ev.type === 'response.output_audio_transcript.delta') && t && !t.firstDelta.has(ev.response_id)) {
+      t.firstDelta.set(ev.response_id, Date.now());
+    }
     if (ev.type === 'response.output_audio.delta' || ev.type === 'response.output_text.delta' || ev.type === 'response.output_audio_transcript.delta') {
       // deltas are only needed by the core (text accumulation, first-text mark)
       this.conversation.onEvent(ev);
@@ -257,7 +272,7 @@ export class NodeRealtimeSession implements RealtimeHost {
   }
 
   private beginTurn() {
-    this.turn = { responses: [], usage: emptyUsage(), errors: [], lastDoneAt: 0, finalSeen: false, audioStarted: new Set() };
+    this.turn = { responses: [], usage: emptyUsage(), errors: [], lastDoneAt: 0, finalSeen: false, audioStarted: new Set(), firstDelta: new Map() };
     return {
       transcript: this.conversation.debug.transcript.length,
       tools: this.conversation.debug.tools.length,
@@ -289,6 +304,10 @@ export class NodeRealtimeSession implements RealtimeHost {
   private collect(input: string, before: ReturnType<NodeRealtimeSession['beginTurn']>, t0: number, heard?: string): TurnRecord {
     const t = this.turn!;
     const d = this.conversation.debug;
+    // consultation times are on the core's clock (performance.now)
+    const tPerf = performance.now() - (Date.now() - t0);
+    const spoke = t.responses.filter((r) => t.firstDelta.has(r.id));
+    const lastSpoke = spoke.at(-1);
     const finals = this.view.finals.slice(before.finals);
     const assistants = d.transcript.slice(before.transcript).filter((m) => m.role === 'assistant');
     const roundOf = new Map<string, number>();
@@ -312,7 +331,12 @@ export class NodeRealtimeSession implements RealtimeHost {
       tools,
       responses: t.responses.length,
       rounds: r,
-      latency: { first_text: firstMs.first_text, first_audio: firstMs.first_audio, total: (t.lastDoneAt || Date.now()) - t0 },
+      latency: {
+        first_text: firstMs.first_text,
+        first_audio: firstMs.first_audio,
+        ...(lastSpoke ? { final_text: t.firstDelta.get(lastSpoke.id)! - t0 } : {}),
+        total: (t.lastDoneAt || Date.now()) - t0,
+      },
       usage: t.usage,
       errors: [...t.errors, ...d.errors.splice(0)],
       unpaired: d.unpaired(),
@@ -320,6 +344,11 @@ export class NodeRealtimeSession implements RealtimeHost {
       expert: this.conversation.experts.list.slice(before.experts).map((c) => ({
         id: c.id,
         question: c.question,
+        depth: c.depth,
+        ...(c.result?.cached ? { cached: true } : {}),
+        startedAt: Math.round(c.startedAt - tPerf),
+        ...(c.finishedAt !== undefined ? { finishedAt: Math.round(c.finishedAt - tPerf) } : {}),
+        ...(c.deliveredAt !== undefined ? { deliveredAt: Math.round(c.deliveredAt - tPerf) } : {}),
         status: c.status,
         ok: !!c.result?.ok,
         ...(c.result?.error ? { error: c.result.error } : {}),

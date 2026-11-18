@@ -31,6 +31,14 @@ describe('gradeTurn', () => {
     expect(failed(c)).toEqual([]);
   });
 
+  it('credits the tools a successful thinker consultation used and the game reads it was given', () => {
+    const thinker = (ok: boolean) => ({ id: 'x1', question: 'q', status: 'delivered', ok, ms: 1, rounds: 1, tools: [{ name: 'read_guidebook', args: {}, ok: true, ms: 1 }], answer: 'a', keyFacts: [], confidence: 'high', spoiler: false, unknowns: [], cost: 0 });
+    const t = turn('ok', ['ask_thinker'], { expert: [thinker(true)] });
+    expect(failed(gradeTurn(t, { tools: { any: ['get_inventory'], all: ['read_guidebook'] } }))).toEqual([]);
+    expect(failed(gradeTurn(t, { tools: { first: ['get_inventory'] } }))).toEqual(['first call is get_inventory']);
+    expect(failed(gradeTurn(turn('ok', ['ask_thinker'], { expert: [thinker(false)] }), { tools: { any: ['get_inventory'] } }))).toEqual(['calls one of get_inventory']);
+  });
+
   it('checks tool requirements: any / all / none / first / noTools', () => {
     const t = turn('ok', ['get_status', 'look']);
     expect(failed(gradeTurn(t, { tools: { any: ['get_inventory'] } }))).toEqual(['calls one of get_inventory']);

@@ -1,9 +1,11 @@
 /**
- * Background "deep-thinking expert" consultations for the voice assistant.
+ * Background "thinker" consultations for the voice assistant (called "expert" in the code and API).
  *
- * The realtime model calls consult_expert(question); the call is answered at once ("the expert is working on
- * it") so the conversation goes on, while a slow, strong reasoning model works on the question on the server
- * (POST /api/assistant/expert, see server/src/assistant/expert.ts).  When a result arrives it is queued here
+ * The realtime model calls ask_thinker(question, depth); the call is answered at once ("the thinker is working
+ * on it") so the conversation goes on, while a strong reasoning model works on the question on the server
+ * (POST /api/assistant/expert, see server/src/assistant/expert.ts).  depth "quick" (the default) is for everyday
+ * game-knowledge questions ("how do I open this locked box?"), answered in about 5 to 15 seconds and tailored to
+ * the player's situation; "deep" is for calculations and rare mechanics (20 to 90 seconds).  When a result arrives it is queued here
  * and delivered only when the voice channel is idle: no response in progress, no assistant audio playing,
  * the user not speaking, no tool call in flight, and a short quiet gap since the last activity.  Delivery
  * (done by RealtimeConversation) adds a system message with the result and requests a response, following the
@@ -11,18 +13,24 @@
  * system message, then response.create).
  *
  * Handles several concurrent consultations (results that are ready at the same moment are delivered
- * together), cancellation (cancel_expert tool, the panel's cancel button, session end), duplicates, failures
+ * together), cancellation (cancel_thinker tool, the panel's cancel button, session end), duplicates, failures
  * and timeouts (delivered as a short "couldn't finish" note), and stale results (the game moved on: the
  * delivery says so).  Transport-agnostic, no DOM / Node APIs: unit-tested in server/test/unit.
  */
 
-export const EXPERT_TOOL = 'consult_expert';
-export const CANCEL_EXPERT_TOOL = 'cancel_expert';
+export const EXPERT_TOOL = 'ask_thinker';
+export const CANCEL_EXPERT_TOOL = 'cancel_thinker';
 /** tools the conversation core answers itself (never sent to the server's tool endpoint) */
 export const CLIENT_TOOLS: readonly string[] = [EXPERT_TOOL, CANCEL_EXPERT_TOOL];
 
+/** quick: everyday game questions, a few seconds; deep: calculations and rare mechanics, up to a minute or more */
+export type Depth = 'quick' | 'deep';
+export const depthOf = (v: unknown): Depth => (v === 'deep' ? 'deep' : 'quick');
+
 export interface ExpertRequest {
   question: string;
+  /** default quick */
+  depth?: Depth;
   /** the last few exchanges, so the expert knows what the user asked and whether they agreed to spoilers */
   excerpt: { role: 'user' | 'assistant'; text: string }[];
   consultationId: string;
@@ -34,6 +42,8 @@ export interface ExpertResult {
   /** spoken-ready answer (already follows the spoiler policy for what the excerpt shows) */
   answer: string;
   keyFacts: string[];
+  /** the methods the thinker considered (usable_now: the player can do it now) */
+  options?: { method: string; usable_now: boolean; risk: string }[];
   confidence: 'high' | 'medium' | 'low';
   /** the answer or spoilerDetails contain spoiler-level information */
   spoiler: boolean;
@@ -48,6 +58,9 @@ export interface ExpertResult {
   usage?: { input: number; cached: number; output: number; reasoning: number };
   cost?: number;
   model?: string;
+  depth?: Depth;
+  /** answered from the thinker's answer cache (same general question asked before) */
+  cached?: boolean;
   /** game turn / snapshot the expert started from (staleness check) */
   snapshot?: { turn: number; text: string };
 }
@@ -57,6 +70,7 @@ export type ConsultationStatus = 'running' | 'ready' | 'delivering' | 'delivered
 export interface Consultation {
   id: string;
   question: string;
+  depth: Depth;
   status: ConsultationStatus;
   startedAt: number;
   finishedAt?: number;
@@ -117,18 +131,20 @@ export class Consultations {
   /** Start a consultation; returns the existing one for a duplicate question that is still running. */
   start(
     question: string,
-    meta: { excerpt: ExpertRequest['excerpt']; sessionId?: string; turn?: number; context?: string; userTurn: number },
+    meta: { depth?: Depth; excerpt: ExpertRequest['excerpt']; sessionId?: string; turn?: number; context?: string; userTurn: number },
   ): { c: Consultation; duplicate: boolean } | { error: string } {
     const expert = this.deps.expert;
-    if (!expert) return { error: 'the expert is not available in this session' };
+    if (!expert) return { error: 'the thinker is not available in this session' };
     if (!question.trim()) return { error: "missing 'question'" };
-    const dup = this.list.find((c) => c.status === 'running' && norm(c.question) === norm(question));
+    const depth = meta.depth ?? 'quick';
+    const dup = this.list.find((c) => c.status === 'running' && c.depth === depth && norm(c.question) === norm(question));
     if (dup) return { c: dup, duplicate: true };
     const max = this.deps.maxConcurrent ?? 3;
     if (this.running.length >= max) return { error: `${max} consultations are already running; wait for one to finish or cancel one` };
     const c: Consultation = {
       id: `x${++this.seq}`,
       question: question.trim(),
+      depth,
       status: 'running',
       startedAt: this.deps.now(),
       startTurn: meta.turn,
@@ -138,7 +154,7 @@ export class Consultations {
     };
     this.list.push(c);
     this.deps.changed(c);
-    const req: ExpertRequest = { question: c.question, excerpt: meta.excerpt, consultationId: c.id, sessionId: meta.sessionId };
+    const req: ExpertRequest = { question: c.question, depth, excerpt: meta.excerpt, consultationId: c.id, sessionId: meta.sessionId };
     expert(req, c.ac.signal)
       .catch((e: Error): ExpertResult => failure(e?.name === 'AbortError' ? 'cancelled' : `network error: ${e?.message ?? e}`, this.deps.now() - c.startedAt))
       .then((r) => this.finished(c, r));
@@ -252,26 +268,31 @@ export function deliveryText(batch: Consultation[], now: { text: string; turn: n
   const blocks = batch.map((c) => {
     const r = c.result!;
     const ago = Math.round((at - c.startedAt) / 1000);
-    const head = `[Expert result ${c.id}] The user's question (asked ${ago} s ago): "${c.question}"`;
+    const head = `[Thinker result ${c.id}] The user's question (asked ${ago} s ago): "${c.question}"`;
     if (!r.ok) {
-      return `${head}\nThe expert could NOT finish (${r.error ?? 'unknown error'}). Tell the user in one short sentence that the careful check didn't work out this time; give your own brief answer only if you are confident of it, otherwise suggest asking again.`;
+      return `${head}\nThe thinker could NOT finish (${r.error ?? 'unknown error'}). Tell the user in one short sentence that the check didn't work out this time; give your own brief answer only if you are confident of it, otherwise suggest asking again.`;
     }
     const lines = [head, `Answer: ${r.answer}`];
     if (r.keyFacts.length) lines.push(`Key facts: ${r.keyFacts.join('; ')}`);
     lines.push(`Confidence: ${r.confidence}.${r.unknowns.length ? ` Depends on things nobody can see in the game: ${r.unknowns.join('; ')}.` : ''}`);
     if (r.spoilerDetails)
-      lines.push(`Spoiler-level details the expert kept out of the answer (give them right away if the user already agreed to spoilers on this topic; otherwise offer them): ${r.spoilerDetails}`);
+      lines.push(`Spoiler-level details the thinker kept out of the answer (give them right away if the user already agreed to spoilers on this topic; otherwise offer them): ${r.spoilerDetails}`);
     const stale = staleNote(c, now);
     if (stale) lines.push(stale);
     return lines.join('\n');
   });
   const many = batch.length > 1;
+  const deep = batch.some((c) => c.depth === 'deep');
+  const lead = deep || many
+    ? 'start with a short lead-in naming the question (for example "About the lamp:"), then '
+    : 'if the user has moved on to another topic since asking, start with a two or three word lead-in naming the question ("About the box:"); otherwise go straight to the answer, with no lead-in. Then ';
   return (
     `${blocks.join('\n\n')}\n\n` +
-    `Now tell the user ${many ? 'these results' : 'this result'}: start with a short lead-in naming the question (for example "About the lamp:"), ` +
-    'then relay the Answer faithfully: it is already written for speech, so keep its conclusion and its key numbers and reasons; you may shorten it ' +
-    '(at most about 80 words). Keep the spoiler policy (if spoiler details were kept out and the user has not agreed yet, end by asking whether they want them). ' +
-    'Mention unknowns or low confidence briefly. Never read out these labels, ids, numbers of seconds, file paths or code. ' +
+    `Now tell the user ${many ? 'these results' : 'this result'}: ${lead}` +
+    'relay the Answer faithfully. It is already written for speech and puts the best option for this player first: keep its conclusion, ' +
+    'EVERY option it names that the player can use (with its key or command), and any warning about a real risk; you may shorten the wording ' +
+    `(at most about ${deep ? 80 : 50} words). Do not add options, facts or advice of your own. Keep the spoiler policy (if spoiler details were kept out and the user has not agreed yet, end by asking whether they want them). ` +
+    'Mention unknowns or low confidence briefly, only if they change the answer. Never read out these labels, ids, numbers of seconds, file paths or code. ' +
     'If the user has meanwhile asked something else that is more urgent, give the gist in one sentence and offer the rest.'
   );
 }

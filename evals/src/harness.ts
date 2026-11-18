@@ -35,7 +35,7 @@ export type KnowledgeMode = 'cache' | 'live' | 'offline';
 /** Bump when fetch_wiki_page output changes, so cached results of the old format are not reused (v2 keys had no salt). */
 const WIKI_FORMAT = 'wiki-html-1';
 /** Local, deterministic tools: never cached (their output changes with the code, not with the outside world). */
-const LOCAL_TOOLS = new Set(['search_nethack_source', 'read_nethack_source', 'nethack_lookup']);
+const LOCAL_TOOLS = new Set(['search_nethack_source', 'read_nethack_source', 'nethack_lookup', 'read_guidebook']);
 
 export class CachedKnowledge extends KnowledgeService {
   private mode: KnowledgeMode;
@@ -115,7 +115,9 @@ export function resolvedVariant(v: Variant) {
     voice: v.voice ?? DEFAULTS.voice,
     promptsDir: v.promptsDir ? path.resolve(ROOT, v.promptsDir) : serverCfg.assistant.promptsDir,
     expert,
-    ...(expert ? { expertModel: v.expertModel ?? EXPERT.model, expertEffort: v.expertEffort ?? EXPERT.effort } : {}),
+    ...(expert
+      ? { expertModel: v.expertModel ?? EXPERT.model, expertEffort: v.expertEffort ?? EXPERT.effort, thinkerQuick: { ...EXPERT.quick, ...v.thinkerQuick } }
+      : {}),
   };
 }
 
@@ -152,7 +154,8 @@ export function fixtureBackend(fx: Fixture, c: EvalCase, v: Variant, knowledge: 
     knowledge,
     timeouts: c.faults?.timeouts,
     gameOptions: v.game,
-    expert: { enabled: resolvedVariant(v).expert, model: v.expertModel, effort: v.expertEffort },
+    // a fresh service per case run: the thinker's answer cache never carries over between runs
+    expert: { enabled: resolvedVariant(v).expert, model: v.expertModel, effort: v.expertEffort, quick: v.thinkerQuick },
   });
   const none = v.snapshot === 'none';
   const backend: AssistantBackend = {
@@ -197,7 +200,7 @@ export function httpBackend(base: string, v: Variant): AssistantBackend {
             const r = await fetch(`${base}/api/assistant/expert`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ question: req.question, excerpt: req.excerpt, consultation_id: req.consultationId, session_id: req.sessionId }),
+              body: JSON.stringify({ question: req.question, depth: req.depth, excerpt: req.excerpt, consultation_id: req.consultationId, session_id: req.sessionId }),
               signal: AbortSignal.any([signal, AbortSignal.timeout(150_000)]),
             });
             return (await r.json()) as ExpertResult;

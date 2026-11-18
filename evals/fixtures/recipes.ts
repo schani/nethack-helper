@@ -88,6 +88,36 @@ async function descend(p: Play) {
   throw new Error('no main-dungeon down staircase');
 }
 
+
+/** step one square in direction `k` and back (vi-keys), e.g. to fall into a trap created underfoot */
+async function stepOffAndBack(p: Play, k: string) {
+  const back: Record<string, string> = { h: 'l', l: 'h', j: 'k', k: 'j', y: 'n', n: 'y', u: 'b', b: 'u' };
+  await p.raw(k, 500);
+  await p.g.toCommand();
+  await p.raw(back[k], 700);
+  await p.g.toCommand();
+}
+
+/** answer a direction prompt of `cmd` (one key at a time: the prompt drops type-ahead) */
+async function withDir(p: Play, cmd: string, dir: string) {
+  await p.raw(cmd, 500);
+  await p.raw(dir, 700);
+  await p.g.toCommand();
+}
+
+/** a doorway (no door) with room floor on one side; returns it and the vi-key from that floor square towards it */
+async function doorwayWithFloor(p: Play) {
+  const { cells } = await p.g.cells();
+  const at = new Map(cells.map((c) => [`${c.x},${c.y}`, c]));
+  const floor = (x: number, y: number) => /^(floor of a room|dark part of a room)$/.test(at.get(`${x},${y}`)?.desc ?? '');
+  for (const d of cells.filter((c) => c.desc === 'doorway')) {
+    for (const [dx, dy, key] of [[-1, 0, 'l'], [1, 0, 'h'], [0, -1, 'j'], [0, 1, 'k']] as const) {
+      if (floor(d.x + dx, d.y + dy)) return { door: d, from: { x: d.x + dx, y: d.y + dy }, key };
+    }
+  }
+  throw new Error('no doorway next to room floor');
+}
+
 export const RECIPES: Recipe[] = [
   {
     id: 'start-pet-adjacent',
@@ -414,6 +444,128 @@ export const RECIPES: Recipe[] = [
     noGame: true,
     steps: async () => {},
     notes: ['No game is running. Game tools report that the game is not running; general NetHack questions can still be answered.'],
+  },
+  // ---- "how do I / what are my options" situations (tag howto)
+  {
+    id: 'locked-box',
+    description: 'Samurai (no key, wielding a katana) standing on a large box; #loot says it is locked',
+    seed: 7,
+    role: 'Samurai',
+    wizard: true,
+    steps: async (p) => {
+      await p.beginSetup();
+      await p.wish('locked large box');
+      await p.raw('d', 400);
+      await p.raw('g', 700);
+      await p.g.toCommand();
+      await p.endSetup();
+      await p.raw('#loot\r', 900);
+      await p.g.toCommand();
+    },
+    notes: [
+      'Hero: lawful human Samurai, XL 1, turn 2, Dlvl 1, wielding a +0 katana; also a +0 wakizashi (short sword), yumi, ya, splint mail, blindfold. No key, lock pick, credit card, wand or tool that unlocks.',
+      'The hero stands on a large box; #loot just said "Hmmm, the large box turns out to be locked." Pet little dog nearby.',
+    ],
+  },
+  {
+    id: 'locked-door',
+    description: 'Valkyrie next to a door that "is locked" (just tried to open it); carries an unopened tin',
+    seed: 7,
+    role: 'Valkyrie',
+    wizard: true,
+    steps: async (p) => {
+      await p.beginSetup();
+      await p.wish('uncursed tin');
+      await p.mapLevel();
+      const d = await doorwayWithFloor(p);
+      await p.teleport(d.door.x, d.door.y);
+      await p.wish('locked door');
+      await p.teleport(d.from.x, d.from.y);
+      await p.endSetup();
+      await withDir(p, 'o', d.key);
+    },
+    notes: [
+      'Hero: neutral human Valkyrie, XL 1, Dlvl 1, wielding a +1 spear; carries a +0 dagger, small shield, food ration and an unopened tin. No key, lock pick or credit card, no wands.',
+      'A closed door is adjacent; trying to open it said "This door is locked." Not a shop door; not Minetown.',
+    ],
+  },
+  {
+    id: 'in-pit',
+    description: 'Samurai who just fell into a pit on Dlvl 1 and tried once to climb out',
+    seed: 7,
+    role: 'Samurai',
+    wizard: true,
+    steps: async (p) => {
+      await p.beginSetup();
+      // a quiet spot away from the starting room's monsters
+      await p.mapLevel();
+      const f = await openFloor(p, 2);
+      await freeTeleport(p, f.x, f.y);
+      await p.wish('pit');
+      await p.teleport(f.x + 1, f.y);
+      await p.endSetup();
+      await p.raw('h', 700);
+      await p.g.toCommand();
+      await p.raw('k', 700);
+      await p.g.toCommand();
+      const msgs = (await p.st()).messages.slice(-3).map((m) => m.text).join(' ');
+      if (!/still in a pit|fall into a pit/.test(msgs)) throw new Error(`not in the pit: ${msgs}`);
+    },
+    notes: ['Hero: Samurai, Dlvl 1, in a pit ("You fall into a pit!", then "You are still in a pit."); took a few points of damage.'],
+  },
+  {
+    id: 'in-web',
+    description: 'Elven Wizard (St 7) stuck in a spider web on Dlvl 1',
+    seed: 33,
+    wizard: true,
+    steps: async (p) => {
+      await p.beginSetup();
+      const f = await openFloor(p, 2, true);
+      await freeTeleport(p, f.x, f.y);
+      await p.wish('web');
+      await p.raw('l', 500);
+      await p.g.toCommand();
+      await p.endSetup();
+      await p.raw('h', 700);
+      await p.g.toCommand();
+    },
+    notes: ['Hero: chaotic elven Wizard, St 7, Dlvl 1, just stumbled into a spider web ("You stumble into a spider web!"). Starting Wizard kit (quarterstaff, cloak of magic resistance, wand of locking, force bolt...).'],
+  },
+  {
+    id: 'cursed-helmet',
+    description: 'Elven Wizard wearing a cursed orcish helm that will not come off; carries holy water and a scroll of destroy armor',
+    seed: 33,
+    wizard: true,
+    steps: async (p) => {
+      await p.beginSetup();
+      const helm = await p.wishGet('cursed +0 orcish helm');
+      await p.endSetup();
+      await p.raw('W', 500);
+      await p.raw(helm, 900);
+      await p.g.toCommand();
+      await p.raw('T', 500);
+      // two worn items (cloak, helm): T asks which one
+      if ((await p.st()).awaiting?.kind !== 'command') await p.raw(helm, 800);
+      await p.g.toCommand();
+    },
+    notes: [
+      'Hero: chaotic elven Wizard, XL 1, turn ~3, Dlvl 1. Wears an uncursed +0 cloak of magic resistance and a cursed orcish helm (just put on; taking it off fails: "You can\'t. It is cursed.").',
+      'Inventory includes a potion of holy water (f), an uncursed scroll of destroy armor (i), scroll of identify, wand of locking, force bolt.',
+    ],
+  },
+  {
+    id: 'weak-no-food',
+    description: 'Samurai (no food in the starting kit) Weak from hunger around turn 900, never prayed',
+    seed: 7,
+    role: 'Samurai',
+    steps: async (p) => {
+      for (let i = 0; i < 80; i++) {
+        const st = await p.st();
+        if (/weak|faint/i.test(st.status?.fields.hunger ?? '')) break;
+        await p.cmd('20s');
+      }
+    },
+    notes: ['Hero: Samurai, Dlvl 1, status Weak (hunger), no food in inventory, never prayed this game (turn ~900+, so the prayer timeout of 300 has run out).'],
   },
   {
     id: 'char-creation',

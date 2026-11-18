@@ -14,7 +14,7 @@ import { parseInfobox, splitSections } from '../../src/assistant/knowledge/wiki.
 import { formatSokobanSolution, parseFlip } from '../../src/assistant/knowledge/sokoban.ts';
 import { KNOWLEDGE_TOOL_DEFS, KnowledgeService } from '../../src/assistant/knowledge/index.ts';
 import { ToolError } from '../../src/assistant/knowledge/util.ts';
-import { AssistantService, TOOL_DEFS } from '../../src/assistant/service.ts';
+import { AssistantService, THINKER_TOOL_DEFS, TOOL_DEFS } from '../../src/assistant/service.ts';
 import { registerAssistantRoutes } from '../../src/api/assistant.ts';
 import { loadConfig } from '../../src/config.ts';
 import { GameStateStore } from '../../src/feed/state.ts';
@@ -98,6 +98,30 @@ describe('sokoban solution formatter', () => {
   });
   it('returns null without a parsable solution', () => {
     expect(formatSokobanSolution('no strategy here', 'Sokoban Level 1a')).toBeNull();
+  });
+});
+
+describe.skipIf(!hasSrc)('read_guidebook (thinker only)', () => {
+  it('returns a section by name or number, without page headers', async () => {
+    const r = await runTool('read_guidebook', { topic: 'Containers' });
+    expect(r).toMatch(/^Guidebook 7\.12\.1 Containers/);
+    expect(r).toMatch(/#force/);
+    expect(r).not.toMatch(/NetHack Guidebook\s+\d+/);
+    expect(await runTool('read_guidebook', { topic: '7.12.1' })).toBe(r);
+  });
+  it('finds a command entry plus the paragraphs that explain it', async () => {
+    const r = await runTool('read_guidebook', { topic: '#force' });
+    expect(r).toMatch(/Command #force[^\n]*\n#force\nForce a lock/);
+    expect(r).toMatch(/Containers\] .*force the lock/);
+    expect(await runTool('read_guidebook', { topic: 'kick' })).toMatch(/Command \^D/);
+  });
+  it('keyword search and the table of contents', async () => {
+    expect(await runTool('read_guidebook', { topic: 'escape a pit or web' })).toMatch(/trying to move to an adjacent spot/);
+    expect(await runTool('read_guidebook', { topic: 'contents' })).toMatch(/5\.1 Doorways/);
+  });
+  it('is offered to the thinker, not to the realtime model', () => {
+    expect(TOOL_DEFS.map((t) => t.name as string)).not.toContain('read_guidebook');
+    expect(THINKER_TOOL_DEFS.some((t) => t.name === 'read_guidebook')).toBe(true);
   });
 });
 

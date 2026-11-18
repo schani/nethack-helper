@@ -86,7 +86,13 @@ const NO_LOOKUP_EDITS = [
 export const VARIANTS: Record<string, Variant> = Object.fromEntries(
   [
     // ---- current production (server/prompts, default tool formats): use these for new experiments
-    v('baseline', 'current production config (v5: v4 + much terser spoken answers; deep-thinking expert enabled)'),
+    v('baseline', 'current production config (v6: v5 + the thinker answers game questions: ask_thinker quick/deep, Guidebook, situation-aware)'),
+    // ---- v6 runs (full suite + howto, N=2): th-base (v5 production) 82% -> th-new (v6) 89%, howto 45% -> 90%; quick effort low vs medium
+    //      (th-tune-baseline / th-tune-quick-medium, howto+deep+knowledge N=1): 82% vs 87% (noise), quick thinker 7.0 s vs 13.1 s median
+    // ---- v6 thinker tuning (production quick mode: gpt-6.1-terra, effort low, soft deadline 9 s, at most one tool round (maxRounds 2))
+    v('quick-medium', 'production with the thinker quick mode at reasoning effort medium', { thinkerQuick: { effort: 'medium' } }),
+    v('quick-notools', 'production with the thinker quick mode answering from the given situation only (maxRounds 1: tool calls are skipped)', { thinkerQuick: { maxRounds: 1 } }),
+    v('quick-sol', 'production with the thinker on gpt-6.1-sol (quick effort low)', { expertModel: 'gpt-6.1-sol' }),
     v('mini', 'production on gpt-realtime-2.1-mini (production prompt + mini addendum)', { model: 'gpt-realtime-2.1-mini' }),
     v('reasoning-minimal', 'production with reasoning effort minimal', { reasoning: 'minimal' }),
     v('reasoning-medium', 'production with reasoning effort medium', { reasoning: 'medium' }),
@@ -95,7 +101,7 @@ export const VARIANTS: Record<string, Variant> = Object.fromEntries(
     // ---- v5 = v4 + much terser spoken answers (style section with good/bad pairs, 2-4 word preambles, no add-ons)
     v('v4-prompt', 'the v4 production prompt (frozen in evals/prompts/v4: ~40-word answers, 3-6 word preambles) on current tools', { promptsDir: 'evals/prompts/v4' }),
     v('v3-prompt', 'the v3 production prompt (frozen in evals/prompts/v3: no get_keybindings rule, old verbosity section) on current tools', { promptsDir: 'evals/prompts/v3' }),
-    // ---- deep-thinking expert (consult_expert -> gpt-6.1-terra, reasoning high, in the background)
+    // ---- deep-thinking expert (consult_expert -> gpt-6.1-terra, reasoning high, in the background; v6: ask_thinker depth deep)
     // runs: deep-noexp / deep-exp2 (tags deep, N=3: 37% -> 74%), core-noexp / core-exp (core, N=2: 82% -> 82%, expert never called)
     v('no-expert', 'production without the deep-thinking expert', { expert: false }),
     v('expert', 'production with the deep-thinking expert (consult_expert, gpt-6.1-terra high)', { expert: true }),

@@ -45,31 +45,33 @@ export function chipLabel(name: string, argsJson: string): string {
       return `web ${q(a.query)}`;
     case 'search_nethack_source':
       return `source /${q(a.pattern)}/`;
+    case 'read_guidebook':
+      return `guidebook ${q(a.topic)}`;
     case 'read_nethack_source':
       return `source ${q(a.path)}:${q(a.start_line)}`;
-    case 'consult_expert':
-      return 'ask expert';
-    case 'cancel_expert':
-      return 'cancel expert';
+    case 'ask_thinker':
+      return a.depth === 'deep' ? 'ask thinker (deep)' : 'ask thinker';
+    case 'cancel_thinker':
+      return 'cancel thinker';
     default:
       return name;
   }
 }
 
-/** Label of a "Thinking deeply" chip for an expert consultation. */
-export function expertLabel(c: Pick<Consultation, 'status' | 'startedAt' | 'finishedAt' | 'result' | 'interrupted'>, now: number): string {
+/** Label of a "Thinking…" chip for a thinker consultation. */
+export function expertLabel(c: Pick<Consultation, 'status' | 'startedAt' | 'finishedAt' | 'result' | 'interrupted'> & { depth?: string }, now: number): string {
   const secs = (to: number) => `${Math.max(0, Math.round((to - c.startedAt) / 1000))} s`;
   switch (c.status) {
     case 'running':
-      return `Thinking deeply… ${secs(now)}`;
+      return `${c.depth === 'deep' ? 'Thinking deeply' : 'Thinking'}… ${secs(now)}`;
     case 'ready':
-      return c.result?.ok ? `Expert answer ready (${secs(c.finishedAt ?? now)})` : 'Expert couldn’t finish';
+      return c.result?.ok ? `Thinker answer ready (${secs(c.finishedAt ?? now)})` : 'Thinker couldn’t finish';
     case 'delivering':
-      return c.result?.ok ? `Expert answering (${secs(c.finishedAt ?? now)})` : 'Expert couldn’t finish';
+      return c.result?.ok ? `Thinker answering (${secs(c.finishedAt ?? now)})` : 'Thinker couldn’t finish';
     case 'delivered':
-      return c.result?.ok ? `Expert answered (${secs(c.finishedAt ?? now)})${c.interrupted ? ', interrupted' : ''}` : 'Expert couldn’t finish';
+      return c.result?.ok ? `Thinker answered (${secs(c.finishedAt ?? now)})${c.interrupted ? ', interrupted' : ''}` : 'Thinker couldn’t finish';
     case 'cancelled':
-      return 'Expert cancelled';
+      return 'Thinker cancelled';
   }
 }
 
@@ -274,7 +276,7 @@ export class AssistantPanel implements RealtimeView {
     this.stickToBottom();
   }
 
-  /** "Thinking deeply… 12 s" chip with a cancel button; shows the expert's answer and sources when expanded */
+  /** "Thinking… 12 s" chip with a cancel button; shows the thinker's answer and sources when expanded */
   expert(c: Consultation) {
     let entry = this.expertEls.get(c.id);
     if (!entry) {

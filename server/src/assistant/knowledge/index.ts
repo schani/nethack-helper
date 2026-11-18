@@ -5,6 +5,9 @@ import { nethackLookup } from "./lookup/index.ts";
 import { webSearch } from "./web-search.ts";
 import { fetchWikiPage } from "./wiki.ts";
 import { readNethackSource, searchNethackSource, sourceAvailable } from "./source.ts";
+import { GUIDEBOOK_TOOL_DEF, readGuidebook } from "./guidebook.ts";
+
+export { GUIDEBOOK_TOOL_DEF } from "./guidebook.ts";
 
 export const KNOWLEDGE_TOOL_DEFS = [
   {
@@ -134,6 +137,9 @@ export const KNOWLEDGE_TOOL_DEFS = [
 
 export type KnowledgeToolName = (typeof KNOWLEDGE_TOOL_DEFS)[number]["name"];
 export const KNOWLEDGE_TOOL_NAMES: readonly string[] = KNOWLEDGE_TOOL_DEFS.map((t) => t.name);
+/** knowledge tools only the thinker gets (not offered to the realtime model) */
+export const THINKER_KNOWLEDGE_TOOL_DEFS = [GUIDEBOOK_TOOL_DEF] as const;
+const ALL_NAMES: readonly string[] = [...KNOWLEDGE_TOOL_NAMES, ...THINKER_KNOWLEDGE_TOOL_DEFS.map((t) => t.name)];
 
 export interface KnowledgeOptions {
   /** clean NetHack 5.0.0 checkout used by the source tools */
@@ -152,7 +158,7 @@ export class KnowledgeService {
   }
 
   has(name: string): boolean {
-    return KNOWLEDGE_TOOL_NAMES.includes(name);
+    return ALL_NAMES.includes(name);
   }
 
   sourceAvailable(): Promise<boolean> {
@@ -174,6 +180,8 @@ export class KnowledgeService {
       case "read_nethack_source":
         if (!(await this.sourceAvailable())) throw new ToolError("the NetHack source is not installed on the server (run scripts/setup-nethack-src.sh)");
         return readNethackSource(o.srcDir, args);
+      case "read_guidebook":
+        return readGuidebook(o.srcDir, args);
       default:
         throw new ToolError(`unknown tool '${name}'`);
     }

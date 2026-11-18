@@ -89,11 +89,13 @@ export interface Variant {
   knowledge?: 'current' | 'v2';
   /** tools left out of the session (e.g. nethack_lookup for ablations) */
   disableTools?: string[];
-  /** offer the deep-thinking expert (consult_expert); default: production (EXPERT.enabled) */
+  /** offer the thinker (ask_thinker, "expert" in the code); default: production (EXPERT.enabled) */
   expert?: boolean;
-  /** expert model / effort overrides */
+  /** thinker model / deep-mode effort overrides */
   expertModel?: string;
   expertEffort?: string;
+  /** thinker quick-mode overrides (effort, timeoutMs, softMs, maxRounds) */
+  thinkerQuick?: { effort?: string; timeoutMs?: number; softMs?: number; maxRounds?: number };
 }
 
 export interface CheckResult {

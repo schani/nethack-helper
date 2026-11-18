@@ -4,6 +4,7 @@ import path from 'node:path';
 import { FIXTURE_DIR } from '../src/fixtures.ts';
 import type { EvalCase } from '../src/types.ts';
 import { cases as deep } from './deep.ts';
+import { cases as howto } from './howto.ts';
 import { cases as items } from './items.ts';
 import { cases as keys } from './keys.ts';
 import { cases as knowledge } from './knowledge.ts';
@@ -11,7 +12,7 @@ import { cases as look } from './look.ts';
 import { cases as policy } from './policy.ts';
 import { cases as state } from './state.ts';
 
-export const ALL_CASES: EvalCase[] = [...state, ...look, ...items, ...knowledge, ...policy, ...deep, ...keys];
+export const ALL_CASES: EvalCase[] = [...state, ...look, ...items, ...knowledge, ...policy, ...deep, ...keys, ...howto];
 
 /** A fixed ~40-case subset spanning every category, for cheaper single-change experiments (--set core). */
 export const CORE: string[] = [

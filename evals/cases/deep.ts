@@ -1,6 +1,6 @@
 /**
  * Deep questions: multi-step reasoning over the 5.0 source, arithmetic, rare mechanics interactions.  The
- * deep-thinking expert (consult_expert) is meant for these; the production assistant without it must answer
+ * thinker (ask_thinker, depth deep) is meant for these; the production assistant without it must answer
  * alone.  Every truth below was verified against the NetHack 5.0.0 source (.cache/nethack-src), with the
  * player-visible facts taken from the fixture through the production game tools.
  */

@@ -1,11 +1,11 @@
 /**
- * Deep-thinking expert consultations in the shared conversation core: consult_expert answers at once, results are
+ * Deep-thinking expert consultations in the shared conversation core: ask_thinker answers at once, results are
  * queued and spoken only when the voice channel is idle, concurrency, cancellation, failures and stale results.
  */
 import { describe, expect, it } from 'vitest';
 import { RealtimeConversation, type ConnState, type ExpertRequest, type ExpertResult, type RealtimeView } from '../../../shared/assistant/realtime-core.ts';
-import { deliveryText, staleNote, type Consultation } from '../../../shared/assistant/consultations.ts';
-import { parseAnswer } from '../../src/assistant/expert.ts';
+import { Consultations, deliveryText, depthOf, staleNote, type Consultation } from '../../../shared/assistant/consultations.ts';
+import { cacheKey, parseAnswer } from '../../src/assistant/expert.ts';
 
 const view: RealtimeView = { state() {}, error() {}, system() {}, user() {}, assistant() {}, tool() {}, listening() {}, mic() {} };
 const tick = async (n = 4) => {
@@ -50,12 +50,12 @@ function respond(t: ReturnType<typeof setup>, calls: { id: string; name: string;
   t.conv.onEvent({ type: 'response.done', response: { id, status, output } });
   return id;
 }
-const consult = (id: string, question: string) => ({ id, name: 'consult_expert', args: { question } });
-const deliveries = (t: ReturnType<typeof setup>) => t.sent.filter((e) => e.type === 'conversation.item.create' && e.item.role === 'system' && /^\[Expert result/.test(e.item.content[0].text));
+const consult = (id: string, question: string) => ({ id, name: 'ask_thinker', args: { question } });
+const deliveries = (t: ReturnType<typeof setup>) => t.sent.filter((e) => e.type === 'conversation.item.create' && e.item.role === 'system' && /^\[Thinker result/.test(e.item.content[0].text));
 const creates = (t: ReturnType<typeof setup>) => t.sent.filter((e) => e.type === 'response.create');
 
 describe('expert consultations', () => {
-  it('consult_expert returns at once; after a spoken preamble no extra response is requested', async () => {
+  it('ask_thinker returns at once; after a spoken preamble no extra response is requested', async () => {
     const t = setup();
     respond(t, [consult('c1', 'price of the lamp at 67 with Cha 8?')], 'Let me think that through properly.');
     await tick();
@@ -156,8 +156,8 @@ describe('expert consultations', () => {
     await tick();
     expect(deliveries(t)).toHaveLength(1);
     const text = deliveries(t)[0].item.content[0].text;
-    expect(text).toContain('Expert result x1');
-    expect(text).toContain('Expert result x2');
+    expect(text).toContain('Thinker result x1');
+    expect(text).toContain('Thinker result x2');
     expect(creates(t).at(-1)!.response.metadata.expert).toBe('x1,x2');
     // x3 finishes while the delivery is being spoken
     t.conv.onEvent({ type: 'response.created', response: { id: 'rd', metadata: { expert: 'x1,x2' } } });
@@ -167,7 +167,7 @@ describe('expert consultations', () => {
     t.conv.onEvent({ type: 'response.done', response: { id: 'rd', status: 'completed', output: [] } });
     await tick();
     expect(deliveries(t)).toHaveLength(2);
-    expect(deliveries(t)[1].item.content[0].text).toContain('Expert result x3');
+    expect(deliveries(t)[1].item.content[0].text).toContain('Thinker result x3');
   });
 
   it('a duplicate question while running is not started twice; the concurrency cap is enforced', async () => {
@@ -183,12 +183,12 @@ describe('expert consultations', () => {
     expect(t.conv.experts.running).toHaveLength(3);
   });
 
-  it('cancel_expert aborts the request; a late result is never delivered', async () => {
+  it('cancel_thinker aborts the request; a late result is never delivered', async () => {
     const t = setup();
     respond(t, [consult('c1', 'q1')], 'Let me think.');
     await tick();
     const p = t.pending.get('x1')!;
-    respond(t, [{ id: 'c2', name: 'cancel_expert', args: {} }], 'Okay, never mind.');
+    respond(t, [{ id: 'c2', name: 'cancel_thinker', args: {} }], 'Okay, never mind.');
     await tick();
     expect(p.signal.aborted).toBe(true);
     expect(t.sent.filter((e) => e.item?.type === 'function_call_output').at(-1)!.item.output).toMatch(/^CANCELLED x1/);
@@ -293,23 +293,30 @@ describe('expert consultations', () => {
     const conv = new RealtimeConversation(view, { tool: async () => ({ ok: true, result: '' }), context: async () => ({ text: '', turn: 0 }), log() {} }, host);
     conv.attach({ context: null, isReconnect: false });
     conv.onEvent({ type: 'response.created', response: { id: 'r' } });
-    conv.onEvent({ type: 'response.done', response: { id: 'r', status: 'completed', output: [{ type: 'function_call', id: 'i', call_id: 'c', name: 'consult_expert', arguments: '{"question":"q"}' }] } });
+    conv.onEvent({ type: 'response.done', response: { id: 'r', status: 'completed', output: [{ type: 'function_call', id: 'i', call_id: 'c', name: 'ask_thinker', arguments: '{"question":"q"}' }] } });
     await tick();
-    expect(sent.find((e) => e.item?.type === 'function_call_output')!.item.output).toMatch(/^ERROR: the expert is not available/);
+    expect(sent.find((e) => e.item?.type === 'function_call_output')!.item.output).toMatch(/^ERROR: the thinker is not available/);
     expect(sent.at(-1)).toEqual({ type: 'response.create' });
   });
 });
 
 describe('expert delivery text and parsing', () => {
   const c = (over: Partial<Consultation> = {}): Consultation => ({
-    id: 'x1', question: 'q', status: 'ready', startedAt: 0, userTurn: 1, ac: new AbortController(), result: ok('A'), ...over,
+    id: 'x1', question: 'q', depth: 'deep', status: 'ready', startedAt: 0, userTurn: 1, ac: new AbortController(), result: ok('A'), ...over,
   });
   it('includes held-back spoiler details, unknowns and the speaking instructions', () => {
     const text = deliveryText([c({ result: ok('A', { spoilerDetails: 'base 50: magic lamp', unknowns: ['Luck'], confidence: 'medium' }) })], null, 12_000);
     expect(text).toContain('asked 12 s ago');
-    expect(text).toContain('Spoiler-level details the expert kept out');
+    expect(text).toContain('Spoiler-level details the thinker kept out');
     expect(text).toContain('Depends on things nobody can see in the game: Luck.');
     expect(text).toMatch(/at most about 80 words/);
+    expect(text).toMatch(/start with a short lead-in naming the question/);
+  });
+  it('quick results: no lead-in unless the user moved on, keep every usable option, shorter', () => {
+    const text = deliveryText([c({ depth: 'quick' })], null, 6_000);
+    expect(text).toMatch(/otherwise go straight to the answer, with no lead-in/);
+    expect(text).toMatch(/EVERY option it names that the player can use/);
+    expect(text).toMatch(/at most about 50 words/);
   });
   it('no stale note for small changes', () => {
     expect(staleNote(c({ startTurn: 10, startContext: 'Dlvl:1 turn 10' }), { text: 'Dlvl:1, turn 20', turn: 20 })).toBe('');
@@ -320,5 +327,39 @@ describe('expert delivery text and parsing', () => {
     expect(r.spoilerDetails).toBeUndefined();
     expect(parseAnswer('plain words').answer).toBe('plain words');
     expect(parseAnswer('').ok).toBe(false);
+  });
+});
+
+describe('thinker depth', () => {
+  it('depthOf defaults to quick', () => {
+    expect(depthOf(undefined)).toBe('quick');
+    expect(depthOf('deep')).toBe('deep');
+    expect(depthOf('whatever')).toBe('quick');
+  });
+  it('the same question at another depth is not a duplicate', () => {
+    const calls: ExpertRequest[] = [];
+    const list = new Consultations({
+      expert: (req) => (calls.push(req), new Promise(() => {})),
+      now: () => 0,
+      idleSince: () => null,
+      deliver: () => {},
+      changed: () => {},
+    });
+    const meta = { excerpt: [], userTurn: 1 };
+    const a = list.start('box locked?', { ...meta, depth: 'quick' });
+    const b = list.start('Box locked', { ...meta, depth: 'quick' });
+    const d = list.start('box locked?', { ...meta, depth: 'deep' });
+    expect('c' in a && 'c' in b && a.c === b.c && b.duplicate).toBe(true);
+    expect('c' in d && !d.duplicate).toBe(true);
+    expect(calls.map((r) => r.depth)).toEqual(['quick', 'deep']);
+  });
+});
+
+describe('thinker answer cache key', () => {
+  it('ignores case, punctuation and filler words, keeps the depth apart', () => {
+    expect(cacheKey('quick', 'How do I pray?')).toBe(cacheKey('quick', 'how do i pray'));
+    expect(cacheKey('quick', 'Okay, so how do I pray in NetHack?')).not.toBe('x');
+    expect(cacheKey('quick', 'Okay, how do I pray, please?')).toBe(cacheKey('quick', 'how do I pray'));
+    expect(cacheKey('quick', 'how do I pray')).not.toBe(cacheKey('deep', 'how do I pray'));
   });
 });

@@ -15,15 +15,21 @@ import type { ExpertRequest, ExpertResult } from '../../../shared/assistant/cons
 import { EXPERT_TOOL_DEFS, ExpertService } from './expert.ts';
 import { GAME_TOOL_DEFS, GameTools, type GameSource } from './game/tools.ts';
 import type { GameViewOptions } from './game/view.ts';
-import { KNOWLEDGE_TOOL_DEFS, KnowledgeService } from './knowledge/index.ts';
+import { KNOWLEDGE_TOOL_DEFS, KnowledgeService, THINKER_KNOWLEDGE_TOOL_DEFS } from './knowledge/index.ts';
 import { ToolError } from './knowledge/util.ts';
 import { JsonlLog } from './log.ts';
 import { buildSessionConfig } from './session-config.ts';
 
+/** server tools offered to the realtime model */
 export const TOOL_DEFS = [...GAME_TOOL_DEFS, ...KNOWLEDGE_TOOL_DEFS] as const;
-export const TOOL_NAMES: readonly string[] = TOOL_DEFS.map((t) => t.name);
+/** the thinker's tools: the same plus the Guidebook */
+export const THINKER_TOOL_DEFS = [...TOOL_DEFS, ...THINKER_KNOWLEDGE_TOOL_DEFS] as const;
+/** every tool runTool executes */
+export const TOOL_NAMES: readonly string[] = THINKER_TOOL_DEFS.map((t) => t.name);
+/** slow tools the thinker's quick mode does without */
+const QUICK_EXCLUDE = ['web_search'];
 
-/** Realtime session tools: the server tools, plus consult_expert / cancel_expert when the expert is enabled. */
+/** Realtime session tools: the server tools, plus ask_thinker / cancel_thinker when the thinker is enabled. */
 export function sessionTools(expert: boolean) {
   return expert ? [...TOOL_DEFS, ...EXPERT_TOOL_DEFS] : [...TOOL_DEFS];
 }
@@ -66,8 +72,8 @@ export interface AssistantServiceOptions {
   timeouts?: Record<string, number>;
   /** game tool output options (eval variants); defaults = production */
   gameOptions?: GameViewOptions;
-  /** deep-thinking expert: offered to the realtime model (default EXPERT.enabled) and its settings */
-  expert?: { enabled?: boolean; model?: string; effort?: string; timeoutMs?: number; maxRounds?: number };
+  /** the thinker: offered to the realtime model (default EXPERT.enabled) and its settings */
+  expert?: { enabled?: boolean; model?: string; effort?: string; timeoutMs?: number; maxRounds?: number; quick?: Partial<typeof EXPERT.quick>; cacheTtlMs?: number };
 }
 
 export class AssistantService {
@@ -97,12 +103,14 @@ export class AssistantService {
     this.fetchFn = opts.fetch ?? fetch;
     this.timeouts = { ...TIMEOUTS, ...opts.timeouts };
     this.expertEnabled = opts.expert?.enabled ?? EXPERT.enabled;
-    // the expert uses exactly the assistant's server tools and executors (player-visible game state only)
+    // the thinker uses the assistant's server tools and executors (player-visible game state only) plus the Guidebook
     this.expert = new ExpertService({
       apiKey,
-      tools: TOOL_DEFS,
+      tools: THINKER_TOOL_DEFS,
+      quickExclude: QUICK_EXCLUDE,
       runTool: (name, args, meta) => this.runTool(name, args, meta),
       snapshot: () => this.context(),
+      situation: () => this.situation(),
       promptsDir: opts.paths.promptsDir,
       log: new JsonlLog(path.join(opts.paths.logDir, 'expert-calls.jsonl')),
       fetch: opts.fetch,
@@ -110,6 +118,8 @@ export class AssistantService {
       effort: opts.expert?.effort,
       timeoutMs: opts.expert?.timeoutMs,
       maxRounds: opts.expert?.maxRounds,
+      quick: opts.expert?.quick,
+      cacheTtlMs: opts.expert?.cacheTtlMs,
     });
   }
 
@@ -123,7 +133,7 @@ export class AssistantService {
       defaultReasoning: DEFAULT_REASONING,
       tools: TOOL_NAMES,
       webSearchModel: WEB_SEARCH_MODEL,
-      expert: { enabled: this.expertEnabled, model: this.expert.model, effort: this.expert.effort, timeoutMs: this.expert.timeoutMs },
+      expert: { enabled: this.expertEnabled, model: this.expert.model, effort: this.expert.effort, timeoutMs: this.expert.timeoutMs, quick: this.expert.quick },
       sourceAvailable: await this.knowledge.sourceAvailable(),
       apiKeyConfigured: !!process.env.OPENAI_API_KEY,
     };
@@ -180,7 +190,28 @@ export class AssistantService {
     }
   }
 
-  /** Ask the deep-thinking expert (never throws; ok:false on failure, timeout or cancellation). */
+  /**
+   * What the thinker gets up front about the player (saves it a tool round): status with attributes, inventory, what
+   * is around, recent messages.  Empty when the game is not running (the snapshot says so).
+   */
+  situation(): string {
+    if (!this.game.view().running) return '';
+    const part = (title: string, name: string, args: Record<string, unknown>) => {
+      try {
+        return `## ${title}\n${this.game.run(name, args)}`;
+      } catch (e) {
+        return `## ${title}\n(unavailable: ${(e as Error).message})`;
+      }
+    };
+    return [
+      part('Status', 'get_status', {}),
+      part('Inventory', 'get_inventory', {}),
+      part('Around the player', 'look', { target: 'nearby' }),
+      part('Recent messages', 'get_messages', { n: 8 }),
+    ].join('\n\n');
+  }
+
+  /** Ask the thinker (never throws; ok:false on failure, timeout or cancellation). */
   consultExpert(req: ExpertRequest, signal?: AbortSignal): Promise<ExpertResult> {
     return this.expert.consult(req, signal);
   }
